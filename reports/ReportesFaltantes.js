@@ -207,7 +207,7 @@ function enviarNotificacionSlack(reportesFaltantes, totalFaltantes, fechaHoy) {
     payload = { "blocks": [
       { "type": "header",  "text": { "type": "plain_text", "text": "🚨 Alerta: Reportes no recibidos", "emoji": true } },
       { "type": "section", "text": { "type": "mrkdwn", "text": `*Fecha:* ${fechaStr}\n${mensajePrincipal}` } },
-      { "type": "section", "text": { "type": "mrkdwn", "text": "🔗 *Links útiles:*\n• <https://docs.google.com/spreadsheets/d/`" + PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID") + `"/edit?gid=577353825#gid=577353825| Registro de Reportes Faltantes>" } },
+      { "type": "section", "text": { "type": "mrkdwn", "text": "🔗 *Links útiles:*\n  <https://docs.google.com/spreadsheets/d/" + PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID") + "/edit?gid=577353825#gid=577353825| Registro de Reportes Faltantes>" } },
       { "type": "divider" },
       { "type": "section", "text": { "type": "mrkdwn", "text": detalles } }
     ]};
