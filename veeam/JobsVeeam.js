@@ -247,7 +247,7 @@ function processSingleVeeamJobMessage(message, summaryReport) {
           let commentText = `El problema persiste en:\n`;
           affectedJobs.forEach(j => commentText += `* ${j.name}\n`);
           addCommentToJiraTicket(existingTicketKey, commentText);
-          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}>.` });
+          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>.` });
       } else {
           let result;
           if (isTicketCritical) {

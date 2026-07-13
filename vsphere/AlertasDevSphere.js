@@ -212,7 +212,7 @@ function processSingleVsphereMessage(message, summaryReport) {
           if (attachmentStatus.status === 'SUCCESS') {
             const commentText = `${todayMarker} ${alertName}\n\n🚨 **La anomalía persiste.** Se adjunta reporte con **${alertGroupRows.length}** objetos afectados.`;
             addCommentToJiraTicket(existingTicketKey, commentText);
-            summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con nuevo reporte.` });
+            summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con nuevo reporte.` });
 
             // --- BLOQUE INFORMATIVO: ticket existente con adjunto ---
             const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, summary);
@@ -228,7 +228,7 @@ function processSingleVsphereMessage(message, summaryReport) {
           comment += `*Objetos Afectados en este reporte (${alertGroupRows.length}):*\n`;
           alertGroupRows.forEach(row => (comment += `• ${row[objectNameColIndex] || "(objeto sin nombre)"}\n`));
           addCommentToJiraTicket(existingTicketKey, comment);
-          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con ${alertGroupRows.length} objetos.` });
+          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertGroupRows.length} objetos.` });
 
           // --- BLOQUE INFORMATIVO: ticket existente sin adjunto ---
           const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, summary);

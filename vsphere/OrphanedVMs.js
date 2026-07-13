@@ -161,7 +161,7 @@ function processSingleOrphanedVMsMessage(message, summaryReport) {
   if (alertCount === 0) {
     if (existingTicketKey && !isComafi) {
       addCommentToJiraTicket(existingTicketKey, "✅ **Anomalía resuelta.** El reporte actual no muestra Orphaned VMs pendientes.");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
@@ -182,7 +182,7 @@ function processSingleOrphanedVMsMessage(message, summaryReport) {
       if (attachmentResult.status === 'SUCCESS') {
         const commentText = `🚨 **Atención:** Se detectaron **${alertCount}** Orphaned VMs en el último reporte. Ver adjunto actualizado.`;
         addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Ticket existente <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> actualizado con evidencia.` });
+        summaryReport.exitos.push({ mensaje: `Ticket existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> actualizado con evidencia.` });
         
         const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, ORPHANED_VMS_OPERATION_NAME); 
         if (accountIdAsignado) ticketInformativo(existingTicketKey, accountIdAsignado);
@@ -347,7 +347,7 @@ function convertOrphanedExcelToData(blob) {
 }
 
 function findTargetReportTicket(summary, projectKey) {
-  const endpoint = `https://wetcom.atlassian.net/rest/api/3/search/jql`;
+  const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
   let jql = `summary ~ "${summary.replace(/"/g, '\\"')}" AND statusCategory != "Done"`;
   if (projectKey) jql += ` AND project = "${projectKey}"`;
   jql += ` AND issuetype != "Tarea Programada" ORDER BY created DESC`;
@@ -396,11 +396,11 @@ function createInternalTicketLocal(summary, description, attachmentBlob, clientC
   };
 
   try {
-    const response = UrlFetchApp.fetch("https://wetcom.atlassian.net/rest/api/2/issue", options);
+    const response = UrlFetchApp.fetch(JIRA_DOMAIN + "/rest/api/2/issue", options);
     if (response.getResponseCode() >= 200 && response.getResponseCode() < 300) {
       const data = JSON.parse(response.getContentText());
       if (attachmentBlob) addAttachmentToJiraTicket(data.key, attachmentBlob);
-      return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket INTERNO <https://wetcom.atlassian.net/browse/${data.key}|${data.key}>.` } };
+      return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket INTERNO <${JIRA_DOMAIN}/browse/${data.key}|${data.key}>.` } };
     } else {
       return { status: 'ERROR', detail: { error: `Error Jira: ${response.getContentText()}` } };
     }

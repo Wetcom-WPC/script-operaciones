@@ -112,7 +112,7 @@ function processSingleRepositorySpaceMessage(message, summaryReport) {
     // --- NO HAY ALERTAS ---
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **Anomalía resuelta.** El reporte actual indica que los repositorios tienen espacio suficiente.");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
@@ -139,7 +139,7 @@ function processSingleRepositorySpaceMessage(message, summaryReport) {
       if (attachmentResult.status === 'SUCCESS') {
         const commentText = `🚨 **Atención:** Se detectaron **${alertCount}** repositorios con poco espacio. Ver adjunto actualizado.`;
         addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Ticket existente <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> actualizado con evidencia.` });
+        summaryReport.exitos.push({ mensaje: `Ticket existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> actualizado con evidencia.` });
         
         // Cerramos la tarea programada (Azul)
         const closeResult = buscarYCerrarTareaProgramada(REPO_SPACE_TASK_NAME, clientConfig, false);
@@ -180,7 +180,7 @@ function processSingleRepositorySpaceMessage(message, summaryReport) {
  * Función local para buscar tickets ignorando "Tarea Programada".
  */
 function findTargetReportTicketLocal(summary, projectKey) {
-  const endpoint = `https://wetcom.atlassian.net/rest/api/3/search/jql`;
+  const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
   
   let jql = `summary ~ "${summary.replace(/"/g, '\\"')}" AND statusCategory != "Done"`;
   if (projectKey) jql += ` AND project = "${projectKey}"`;

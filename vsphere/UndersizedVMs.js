@@ -79,7 +79,7 @@ function processSingleUndersizedVMsMessage(message, summaryReport) {
   if (finalAlerts.length === 0) {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **La anomalía no persiste.** El último reporte de VMs subdimensionadas no muestra alertas.");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
@@ -97,7 +97,7 @@ function processSingleUndersizedVMsMessage(message, summaryReport) {
     if (attachmentResult.status === 'SUCCESS') {
       const commentText = `🚨 **El problema persiste.** Se adjunta el reporte actualizado con **${alertCount}** VMs afectadas.`;
       addCommentToJiraTicket(existingTicketKey, commentText);
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
       const closeResult = buscarYCerrarTareaProgramada(UNDERSIZED_VMS_SCHEDULED_TASK_NAME_TO_CLOSE, clientConfig, false);
       if (closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
       Logger.log(`--- Finalizado el procesamiento para [Undersized VMs]. Ticket existente actualizado. ---`);

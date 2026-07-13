@@ -171,7 +171,7 @@ function processSingleVropsMessage(message, summaryReport) {
         });
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({
-          mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.`
+          mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.`
         });
 
         // --- BLOQUE INFORMATIVO: ticket existente sin adjunto ---
@@ -189,7 +189,7 @@ function processSingleVropsMessage(message, summaryReport) {
         if (attachmentStatus.status === 'SUCCESS') {
           addCommentToJiraTicket(existingTicketKey, commentText);
           summaryReport.exitos.push({
-            mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte adjunto.`
+            mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte adjunto.`
           });
 
           // --- BLOQUE INFORMATIVO: ticket existente con adjunto ---

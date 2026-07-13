@@ -172,7 +172,7 @@ function processSingleAffinityRuleMessage(message, summaryReport) {
   if (finalAlerts.length === 0) {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **La anomalía no persiste.** El último reporte de Affinity Rules no contiene alertas válidas.");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
@@ -193,7 +193,7 @@ function processSingleAffinityRuleMessage(message, summaryReport) {
         commentText += `| ${rowData.map(cell => (cell || "").trim()).join(" | ")} |\n`;
       });
       addCommentToJiraTicket(existingTicketKey, commentText);
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
     } else {
       const newFileName = attachment.getName().replace(/\.json$/i, "-FILTRADO.xlsx");
       const xlsxBlob = convertDataToXlsxBlob([originalHeaders, ...finalAlerts], newFileName); // Usamos headers originales
@@ -202,7 +202,7 @@ function processSingleAffinityRuleMessage(message, summaryReport) {
       if (attachmentStatus.status === 'SUCCESS') {
         commentText += `Se adjunta el reporte actualizado con **${alertCount}** VMs sin Affinity Rules.`;
         addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
+        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
       } else {
         summaryReport.advertencias.push(attachmentStatus.detail);
       }

@@ -10,3 +10,5 @@ const JIRA_FILTER_ID_REPORTE_DIARIO = PropertiesService.getScriptProperties().ge
 const SLACK_WEBHOOK_URL_REPORTE_DIARIO = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_REPORTE_DIARIO");  /** Canal resumen-operaciones */  
 const JIRA_STATUS_TO_CLOSE = "Finalizado";
 const SLACK_WEBHOOK_URL_RESUMEN_TICKETS = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_RESUMEN_TICKETS");   /** Canal resumen-operaciones */
+const JIRA_DOMAIN = PropertiesService.getScriptProperties().getProperty('JIRA_DOMAIN');
+

@@ -23,7 +23,7 @@ function generarReporteTareasCerradas() {
   
   Logger.log(`Ejecutando JQL para tareas cerradas: ${jql}`);
   
-  const endpoint = `https://wetcom.atlassian.net/rest/api/3/search/jql`;
+  const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
   const payload = {
     "jql": jql,
     "maxResults": 100,
@@ -57,7 +57,7 @@ function generarReporteTareasCerradas() {
     
     data.issues.forEach(issue => {
       const nombreProyecto = issue.fields.project.name;
-      const link = `https://wetcom.atlassian.net/browse/${issue.key}`;
+      const link = `${JIRA_DOMAIN}/browse/${issue.key}`;
       
       // Formato: • [Nombre del Proyecto] Resumen del ticket <link|Ticket Key>
       mensajeSlack += `\n• [${nombreProyecto}] ${issue.fields.summary} <${link}|${issue.key}>`;
@@ -81,5 +81,6 @@ function generarReporteTareasCerradas() {
     Logger.log(`Error crítico al generar el reporte de tareas cerradas: ${e.message}`);
   }
 }
+
 
 

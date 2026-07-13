@@ -1,7 +1,7 @@
 function verTransicionesDeMiTicket() {
   const issueKey = "WPC-363"; // <--- PON UN TICKET REAL QUE ESTÉ ABIERTO
   const headers = getJiraHeaders();
-  const url = `https://wetcom.atlassian.net/rest/api/3/issue/${issueKey}/transitions`;
+  const url = `${JIRA_DOMAIN}/rest/api/3/issue/${issueKey}/transitions`;
   
   const response = UrlFetchApp.fetch(url, { headers: headers });
   Logger.log(response.getContentText());
@@ -36,7 +36,7 @@ function buscarAdjuntoEnTicket(issueKey, fileName) {
   if (!issueKey || !fileName) return false;
   
   // Usamos la API v3 para obtener solo los campos de adjuntos
-  const endpoint = `https://wetcom.atlassian.net/rest/api/3/issue/${issueKey}?fields=attachment`;
+  const endpoint = `${JIRA_DOMAIN}/rest/api/3/issue/${issueKey}?fields=attachment`;
   const options = {
     "method": "get",
     "contentType": "application/json",
@@ -278,7 +278,7 @@ function haSidoActualizadoHoy(issueKey, fingerprint) {
     const todayMarker = `[AUTO-UPDATE:${new Date().toISOString().slice(0, 10)}]`;
     const fullFingerprint = `${todayMarker} ${fingerprint}`;
 
-    const endpoint = `https://wetcom.atlassian.net/rest/api/3/issue/${issueKey}/comment?orderBy=-created&maxResults=1`;
+    const endpoint = `${JIRA_DOMAIN}/rest/api/3/issue/${issueKey}/comment?orderBy=-created&maxResults=1`;
     const options = {
       "method": "get",
       "contentType": "application/json",
@@ -346,7 +346,7 @@ function enviarResumenSlack(operationName, summaryReport) {
     errores.forEach(err => {
       mensaje += `\n• *Cliente:* ${err.cliente || "_Desconocido_"}`; // NUEVO
       mensaje += `\n  • *Error:* \`${err.error}\``;
-      if (err.ticket) mensaje += `\n  • *Ticket:* <https://wetcom.atlassian.net/browse/${err.ticket}|${err.ticket}>`; // NUEVO
+      if (err.ticket) mensaje += `\n  • *Ticket:* <${JIRA_DOMAIN}/browse/${err.ticket}|${err.ticket}>`; // NUEVO
       if (err.detalle) mensaje += `\n  • *Detalle:* ${err.detalle}`;
     });
   }
@@ -363,7 +363,7 @@ function enviarResumenSlack(operationName, summaryReport) {
 
       // Verificación ANTES de imprimir para evitar "undefined".
       if (warningData.ticketKey) {
-        mensaje += `\n• *Ticket:* <https://wetcom.atlassian.net/browse/${warningData.ticketKey}|${warningData.ticketKey}>`;
+        mensaje += `\n• *Ticket:* <${JIRA_DOMAIN}/browse/${warningData.ticketKey}|${warningData.ticketKey}>`;
         mensaje += `\n• *Problema:* ${warningData.problema || 'No se especificó el problema.'}`;
       } else {
         // Mensaje genérico si no se encuentra el ticketKey, usando la información que sí tengamos.
@@ -565,7 +565,7 @@ function getClientConfig(senderEmail, operationName, soporte = false) {
 
 function doesJiraTicketExist(ticketKey) {
   if (!ticketKey) return false;
-  const endpoint = `https://wetcom.atlassian.net/rest/api/3/issue/${ticketKey}?fields=id`;
+  const endpoint = `${JIRA_DOMAIN}/rest/api/3/issue/${ticketKey}?fields=id`;
   const options = {
     "method": "get", "contentType": "application/json",
     "headers": { "Authorization": `Basic ${JIRA_AUTH_TOKEN_BASE_64}` },
@@ -587,7 +587,7 @@ function createTicketAndNotify(summary, description, attachmentBlob, clientConfi
         return attachmentResult; // Mismo comportamiento que antes: si falla, el mail sigue sin marcarse leído y reintenta
       }
     }
-    return { status: 'SUCCESS', detail: { mensaje: `Se actualizó el ticket ya existente <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}>.` } };
+    return { status: 'SUCCESS', detail: { mensaje: `Se actualizó el ticket ya existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>.` } };
   }
   // --- FIN NUEVO ---
 
@@ -607,12 +607,12 @@ function createTicketAndNotify(summary, description, attachmentBlob, clientConfi
         if (attachmentStatus) return attachmentStatus; 
         return { 
           status: 'SUCCESS', 
-          detail: { mensaje: `✅ *Informativo:* Ticket <https://wetcom.atlassian.net/browse/${issue.issueKey}|${issue.issueKey}> cerrado y asignado.` } 
+          detail: { mensaje: `✅ *Informativo:* Ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}> cerrado y asignado.` } 
         };
     }
     // 3. SI NO ES INFORMATIVO, SIGUE EL FLUJO NORMAL
     if (attachmentStatus) return attachmentStatus; // Retornamos el error si hubo fallo
-    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <https://wetcom.atlassian.net/browse/${issue.issueKey}|${issue.issueKey}>.` } };
+    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.` } };
   } else {
     return { status: 'ERROR', detail: { error: "No se pudo crear el ticket en Jira.", detalle: `Resumen: "${summary}"` } };
   }
@@ -628,7 +628,7 @@ function createTicketCOMAFI(summary, description, attachmentBlob, clientConfig) 
         return attachmentResult;
       }
     }
-    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <https://wetcom.atlassian.net/browse/${issue.issueKey}|${issue.issueKey}>.` } };
+    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.` } };
   } else {
     return { status: 'ERROR', detail: { error: "No se pudo crear el ticket en Jira.", detalle: `Resumen: "${summary}"` } };
   }
@@ -643,7 +643,7 @@ function createJiraTicketForCOM(summary, description, clientConfig) {
   const dueDateString = Utilities.formatDate(today, Session.getScriptTimeZone(), "yyyy-MM-dd");
 
   // CAMBIO: Endpoint de Jira Core (API v2 es más compatible con strings simples)
-  const endpoint = "https://wetcom.atlassian.net/rest/api/2/issue";
+  const endpoint = JIRA_DOMAIN + "/rest/api/2/issue";
 
   const payload = {
     "fields": {
@@ -687,7 +687,7 @@ function createTicketAndNotifySoporte(summary, description, attachmentBlob, clie
         return attachmentResult;
       }
     }
-    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <https://wetcom.atlassian.net/browse/${issue.issueKey}|${issue.issueKey}>.` } };
+    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.` } };
   } else {
     return { status: 'ERROR', detail: { error: "No se pudo crear el ticket en Jira.", detalle: `Resumen: "${summary}"` } };
   }
@@ -700,7 +700,7 @@ function createJiraTicketForVM(summary, description, clientConfig) {
   const today = new Date();
   today.setDate(today.getDate() + 7);
   const dueDateString = Utilities.formatDate(today, Session.getScriptTimeZone(), "yyyy-MM-dd");
-  const endpoint = "https://wetcom.atlassian.net/rest/servicedeskapi/request";
+  const endpoint = JIRA_DOMAIN + "/rest/servicedeskapi/request";
   const payload = {
     "serviceDeskId": clientConfig.serviceDeskId, "requestTypeId": clientConfig.requestTypeId,
     "requestFieldValues": {
@@ -763,7 +763,7 @@ function chequearSiEsInformativa(clientName, operationName) {
  */
 function ticketInformativo(issueKey, accountId) {
   const headers = getJiraHeaders();
-  const baseUrl = `https://wetcom.atlassian.net/rest/api/3/issue/${issueKey}`;
+  const baseUrl = `${JIRA_DOMAIN}/rest/api/3/issue/${issueKey}`;
   const transitionsUrl = `${baseUrl}/transitions`;
 
   try {
@@ -834,7 +834,7 @@ function createJiraTicketForSoporte(summary, description, clientConfig) {
   const PRIORITY_FIELD_ID = "priority"; 
   const today = new Date();
   today.setDate(today.getDate() + 7);  
-  const endpoint = "https://wetcom.atlassian.net/rest/servicedeskapi/request";
+  const endpoint = JIRA_DOMAIN + "/rest/servicedeskapi/request";
   
   const payload = {
     "serviceDeskId": clientConfig.serviceDeskIdSop, 
@@ -874,7 +874,7 @@ function createJiraTicketForSoporte(summary, description, clientConfig) {
 }
 
 function findExistingJiraTicket(summary, projectKey, issueTypeName) {
-  const endpoint = `https://wetcom.atlassian.net/rest/api/3/search/jql`;
+  const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
   let jql = `summary ~ "${summary.replace(/"/g, '\\"')}" AND statusCategory != "Done"`;
   if (projectKey) jql += ` AND project = "${projectKey}"`;
   if (issueTypeName) jql += ` AND issuetype = "${issueTypeName}"`;
@@ -897,7 +897,7 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
 
 function resolveJiraTicket(issueKey, statusToClose) {
   try {
-    const transitionsUrl = `https://wetcom.atlassian.net/rest/api/3/issue/${issueKey}/transitions`;
+    const transitionsUrl = `${JIRA_DOMAIN}/rest/api/3/issue/${issueKey}/transitions`;
     const optionsGet = { "method": "get", "headers": { "Authorization": `Basic ${JIRA_AUTH_TOKEN_BASE_64}` }, "muteHttpExceptions": true };
     const responseGet = UrlFetchApp.fetch(transitionsUrl, optionsGet);
     if (responseGet.getResponseCode() !== 200) return { status: 'FAILURE' };
@@ -917,14 +917,14 @@ function resolveJiraTicket(issueKey, statusToClose) {
 }
 
 function addCommentToJiraTicket(issueKey, commentText) {
-  const endpoint = `https://wetcom.atlassian.net/rest/servicedeskapi/request/${issueKey}/comment`;
+  const endpoint = `${JIRA_DOMAIN}/rest/servicedeskapi/request/${issueKey}/comment`;
   const payload = { "body": commentText, "public": false };
   const options = { "method": "post", "contentType": "application/json", "headers": { "Authorization": `Basic ${JIRA_AUTH_TOKEN_BASE_64}` }, "payload": JSON.stringify(payload), "muteHttpExceptions": true };
   try { UrlFetchApp.fetch(endpoint, options); } catch (e) { /* Fallo silencioso */ }
 }
 
 function addAttachmentToJiraTicket(issueKey, fileBlob) {
-  const endpoint = `https://wetcom.atlassian.net/rest/api/2/issue/${issueKey}/attachments`;
+  const endpoint = `${JIRA_DOMAIN}/rest/api/2/issue/${issueKey}/attachments`;
   const boundary = `------${Utilities.base64Encode(Math.random().toString())}`;
   const data = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileBlob.getName()}"\r\nContent-Type: ${fileBlob.getContentType()}\r\n\r\n`;
   const payload = Utilities.newBlob(data).getBytes().concat(fileBlob.getBytes()).concat(Utilities.newBlob(`\r\n--${boundary}--\r\n`).getBytes());
@@ -943,7 +943,7 @@ function addAttachmentToJiraTicket(issueKey, fileBlob) {
 }
 
 function getRequestTypeIdForServiceDesk(serviceDeskId, requestTypeName) {
-  const endpoint = `https://wetcom.atlassian.net/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype`;
+  const endpoint = `${JIRA_DOMAIN}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype`;
   const options = { "method": "get", "headers": { "Authorization": `Basic ${JIRA_AUTH_TOKEN_BASE_64}` }, "muteHttpExceptions": true };
   try {
     const response = UrlFetchApp.fetch(endpoint, options);
@@ -1290,3 +1290,4 @@ function generateStyledReportBlob(rawData, fileName, columnsToIgnore = [], heade
 }
 
 }
+

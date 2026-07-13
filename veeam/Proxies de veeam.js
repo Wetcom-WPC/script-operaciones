@@ -100,7 +100,7 @@ function processProxyAlarms() {
         const alertCount = commentLines.length;
 
         summaryReport.exitos.push({
-          mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.`
+          mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.`
         });
       }
     } else {
@@ -355,3 +355,4 @@ function esDiaHabil() {
 
   return esDiaLaborable && esHoraLaborable;
 }
+

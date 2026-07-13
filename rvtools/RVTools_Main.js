@@ -188,7 +188,7 @@ function gestionarReporteRVTools(clientConfig, summaryReport, taskName, ticketTi
           `✅ **La anomalía no persiste.** El último reporte de RVTools para "${taskName}" no muestra alertas válidas.`
         );
         summaryReport.exitos.push({
-          mensaje: `Ticket Actualizado (la anomalía no persiste): <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}>`
+          mensaje: `Ticket Actualizado (la anomalía no persiste): <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>`
         });
       }
     } else {
@@ -229,7 +229,7 @@ function gestionarReporteRVTools(clientConfig, summaryReport, taskName, ticketTi
               // tenga contenido incluso cuando haSidoActualizadoHoy salta el comment.
               // Antes este push no existía, dejando summaryReport vacío → Slack silencioso.
               summaryReport.exitos.push({
-                mensaje: `📎 Adjunto subido a <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}>: _${attachmentName}_`
+                mensaje: `📎 Adjunto subido a <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>: _${attachmentName}_`
               });
             }
           }
@@ -241,7 +241,7 @@ function gestionarReporteRVTools(clientConfig, summaryReport, taskName, ticketTi
           const comment = `[AUTO-UPDATE:${new Date().toISOString().slice(0, 10)}] ${taskName}\n\n🚨 **La anomalía persiste.**\n\n${description}`;
           addCommentToJiraTicket(existingTicketKey, comment);
           summaryReport.exitos.push({
-            mensaje: `Ticket actualizado: <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}>`
+            mensaje: `Ticket actualizado: <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>`
           });
         }
 

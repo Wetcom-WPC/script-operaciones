@@ -106,7 +106,7 @@ function processSingleHorizonPMMessage(message, summaryReport) {
   if (finalAlerts.length === 0 || jsonData.Result === "OK") {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **Anomalía Resuelta.** El último reporte indica que ya no hay máquinas con estados problemáticos (o las detectadas son excepciones validadas).");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin máquinas problemáticas (OK).` });
     }
@@ -129,7 +129,7 @@ function processSingleHorizonPMMessage(message, summaryReport) {
         commentText += `| ${row.NombreMaquina || "-"} | ${row.DesktopPool || "-"} | ${row.Estado || "-"} |\n`;
       });
       addCommentToJiraTicket(existingTicketKey, commentText);
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
     } else {
       const newFileName = attachment.getName().replace(/\.json$/i, "-FILTRADO.xlsx");
       // Matriz de 3 columnas para el Excel
@@ -141,7 +141,7 @@ function processSingleHorizonPMMessage(message, summaryReport) {
       if (attachmentStatus.status === 'SUCCESS') {
         commentText += `Se adjunta el reporte actualizado con **${alertCount}** máquinas en estado de error (excepciones filtradas).`;
         addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
+        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
       } else {
         summaryReport.advertencias.push(attachmentStatus.detail);
       }

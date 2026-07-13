@@ -114,7 +114,7 @@ function processSingleDISCOSMONTADOSRuleMessage(message, summaryReport) {
   if (finalAlerts.length === 0) {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **La anomalía no persiste.** El último reporte de Discos montados en proxy no contiene alertas válidas.");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
@@ -135,7 +135,7 @@ function processSingleDISCOSMONTADOSRuleMessage(message, summaryReport) {
         commentText += `| ${rowData.map(cell => (cell || "").trim()).join(" | ")} |\n`;
       });
       addCommentToJiraTicket(existingTicketKey, commentText);
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
     } else {
       const newFileName = attachment.getName().replace(/\.json$/i, "-FILTRADO.xlsx");
       const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
@@ -144,7 +144,7 @@ function processSingleDISCOSMONTADOSRuleMessage(message, summaryReport) {
       if (attachmentStatus.status === 'SUCCESS') {
         commentText += `Se adjunta el reporte actualizado con **${alertCount}** VMs sin Discos montados en proxy.`;
         addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
+        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
         const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, DISCOSMONTADOS_OPERATION_NAME); 
           if (accountIdAsignado) {
              ticketInformativo(existingTicketKey, accountIdAsignado);

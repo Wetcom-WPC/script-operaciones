@@ -102,7 +102,7 @@ function processSingleApagadasMessage(message) {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **La anomalía no persiste.** El último reporte de VMs subdimensionadas no muestra alertas.");
       const closeResult = buscarYCerrarTareaProgramada(APAGADAS_VMS_SCHEDULED_TASK_NAME_TO_CLOSE, clientConfig, false);
-      return { status: 'SUCCESS', detail: { mensaje: `Anomalía Resuelta. Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}>.` }, taskClosed: taskClosed };
+      return { status: 'SUCCESS', detail: { mensaje: `Anomalía Resuelta. Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>.` }, taskClosed: taskClosed };
     } else {
       const closeResult = buscarYCerrarTareaProgramada(APAGADAS_VMS_SCHEDULED_TASK_NAME_TO_CLOSE, clientConfig, false);
       return { status: 'SUCCESS', detail: { mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.`}, taskClosed: taskClosed };
@@ -126,7 +126,7 @@ function processSingleApagadasMessage(message) {
           if (accountIdAsignado) {
              ticketInformativo(existingTicketKey, accountIdAsignado);
           }
-      return { status: 'SUCCESS', detail: { mensaje: `Anomalía Persiste. Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` }, taskClosed: taskClosed };
+      return { status: 'SUCCESS', detail: { mensaje: `Anomalía Persiste. Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` }, taskClosed: taskClosed };
     } else {
       return attachmentResult;
     }

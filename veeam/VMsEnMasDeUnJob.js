@@ -143,7 +143,7 @@ function processSingleDuplicateJobMessage(message, summaryReport) {
   if (alertCount === 0) {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **Anomalía resuelta.** El reporte actual no muestra VMs con jobs duplicados corriendo el mismo día.");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
@@ -163,7 +163,7 @@ function processSingleDuplicateJobMessage(message, summaryReport) {
       if (attachmentResult.status === 'SUCCESS') {
         const commentText = `🚨 **El problema persiste.** Se detectaron **${alertCount}** VMs con jobs duplicados corriendo el mismo día. Ver adjunto actualizado.`;
         addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Ticket existente <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> actualizado.` });
+        summaryReport.exitos.push({ mensaje: `Ticket existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> actualizado.` });
         
         const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, VMS_EN_MAS_DE_UN_JOB_OPERATION_NAME); 
         if (accountIdAsignado) ticketInformativo(existingTicketKey, accountIdAsignado);
@@ -275,7 +275,7 @@ function filterVMsWithMultipleDailyJobsV13(allRows, exceptions) {
 }
 
 function findTargetReportTicket(summary, projectKey) {
-  const endpoint = `https://wetcom.atlassian.net/rest/api/3/search/jql`;
+  const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
   let jql = `summary ~ "${summary.replace(/"/g, '\\"')}" AND statusCategory != "Done"`;
   if (projectKey) jql += ` AND project = "${projectKey}"`;
   jql += ` AND issuetype != "Tarea Programada" ORDER BY created DESC`;

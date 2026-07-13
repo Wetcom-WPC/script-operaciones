@@ -2,7 +2,7 @@ function verTiposDeIssueValidos() {
   // PONE AQUÍ LA KEY DEL PROYECTO QUE DA ERROR (ej: "COM", "SOP")
   const PROJECT_KEY = "WPC"; 
   
-  const endpoint = `https://wetcom.atlassian.net/rest/api/2/issue/createmeta?projectKeys=${PROJECT_KEY}&expand=projects.issuetypes`;
+  const endpoint = `${JIRA_DOMAIN}/rest/api/2/issue/createmeta?projectKeys=${PROJECT_KEY}&expand=projects.issuetypes`;
   const options = {
     "method": "get",
     "headers": { "Authorization": `Basic ${JIRA_AUTH_TOKEN_BASE_64}` },

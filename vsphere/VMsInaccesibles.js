@@ -81,7 +81,7 @@ function processSingleInaccessibleVMMessage(message, summaryReport) {
   if (finalAlerts.length === 0) {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **La anomalía no persiste.** El último reporte de VMs inaccesibles no contiene alertas válidas.");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
@@ -102,7 +102,7 @@ function processSingleInaccessibleVMMessage(message, summaryReport) {
         commentText += `| ${rowData.map(cell => (cell || "").trim()).join(" | ")} |\n`;
       });
       addCommentToJiraTicket(existingTicketKey, commentText);
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
     } else {
       const newFileName = attachment.getName().replace(/\.csv$/i, "-FILTRADO.xlsx");
       const xlsxBlob = convertDataToXlsxBlob([originalHeaders, ...finalAlerts], newFileName);
@@ -111,7 +111,7 @@ function processSingleInaccessibleVMMessage(message, summaryReport) {
       if (attachmentStatus.status === 'SUCCESS') {
         commentText += `Se adjunta el reporte actualizado con **${alertCount}** VMs inaccesibles.`;
         addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
+        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
         const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, INACCESSIBLE_OPERATION_NAME); 
           if (accountIdAsignado) {
              ticketInformativo(existingTicketKey, accountIdAsignado);

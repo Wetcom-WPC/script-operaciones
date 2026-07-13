@@ -125,7 +125,7 @@ function processSingleVMMessage(message, summaryReport) {
   if (finalAlerts.length === 0) {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **La anomalía no persiste.** El último reporte recibido no muestra alertas.");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
@@ -145,7 +145,7 @@ function processSingleVMMessage(message, summaryReport) {
         commentText += `| ${rowData.map(cell => (cell || "").trim()).join(" | ")} |\n`;
       });
       addCommentToJiraTicket(existingTicketKey, commentText);
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
+      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
     } else {
       const newFileName = attachment.getName().replace(/\.csv$/i, "-FILTRADO.xlsx");
       const xlsxBlob = convertDataToXlsxBlob([allRows[0], ...finalAlerts], newFileName);
@@ -154,7 +154,7 @@ function processSingleVMMessage(message, summaryReport) {
       if (attachmentStatus.status === 'SUCCESS') {
         commentText += `Se adjunta el reporte actualizado con **${alertCount}** VMs afectadas.`;
         addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <https://wetcom.atlassian.net/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
+        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
         const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, VM_OPERATION_NAME); 
           if (accountIdAsignado) {
              ticketInformativo(existingTicketKey, accountIdAsignado);
@@ -207,4 +207,5 @@ function analyzeVMsOperativas_CSV(emailSubject, attachmentName, headers, finalAl
   }
   return createTicketAndNotify(summary, description, xlsxBlob, clientConfig,VM_OPERATION_NAME);
 }
+
 

@@ -68,7 +68,7 @@ function generarReporteDiarioDeTickets(filtroId) {
     let total = -1;
 
     do {
-      const baseUrl = `https://wetcom.atlassian.net/rest/api/3/search/jql`;
+      const baseUrl = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
       const jql = `filter = ${idAUsar}`;
       const fields = `summary,project,key,${CAMPO_TECNOLOGIA_ID}`;
       const endpoint = `${baseUrl}?jql=${encodeURIComponent(jql)}&startAt=${inicio}&maxResults=100&fields=${encodeURIComponent(fields)}`;
@@ -105,7 +105,7 @@ function generarReporteDiarioDeTickets(filtroId) {
       
       // Si por alguna razón no está en el Excel, usamos un valor por defecto o evitamos el undefined
       const portalPath = serviceDeskId ? serviceDeskId : "portal-no-encontrado";
-      const link = `https://wetcom.atlassian.net/servicedesk/customer/portal/${portalPath}/${issue.key}`;
+      const link = `${JIRA_DOMAIN}/servicedesk/customer/portal/${portalPath}/${issue.key}`;
       
       if (!ticketsAgrupados[equipo]) ticketsAgrupados[equipo] = {};
       if (!ticketsAgrupados[equipo][nombreProyectoJira]) ticketsAgrupados[equipo][nombreProyectoJira] = {};
