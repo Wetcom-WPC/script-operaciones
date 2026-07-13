@@ -17,7 +17,7 @@
 
 // ─── CONFIGURACIÓN ───────────────────────────────────────────────────────────
 
-const LOG_SHEET_ID              = "1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ";
+const LOG_SHEET_ID              = PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID");
 const LOG_ESTADO_FINAL_TAB_NAME = "Estado Final";
 const LOG_ERRORES_TAB_NAME      = "Errores del Script";
 const LOG_MAILS_TAB_NAME        = "Envío de Mails";

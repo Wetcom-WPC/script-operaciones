@@ -11,7 +11,7 @@
  */
 function generarReporteTareasCerradas() {
   
-  const accountId = "557058:ecc91d93-c16f-46d1-b6ea-0527936e8a4c"; 
+  const accountId = PropertiesService.getScriptProperties().getProperty("JIRA_DEFAULT_ASSIGNEE_ID"); 
   const ahora = new Date();
   ahora.setHours(0, 0, 0, 0);
   const inicioDelDia = Utilities.formatDate(ahora, Session.getScriptTimeZone(), "yyyy-MM-dd HH:mm");
@@ -81,4 +81,5 @@ function generarReporteTareasCerradas() {
     Logger.log(`Error crítico al generar el reporte de tareas cerradas: ${e.message}`);
   }
 }
+
 

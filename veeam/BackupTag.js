@@ -11,7 +11,7 @@ function enviarMailBackupPorTagDiarios() {
   const archivo2 = "ReporteVeeamv123_vcenter.xlsx";
 
   // ID de la carpeta raíz donde están las carpetas YYYYMMDD
-  const ROOT_FOLDER_ID = "1VllNqvkjruw173C1LYHRoZrMIqhkfdKL";
+  const ROOT_FOLDER_ID = PropertiesService.getScriptProperties().getProperty("DRIVE_RVTOOLS_LIC_FOLDER_ID");
 
   // === FECHA ===
   const hoy = new Date();
@@ -87,5 +87,6 @@ Saludos.`;
 
   const tareaProgamada = buscarYCerrarTareaProgramada(BACKUP_SCHEDULED_TASK_NAME_TO_CLOSE,clientConfig, false)
 }
+
 
 

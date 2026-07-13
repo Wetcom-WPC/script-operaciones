@@ -4,7 +4,7 @@
  */
 
 // 1. REEMPLAZA ESTA URL CON EL WEBHOOK DE TU CANAL DE SLACK
-const SLACK_WEBHOOK_URL_COMAFI = "https://hooks.slack.com/services/REDACTED"; 
+const SLACK_WEBHOOK_URL_COMAFI = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_COMAFI"); 
 
 function enviarAlertaPasswordMiqueas() {
   

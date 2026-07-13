@@ -5,14 +5,15 @@
  */
 
 const WEBHOOKS_POR_POD = {
-  "POD1": "https://hooks.slack.com/services/REDACTED",
-  "POD2": "https://hooks.slack.com/services/REDACTED",
-  "POD3": "https://hooks.slack.com/services/REDACTED",
-  "POD4": "https://hooks.slack.com/services/REDACTED",
-  "POD5": "https://hooks.slack.com/services/REDACTED"
+  "POD1":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_1"),
+  "POD2":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_2"),
+  "POD3":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_3"),
+  "POD4":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_4"),
+  "POD5":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_5"),
+  "DEFAULT": PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL")
 };
 
-const SPREADSHEET_ID = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
+const SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
 const HOJA_INDICE = "Sheet1";
 const HOJA_ADJUNTOS = "Adjuntos";
 
@@ -279,7 +280,7 @@ function enviarAlertaSlackPorPod(webhookUrl, mensaje) {
  */
 function esFeriadoHoy() {
   // ATENCIÓN: Reemplazá esto por el ID real de tu calendario de Alarmas Wetcom
-  const calendarId = 'alarmas@wetcom.com'; 
+  const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID"); 
   
   try {
     const calendario = CalendarApp.getCalendarById(calendarId);

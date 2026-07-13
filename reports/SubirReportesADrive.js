@@ -5,8 +5,8 @@
  */
 
 function organizarReportesEnDrive() {
-  var idCarpetaPrincipal = "1RZOjoQdpcT1IB2qiJSvTvZH-R3set9Bq";
-  var idHojaCalculo = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
+  var idCarpetaPrincipal = PropertiesService.getScriptProperties().getProperty("DRIVE_AVISO_BASE_FOLDER_ID");
+  var idHojaCalculo = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
   var horasAtras = 2; 
 
   guardarYConvertirAdjuntosEnDrive(idCarpetaPrincipal, idHojaCalculo, horasAtras);

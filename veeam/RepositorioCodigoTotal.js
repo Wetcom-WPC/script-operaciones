@@ -3,8 +3,8 @@
  * y envía un reporte de ejecución al canal de Slack de Logs.
  */
 function consolidarCodigoParaGemini() {
-  const SLACK_WEBHOOK_LOGS = "https://hooks.slack.com/services/REDACTED";
-  const docId = '1mAmZDdF_RN0e_pgdftvJG9d69S4fc9dkklD3cbI6ibw'; 
+  const SLACK_WEBHOOK_LOGS = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_LOGS");
+  const docId = PropertiesService.getScriptProperties().getProperty("DOC_MEMORIA_INTERNA_ID"); 
   const nombreCarpeta = '🚗Automatizaciones'; 
   const hoy = new Date();
   
@@ -108,3 +108,4 @@ function enviarLogSlack(webhookUrl, texto) {
   
   UrlFetchApp.fetch(webhookUrl, opciones);
 }
+

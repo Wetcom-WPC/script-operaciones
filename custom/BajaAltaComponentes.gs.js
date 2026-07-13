@@ -3,15 +3,15 @@
 // ==========================================
 
 // Pega aquí el link completo de tu Google Sheet en Drive
-const LINK_DE_LA_SHEET = "https://docs.google.com/spreadsheets/d/1FBHC3-yJh40h7SEhma1lg-sTknXE3oa9ekGDVRqncW4/edit";
+const LINK_DE_LA_SHEET = PropertiesService.getScriptProperties().getProperty("DEBUG_SHEET_URL");
 
 // CONFIGURACIÓN: Tus Webhooks de Slack
 const SLACK_WEBHOOKS = {
-  "POD1": "https://hooks.slack.com/services/REDACTED",
-  "POD2": "https://hooks.slack.com/services/REDACTED",
-  "POD3": "https://hooks.slack.com/services/REDACTED",
-  "POD4": "https://hooks.slack.com/services/REDACTED",
-  "POD5": "https://hooks.slack.com/services/REDACTED"
+  "POD1": PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL"),
+  "POD2": PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL"),
+  "POD3": PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL"),
+  "POD4": PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL"),
+  "POD5": PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL")
 };
 
 // ==========================================
@@ -100,3 +100,4 @@ function enviarASlack(webhookUrl, mensaje) {
     Logger.log("Error al enviar a Slack: " + error.toString());
   }
 }
+

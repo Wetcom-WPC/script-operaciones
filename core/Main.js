@@ -155,7 +155,7 @@ function resetearEjecucion() {
 }
 
 function esFeriadoHoy() {
-  const calendarId = 'alarmas@wetcom.com'; 
+  const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID"); 
   try {
     const calendario = CalendarApp.getCalendarById(calendarId);
     if (!calendario) return false;

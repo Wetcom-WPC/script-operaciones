@@ -8,7 +8,7 @@
  */
 
 const LICENCIAS_OPERATION_NAME = "Auditoría de Licencias";
-const ID_HOJA_CONFIGURACION = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU"; 
+const ID_HOJA_CONFIGURACION = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID"); 
 const NOMBRE_PESTANA_CONFIG = "Licencias"; 
 
 const LICENSE_TAB_NAME = "vLicense";
@@ -280,7 +280,7 @@ function esUltimoDiaHabilMes() {
   // 1. Intentar obtener los feriados del mes usando el calendario de Google
   let feriadosDelMes = [];
   try {
-    const calendarId = 'es.ar#holiday@group.v.calendar.google.com'; // Calendario oficial AR
+    const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID"); // Calendario oficial AR
     const cal = CalendarApp.getCalendarById(calendarId);
     
     if (cal) {

@@ -3,10 +3,10 @@
 // =======================
 
 // ID de la carpeta DONDE ESTÁN los archivos originales (Origen)
-const ID_CARPETA_ORIGEN = "1anPUeGwRG1K7ljWmxKCQb8X0uPiJ4Sx0";
+const ID_CARPETA_ORIGEN = PropertiesService.getScriptProperties().getProperty("DRIVE_REPORTES_ORIG_FOLDER_ID");
 
 // ID de la carpeta DONDE SE GUARDARÁN las copias (Destino)
-const ID_CARPETA_DESTINO = "1Uj1fsvF-TqbHyRzwXkYWISVmad2L_lC1";
+const ID_CARPETA_DESTINO = PropertiesService.getScriptProperties().getProperty("DRIVE_REPORTES_DEST_FOLDER_ID");
 
 // Lista exacta de nombres de archivos a copiar
 // (Respeta mayúsculas, minúsculas y espacios tal cual están en Drive)

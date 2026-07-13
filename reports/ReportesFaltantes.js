@@ -3,11 +3,11 @@
  * CONFIGURACIÓN Y CONSTANTES GLOBALES
  * ======================================================================
  */
-const SLACK_WEBHOOK_URL_YASC = "https://hooks.slack.com/services/REDACTED";
-//LOGS:"https://hooks.slack.com/services/REDACTED"
+const SLACK_WEBHOOK_URL_YASC = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_YASC");
+//LOGS:PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_YASC")
 // POD-WPC: https://hooks.slack.com/services/REDACTED
 
-const ID_HOJA_MAESTRA = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
+const ID_HOJA_MAESTRA = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
 // LOG_SHEET_ID ya está declarada globalmente en el repo (OperationsLogger.gs) — no redeclarar.
 
 const NOMBRE_PESTANA_MAESTRA = "Reportes Faltantes";
@@ -207,7 +207,7 @@ function enviarNotificacionSlack(reportesFaltantes, totalFaltantes, fechaHoy) {
     payload = { "blocks": [
       { "type": "header",  "text": { "type": "plain_text", "text": "🚨 Alerta: Reportes no recibidos", "emoji": true } },
       { "type": "section", "text": { "type": "mrkdwn", "text": `*Fecha:* ${fechaStr}\n${mensajePrincipal}` } },
-      { "type": "section", "text": { "type": "mrkdwn", "text": "🔗 *Links útiles:*\n• <https://docs.google.com/spreadsheets/d/1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ/edit?gid=577353825#gid=577353825| Registro de Reportes Faltantes>" } },
+      { "type": "section", "text": { "type": "mrkdwn", "text": "🔗 *Links útiles:*\n• <https://docs.google.com/spreadsheets/d/`" + PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID") + `"/edit?gid=577353825#gid=577353825| Registro de Reportes Faltantes>" } },
       { "type": "divider" },
       { "type": "section", "text": { "type": "mrkdwn", "text": detalles } }
     ]};
@@ -245,3 +245,5 @@ function crearTriggerAuditoriaDiaria() {
 
   Logger.log("✅ Activador creado con éxito. Se ejecutará todos los días entre las 08:00 y las 09:00 hs.");
 }
+
+

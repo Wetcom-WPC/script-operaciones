@@ -5,9 +5,9 @@
  */
 
 // --- 1. CONFIGURACIÓN GLOBAL ---
-const JIRA_FILTER_VSPHERE = "24647"; 
-const JIRA_FILTER_VEEAM   = "27659";   
-const JIRA_FILTER_NUTANIX = "28945"; // <-- NUEVO FILTRO
+const JIRA_FILTER_VSPHERE = PropertiesService.getScriptProperties().getProperty("JIRA_FILTER_VSPHERE_DIARIO"); 
+const JIRA_FILTER_VEEAM   = PropertiesService.getScriptProperties().getProperty("JIRA_FILTER_VEEAM");   
+const JIRA_FILTER_NUTANIX = PropertiesService.getScriptProperties().getProperty("JIRA_FILTER_NUTANIX"); // <-- NUEVO FILTRO
 const EMAIL_CC_GLOBAL     = "wpc@wetcom.com";
 
 // --- 2. FUNCIONES DE EJECUCIÓN ---

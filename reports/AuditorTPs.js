@@ -4,14 +4,14 @@
  */
 
 // --- CONFIGURACIÓN DE JIRA ---
-const JIRA_DOMAIN = "https://wetcom.atlassian.net"; // Reemplazar con tu dominio de Jira
-const JIRA_EMAIL = "thiago.chinabro@wetcom.com"; // Reemplazar con el email del usuario de Jira
-const JIRA_API_TOKEN = "REDACTED"; // 
-const JIRA_FILTER_ID = "29682";
+const JIRA_DOMAIN = PropertiesService.getScriptProperties().getProperty("JIRA_DOMAIN"); // Reemplazar con tu dominio de Jira
+const JIRA_EMAIL = PropertiesService.getScriptProperties().getProperty("JIRA_EMAIL"); // Reemplazar con el email del usuario de Jira
+const JIRA_API_TOKEN = PropertiesService.getScriptProperties().getProperty("JIRA_API_TOKEN"); // 
+const JIRA_FILTER_ID = PropertiesService.getScriptProperties().getProperty("JIRA_FILTER_AUDITOR_TPS"); // ID del filtro en Jira
 
 // --- CONFIGURACIÓN DE SLACK ---
 // Reemplazar con el webhook del canal donde querés que llegue el aviso
-const SLACK_WEBHOOK_TP = "https://hooks.slack.com/services/REDACTED"; 
+const SLACK_WEBHOOK_TP = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_TPS"); 
 
 function alertarTareasNoCerradasJira() {
   const hoy = new Date();
@@ -144,7 +144,7 @@ function enviarMensajeSlack(webhookUrl, texto) {
 }
 
 function esFeriadoHoy() {
-  const calendarId = 'alarmas@wetcom.com'; 
+  const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID"); 
   try {
     const calendario = CalendarApp.getCalendarById(calendarId);
     if (!calendario) return false;
@@ -155,4 +155,5 @@ function esFeriadoHoy() {
     return false;
   }
 }
+
 

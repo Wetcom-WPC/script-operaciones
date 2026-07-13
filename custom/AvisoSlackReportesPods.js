@@ -10,17 +10,17 @@
 
 // ─── CONFIGURACIÓN ───────────────────────────────────────────────────────────
 
-var AVISO_BASE_FOLDER_ID  = "1RZOjoQdpcT1IB2qiJSvTvZH-R3set9Bq"; // DRIVE WPC
-var AVISO_CONFIG_SHEET_ID = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU"; // Índice General
+var AVISO_BASE_FOLDER_ID  = PropertiesService.getScriptProperties().getProperty("DRIVE_AVISO_BASE_FOLDER_ID"); // DRIVE WPC
+var AVISO_CONFIG_SHEET_ID = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID"); // Índice General
 var AVISO_CONFIG_TAB_NAME = "Configuracion Reportes";
 
 var AVISO_WEBHOOKS = {
-  "POD1":    "https://hooks.slack.com/services/REDACTED",
-  "POD2":    "https://hooks.slack.com/services/REDACTED",
-  "POD3":    "https://hooks.slack.com/services/REDACTED",
-  "POD4":    "https://hooks.slack.com/services/REDACTED",
-  "POD5":    "https://hooks.slack.com/services/REDACTED",
-  "DEFAULT": "https://hooks.slack.com/services/REDACTED"
+  "POD1":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_1"),
+  "POD2":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_2"),
+  "POD3":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_3"),
+  "POD4":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_4"),
+  "POD5":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_5"),
+  "DEFAULT": PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL")
 };
 
 // ─── FUNCIÓN PRINCIPAL ───────────────────────────────────────────────────────
@@ -225,3 +225,4 @@ function crearTriggerVerificarReporte() {
     .create();
   Logger.log("✅ Trigger diario creado para verificarReporte a las 8am.");
 }
+

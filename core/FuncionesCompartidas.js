@@ -429,7 +429,8 @@ function getClientConfig(senderEmail, operationName, soporte = false) {
     }
     const domain = "@" + domainMatch[1].trim();
 
-    const masterSheet = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID).getSheets()[0];
+    var idHojaCalculo = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
+    const masterSheet = SpreadsheetApp.openById(idHojaCalculo).getSheets()[0];
     const masterData = masterSheet.getDataRange().getValues();
     const clientRow = masterData.find(row => row[0].toLowerCase() === domain.toLowerCase());
 
@@ -600,7 +601,7 @@ function createTicketAndNotify(summary, description, attachmentBlob, clientConfi
         attachmentStatus = attachmentResult; 
       }
     }
-    const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, operationName);
+    const accountIdAsignado = PropertiesService.getScriptProperties().getProperty("JIRA_DEFAULT_ASSIGNEE_ID") || chequearSiEsInformativa(clientConfig.clientName, operationName);
     if (accountIdAsignado) {
         ticketInformativo(issue.issueKey, accountIdAsignado);
         if (attachmentStatus) return attachmentStatus; 

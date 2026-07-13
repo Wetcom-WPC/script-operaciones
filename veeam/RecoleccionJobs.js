@@ -12,7 +12,7 @@ function enviarMailRecoleccionDiarios() {
   const destinatario = "mara.cannella@comafi.com.ar,ulises.nunez@comafi.com.ar,Gustavo.Rodriguez@comafi.com.ar,emiliano.chiarini@comafi.com.ar";
   const ccDestinatario = "pod2@wetcom.com,wpc@wetcom.com,wpc@wetcom.com";
   // ID de la carpeta raíz donde están las carpetas YYYYMMDD
-  const ROOT_FOLDER_ID = "1OBjILy44I8DaYhRmYL3Sl-XHvrp9GAGB";
+  const ROOT_FOLDER_ID = PropertiesService.getScriptProperties().getProperty("DRIVE_RVTOOLS_ZOMB_FOLDER_ID");
 
   // === FECHA ===
   const hoy = new Date();
