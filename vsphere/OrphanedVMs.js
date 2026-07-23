@@ -1,179 +1,142 @@
 /**
  * @fileoverview Lógica específica para procesar reportes de "Orphaned VMs".
- * Detecta VMs huérfanas en el reporte Excel (v12) o CSV "Details" (v13).
- * ACTUALIZADO: 
- * 1. COMPATIBILIDAD V13: Procesa automáticamente CSV mapeando "Workload Name" a "VMs".
- * 2. Filtra secciones completas de "Backup to tape".
- * 3. APLICA ESTILO: Usa la función compartida generateStyledReportBlob (Siempre saca Excel).
- * 4. SOLUCIÓN TICKETS: Escribe en el ticket de incidente (Verde) ignorando Tareas Programadas.
- * 5. CORRECCIÓN EXCEPCIONES: Usa isRowExcepted de FuncionesCompartidas.
- * 6. SOPORTE ZIP Y CIERRE TEMPRANO: Descomprime dinámicamente reportes (Appliance Linux) y cierra Tareas en Jira si el ZIP está vacío.
- * * REQUIERE: Servicio "Drive API" activado (v3).
+ * Refactorizado utilizando la clase base MailProcessor.
  */
 
-// --- CONFIGURACIÓN ESPECÍFICA DE LA TAREA ---
 const ORPHANED_VMS_OPERATION_NAME = "Orphaned VMs"; 
-
-// Variables de búsqueda
 const ORPHANED_VMS_EMAIL_SUBJECT = "Orphaned VMs"; 
 const ORPHANED_VMS_FILENAME_MATCH = "Orphaned VMs"; 
 const ORPHANED_VMS_TASK_NAME = "Orphaned VMs"; 
 const ORPHANED_VMS_TICKET_SUMMARY = "Se detectaron Orphaned VMs"; 
 
-// --- FUNCIÓN PRINCIPAL (TRIGGER) ---
-
-function processOrphanedVMsEmails() {
-  const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
-  
-  const searchQuery = construirBusquedaGmail(ORPHANED_VMS_EMAIL_SUBJECT);
-  const threads = GmailApp.search(searchQuery);
-
-  if (threads.length > 0) {
-    threads.forEach(thread => {
-      const message = thread.getMessages()[thread.getMessageCount() - 1];
-      if (message.isUnread()) {
-        try {
-          const processingStatus = processSingleOrphanedVMsMessage(message, summaryReport);
-          if (processingStatus !== 'HTTP_500') {
-             thread.markRead();
-          }
-        } catch (e) {
-          summaryReport.errores.push({ error: `Error Crítico en Script ${ORPHANED_VMS_OPERATION_NAME}: ${e.message}`, detalle: `Stack: ${e.stack}` });
-        }
-      }
+class OrphanedVMsProcessor extends MailProcessor {
+  constructor() {
+    super({
+      operationName: ORPHANED_VMS_OPERATION_NAME,
+      emailSubject: ORPHANED_VMS_EMAIL_SUBJECT,
+      attachmentMatch: ORPHANED_VMS_FILENAME_MATCH,
+      scheduledTaskName: ORPHANED_VMS_TASK_NAME
     });
   }
-  
-  enviarResumenSlack(ORPHANED_VMS_OPERATION_NAME, summaryReport);
-}
 
+  findAttachment(message) {
+    const subjectLower = message.getSubject().toLowerCase();
+    if (!subjectLower.includes(this.emailSubject.toLowerCase())) return null;
 
-// --- LÓGICA DE PROCESAMIENTO ---
+    let filesToEvaluate = [];
+    const searchString = this.attachmentMatch.toLowerCase().trim();
 
-function processSingleOrphanedVMsMessage(message, summaryReport) {
-  Logger.log(`--- Iniciando procesamiento para [${ORPHANED_VMS_OPERATION_NAME}] del correo: "${message.getSubject()}" ---`);
-  
-  const subjectLower = message.getSubject().toLowerCase();
-  const requiredSubjectPart = ORPHANED_VMS_EMAIL_SUBJECT.toLowerCase();
-
-  if (!subjectLower.includes(requiredSubjectPart)) {
-    Logger.log(`El asunto "${message.getSubject()}" no contiene la frase requerida "${ORPHANED_VMS_EMAIL_SUBJECT}". Se omite.`);
-    return 'SUCCESS'; 
-  }
-
-  const senderEmail = message.getFrom();
-  const searchString = ORPHANED_VMS_FILENAME_MATCH.toLowerCase().trim();
-
-  // --- CONFIGURACIÓN ESPECIAL PARA COMAFI ---
-  const isComafi = senderEmail.toLowerCase().includes("@comafi.com.ar"); 
-  if (isComafi) {
-    Logger.log("MODO COMAFI DETECTADO: Ticket interno forzado (Tarea A Demanda).");
-  }
-
-  // --- 1. CONFIGURACIÓN DEL CLIENTE (Movido arriba para el cierre temprano) ---
-  const clientConfig = getClientConfig(senderEmail, ORPHANED_VMS_OPERATION_NAME);
-  if (!clientConfig) {
-    summaryReport.errores.push({ error: "Configuración de cliente no encontrada.", detalle: `Remitente: ${senderEmail}` });
-    return 'FAILURE';
-  }
-  clientConfig.tecnologia = "Veeam Backup & Replication"; // Siempre Veeam
-  if (isComafi) clientConfig.requestParticipants = []; 
-
-  // --- 2. LÓGICA DE DETECCIÓN DUAL Y ZIP ---
-  let attachmentToUse = null;
-  let isV13 = false;
-  let filesToEvaluate = [];
-
-  message.getAttachments().forEach(att => {
-    const attNameLower = att.getName().toLowerCase();
-    if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
-      try {
-        const unzippedBlobs = Utilities.unzip(att.copyBlob());
-        filesToEvaluate = filesToEvaluate.concat(unzippedBlobs);
-        Logger.log(`Archivo ZIP detectado y descomprimido: ${att.getName()}`);
-      } catch(e) {
-        Logger.log(`Error al descomprimir ${att.getName()}: ${e.message}`);
+    message.getAttachments().forEach(att => {
+      const attNameLower = att.getName().toLowerCase();
+      if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
+        try {
+          const unzippedBlobs = Utilities.unzip(att.copyBlob());
+          filesToEvaluate = filesToEvaluate.concat(unzippedBlobs);
+        } catch(e) { }
+      } else {
+        filesToEvaluate.push(att.copyBlob());
       }
+    });
+
+    const attachmentExcel = filesToEvaluate.find(blob => {
+      const name = blob.getName().toLowerCase();
+      return name.includes(searchString) && name.endsWith(".xlsx");
+    });
+
+    const attachmentCsv = filesToEvaluate.find(blob => {
+      const name = blob.getName().toLowerCase();
+      return name.includes("details") && name.endsWith(".csv");
+    });
+
+    if (attachmentExcel) {
+      this.isV13 = false;
+      return attachmentExcel;
+    } else if (attachmentCsv) {
+      this.isV13 = true;
+      return attachmentCsv;
+    }
+
+    // Return dummy object so we can catch it in parseAttachment and close task
+    return { isDummy: true, getName: () => "dummy" };
+  }
+
+  resolveClientConfig(config, senderEmail, attachment, message, summaryReport) {
+    if (config) {
+      config.tecnologia = "Veeam Backup & Replication";
+      const isComafi = senderEmail.toLowerCase().includes("@comafi.com.ar"); 
+      if (isComafi) config.requestParticipants = []; 
+      config.isComafi = isComafi;
+    }
+    this.currentClientConfig = config;
+    return config;
+  }
+
+  parseAttachment(attachment, summaryReport) {
+    if (attachment.isDummy) {
+      if (!this.currentClientConfig.isComafi) {
+        const closeResult = buscarYCerrarTareaProgramada(this.scheduledTaskName, this.currentClientConfig, false);
+        if (closeResult && closeResult.status === 'SUCCESS') {
+          summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
+        }
+      }
+      return []; // Return empty so it triggers isDataEmpty and halts smoothly
+    }
+    
+    try {
+      if (this.isV13) {
+        const csvString = attachment.getDataAsString();
+        return Utilities.parseCsv(csvString);
+      } else {
+        return convertOrphanedExcelToData(attachment);
+      }
+    } catch (e) {
+      summaryReport.errores.push({ error: `Fallo al leer el archivo ${this.isV13 ? 'CSV' : 'Excel'}.`, detalle: e.message });
+      return null;
+    }
+  }
+
+  processData(parsedData, clientConfig, summaryReport) {
+    let filteredData;
+    if (this.isV13) {
+      filteredData = filterOrphanedVMsDataV13(parsedData, clientConfig.exceptions);
     } else {
-      filesToEvaluate.push(att.copyBlob());
+      filteredData = filterOrphanedVMsData(parsedData, clientConfig.exceptions);
     }
-  });
 
-  const attachmentExcel = filesToEvaluate.find(blob => {
-    const name = blob.getName().toLowerCase();
-    return name.includes(searchString) && name.endsWith(".xlsx");
-  });
-
-  const attachmentCsv = filesToEvaluate.find(blob => {
-    const name = blob.getName().toLowerCase();
-    return name.includes("details") && name.endsWith(".csv");
-  });
-
-  if (attachmentExcel) {
-    attachmentToUse = attachmentExcel;
-    Logger.log("MODO V12 DETECTADO: Procesando Excel Clásico.");
-  } else if (attachmentCsv) {
-    attachmentToUse = attachmentCsv;
-    isV13 = true;
-    Logger.log("MODO V13 DETECTADO: Procesando CSV 'Details'.");
+    return { 
+      headers: [], 
+      finalAlerts: filteredData.rows, 
+      rowsForExport: filteredData.rows, 
+      reasonsText: filteredData.vmCount
+    };
   }
 
-  // --- 3. ESCAPE TEMPRANO CON CIERRE DE TAREA ---
-  if (!attachmentToUse) {
-    Logger.log(`No se encontró un adjunto válido (Ni Excel V12, ni CSV V13). Cerrando Tarea Programada por reporte vacío.`);
-    if (!isComafi) {
-      const closeResult = buscarYCerrarTareaProgramada(ORPHANED_VMS_TASK_NAME, clientConfig, false);
-      if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-    }
-    return 'SUCCESS'; 
+  findExistingTicket(clientConfig) {
+    if (clientConfig.isComafi) return null;
+    return findTargetReportTicket(ORPHANED_VMS_TICKET_SUMMARY, clientConfig.jiraProjectKey);
   }
 
-  // --- 4. LECTURA Y FILTRADO DE DATOS ---
-  let rawRows = [];
-  try {
-    if (isV13) {
-      const csvString = attachmentToUse.getDataAsString();
-      rawRows = Utilities.parseCsv(csvString);
-    } else {
-      rawRows = convertOrphanedExcelToData(attachmentToUse);
-    }
-  } catch (e) {
-    summaryReport.errores.push({ error: `Fallo al leer el archivo ${isV13 ? 'CSV' : 'Excel'}.`, detalle: e.message });
-    return 'FAILURE';
-  }
-  
-  let filteredData;
-  if (isV13) {
-    filteredData = filterOrphanedVMsDataV13(rawRows, clientConfig.exceptions);
-  } else {
-    filteredData = filterOrphanedVMsData(rawRows, clientConfig.exceptions);
-  }
-
-  const finalAlerts = filteredData.rows; 
-  const alertCount = filteredData.vmCount; 
-
-  // --- 5. GESTIÓN DE TICKETS ---
-  let existingTicketKey = null;
-  if (!isComafi) {
-    existingTicketKey = findTargetReportTicket(ORPHANED_VMS_TICKET_SUMMARY, clientConfig.jiraProjectKey);
-  }
-
-  if (alertCount === 0) {
-    if (existingTicketKey && !isComafi) {
+  handleNoAlerts(existingTicketKey, clientConfig, summaryReport) {
+    if (existingTicketKey && !clientConfig.isComafi) {
       addCommentToJiraTicket(existingTicketKey, "✅ **Anomalía resuelta.** El reporte actual no muestra Orphaned VMs pendientes.");
       summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
     
-    if (!isComafi) {
-      const closeResult = buscarYCerrarTareaProgramada(ORPHANED_VMS_TASK_NAME, clientConfig, false);
-      if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
+    if (!clientConfig.isComafi) {
+      const closeResult = buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+      if (closeResult && closeResult.status === 'SUCCESS') {
+        summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
+      }
     }
-    return 'SUCCESS';
+    return { status: 'SUCCESS' };
+  }
 
-  } else {
-    const baseName = attachmentToUse.getName().replace(/\.(xlsx|csv)$/i, "");
+  handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
+    const alertCount = reasonsText;
+    
+    const baseName = attachmentName.replace(/\.(xlsx|csv|zip)$/i, "");
     const newFileName = `${baseName} - FILTRADO.xlsx`;
     const xlsxBlob = generateStyledReportBlob(finalAlerts, newFileName, [], "VMs");
     
@@ -184,22 +147,22 @@ function processSingleOrphanedVMsMessage(message, summaryReport) {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Ticket existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> actualizado con evidencia.` });
         
-        const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, ORPHANED_VMS_OPERATION_NAME); 
+        const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName); 
         if (accountIdAsignado) ticketInformativo(existingTicketKey, accountIdAsignado);
           
-        const closeResult = buscarYCerrarTareaProgramada(ORPHANED_VMS_TASK_NAME, clientConfig, false);
-        if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-        return 'SUCCESS';
+        const closeResult = buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
+        return { status: 'SUCCESS' };
       } else {
         summaryReport.advertencias.push(attachmentResult.detail);
-        return attachmentResult.status;
+        return { status: attachmentResult.status };
       }
     } else {
       const summary = ORPHANED_VMS_TICKET_SUMMARY;
       const description = `Se han detectado ${alertCount} Orphaned VMs (Máquinas presentes en archivos de backup pero que ya no existen en los jobs de respaldo).\n\nEsto implica consumo innecesario de almacenamiento. Ver adjunto para detalles.`;
       
       let creationResult;
-      if (isComafi) {
+      if (clientConfig.isComafi) {
         creationResult = createInternalTicketLocal(summary, description, xlsxBlob, clientConfig);
       } else {
         creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, ORPHANED_VMS_EMAIL_SUBJECT);
@@ -207,20 +170,25 @@ function processSingleOrphanedVMsMessage(message, summaryReport) {
       
       if (creationResult.status === 'SUCCESS') {
         summaryReport.exitos.push(creationResult.detail);
-        if (!isComafi) {
-          const closeResult = buscarYCerrarTareaProgramada(ORPHANED_VMS_TASK_NAME, clientConfig, false);
-          if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
+        if (!clientConfig.isComafi) {
+          const closeResult = buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+          if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
         }
       } else if (creationResult.status === 'ERROR') {
         summaryReport.errores.push(creationResult.detail);
       } else {
         summaryReport.advertencias.push(creationResult.detail);
       }
-      return creationResult.status;
+      return { status: creationResult.status };
     }
   }
 }
 
+function processOrphanedVMsEmails() {
+  new OrphanedVMsProcessor().processEmails();
+}
+
+// --- FUNCIONES AUXILIARES (CONSERVADAS) ---
 function filterOrphanedVMsDataV13(allRows, exceptions) {
   const resultRows = [];
   let vmCount = 0;

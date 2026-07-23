@@ -1,12 +1,6 @@
 /**
  * @fileoverview Lógica específica para procesar reportes de "VMs en más de un Job" (Formato Excel y V13 CSV).
- * Traduce la lógica de PowerShell para filtrar bloques de VMs con 2 o más jobs "Daily" o "Weekly".
- * APLICA ESTILO AVANZADO: Usa la función compartida generateStyledReportBlob.
- * SOLUCIÓN DE TICKETS: Excluye explícitamente el tipo "Tarea Programada" al buscar dónde adjuntar.
- * CORRECCIÓN EXCEPCIONES: Filtra individualmente los Jobs hijos antes de validar la condición de duplicidad.
- * MISMO DÍA: Solo alerta si 2+ jobs Daily/Weekly tienen su última ejecución el mismo día calendario.
- * SOPORTE V13/ZIP Y CIERRE TEMPRANO: Descomprime dinámicamente reportes, procesa CSVs planos y cierra tareas en Jira en ZIPs vacíos.
- * REQUIERE: Servicio "Drive API" activado (v3).
+ * Refactorizado utilizando la clase base MailProcessor.
  */
 
 // --- CONFIGURACIÓN ESPECÍFICA DE LA TAREA ---
@@ -16,148 +10,111 @@ const VMS_EN_MAS_DE_UN_JOB_FILENAME_MATCH = "VMs en mas de un Job";
 const VMS_EN_MAS_DE_UN_JOB_TASK_NAME = "VMs en mas de un Job"; 
 const VMS_EN_MAS_DE_UN_JOB_TICKET_SUMMARY = "Se detectaron VMs en mas de un Job"; 
 
-// --- FUNCIÓN PRINCIPAL (TRIGGER) ---
-
-function processDuplicateJobEmails() {
-  const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
-  
-  const searchQuery = construirBusquedaGmail(VMS_EN_MAS_DE_UN_JOB_EMAIL_SUBJECT);
-  const threads = GmailApp.search(searchQuery);
-
-  if (threads.length > 0) {
-    threads.forEach(thread => {
-      const message = thread.getMessages()[thread.getMessageCount() - 1];
-      if (message.isUnread()) {
-        try {
-          const processingStatus = processSingleDuplicateJobMessage(message, summaryReport);
-          if (processingStatus !== 'HTTP_500') {
-             thread.markRead();
-          }
-        } catch (e) {
-          summaryReport.errores.push({ error: `Error Crítico en Script ${VMS_EN_MAS_DE_UN_JOB_OPERATION_NAME}: ${e.message}`, detalle: `Stack: ${e.stack}` });
-        }
-      }
+class VMsEnMasDeUnJobProcessor extends MailProcessor {
+  constructor() {
+    super({
+      operationName: VMS_EN_MAS_DE_UN_JOB_OPERATION_NAME,
+      emailSubject: VMS_EN_MAS_DE_UN_JOB_EMAIL_SUBJECT,
+      attachmentMatch: VMS_EN_MAS_DE_UN_JOB_FILENAME_MATCH,
+      scheduledTaskName: VMS_EN_MAS_DE_UN_JOB_TASK_NAME
     });
   }
-  enviarResumenSlack(VMS_EN_MAS_DE_UN_JOB_OPERATION_NAME, summaryReport);
-}
 
-// --- LÓGICA DE PROCESAMIENTO Y FILTRADO ---
-
-function processSingleDuplicateJobMessage(message, summaryReport) {
-  Logger.log(`--- Iniciando procesamiento para [${VMS_EN_MAS_DE_UN_JOB_OPERATION_NAME}] del correo: "${message.getSubject()}" ---`);
-  
-  const subjectLower = message.getSubject().toLowerCase();
-  const requiredSubjectPart = VMS_EN_MAS_DE_UN_JOB_EMAIL_SUBJECT.toLowerCase();
-
-  if (!subjectLower.includes(requiredSubjectPart)) {
-    Logger.log(`El asunto no contiene la frase requerida "${VMS_EN_MAS_DE_UN_JOB_EMAIL_SUBJECT}". Se omite.`);
-    return 'SUCCESS'; 
+  resolveClientConfig(config, sender, attachment, message, summaryReport) {
+    if (config) {
+      config.tecnologia = "Veeam Backup & Replication";
+    }
+    return config;
   }
 
-  const senderEmail = message.getFrom();
-  const searchString = VMS_EN_MAS_DE_UN_JOB_FILENAME_MATCH.toLowerCase().trim();
+  findAttachment(message) {
+    let attachmentToUse = null;
+    let filesToEvaluate = [];
 
-  // --- 1. CONFIGURACIÓN DEL CLIENTE (Movido arriba) ---
-  const clientConfig = getClientConfig(senderEmail, VMS_EN_MAS_DE_UN_JOB_OPERATION_NAME);
-  if (!clientConfig) {
-    summaryReport.errores.push({ error: "Configuración de cliente no encontrada.", detalle: `Remitente: ${senderEmail}` });
-    return 'FAILURE';
-  }
-  clientConfig.tecnologia = "Veeam Backup & Replication"; 
-
-  // --- 2. SOPORTE ZIP Y DUALIDAD V12/V13 ---
-  let attachmentToUse = null;
-  let isV13 = false;
-  let filesToEvaluate = [];
-
-  message.getAttachments().forEach(att => {
-    const attNameLower = att.getName().toLowerCase();
-    if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
-      try {
-        const unzippedBlobs = Utilities.unzip(att.copyBlob());
-        filesToEvaluate = filesToEvaluate.concat(unzippedBlobs);
-        Logger.log(`Archivo ZIP detectado y descomprimido: ${att.getName()}`);
-      } catch(e) {
-        Logger.log(`Error al descomprimir ${att.getName()}: ${e.message}`);
+    message.getAttachments().forEach(att => {
+      const attNameLower = att.getName().toLowerCase();
+      if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
+        try {
+          const unzippedBlobs = Utilities.unzip(att.copyBlob());
+          filesToEvaluate = filesToEvaluate.concat(unzippedBlobs);
+        } catch(e) { }
+      } else {
+        filesToEvaluate.push(att.copyBlob());
       }
-    } else {
-      filesToEvaluate.push(att.copyBlob());
+    });
+
+    const searchString = this.attachmentMatch.toLowerCase().trim();
+
+    const attachmentExcel = filesToEvaluate.find(blob => {
+      const name = blob.getName().toLowerCase();
+      return name.includes(searchString) && name.endsWith(".xlsx");
+    });
+
+    const attachmentCsv = filesToEvaluate.find(blob => {
+      const name = blob.getName().toLowerCase();
+      return name.includes("details") && name.endsWith(".csv");
+    });
+
+    if (attachmentExcel) {
+      this.isV13 = false;
+      return attachmentExcel;
+    } else if (attachmentCsv) {
+      this.isV13 = true;
+      return attachmentCsv;
     }
-  });
-
-  const attachmentExcel = filesToEvaluate.find(blob => {
-    const name = blob.getName().toLowerCase();
-    return name.includes(searchString) && name.endsWith(".xlsx");
-  });
-
-  const attachmentCsv = filesToEvaluate.find(blob => {
-    const name = blob.getName().toLowerCase();
-    return name.includes("details") && name.endsWith(".csv");
-  });
-
-  if (attachmentExcel) {
-    attachmentToUse = attachmentExcel;
-    Logger.log("MODO V12 DETECTADO: Procesando Excel Clásico.");
-  } else if (attachmentCsv) {
-    attachmentToUse = attachmentCsv;
-    isV13 = true;
-    Logger.log("MODO V13 DETECTADO: Procesando CSV 'Details'.");
+    return null;
   }
 
-  // --- 3. ESCAPE TEMPRANO CON CIERRE DE TAREA ---
-  if (!attachmentToUse) {
-    Logger.log(`No se encontró un adjunto válido. Cerrando Tarea Programada por reporte vacío.`);
-    const closeResult = buscarYCerrarTareaProgramada(VMS_EN_MAS_DE_UN_JOB_TASK_NAME, clientConfig, false);
-    if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-    return 'SUCCESS'; 
-  }
-
-  // --- 4. LECTURA Y FILTRADO ---
-  let rawRows = [];
-  try {
-    if (isV13) {
-      const csvString = attachmentToUse.getDataAsString();
-      rawRows = Utilities.parseCsv(csvString);
-    } else {
-      rawRows = convertExcelBlobToData(attachmentToUse);
+  parseAttachment(attachment, summaryReport) {
+    try {
+      if (this.isV13) {
+        const csvString = attachment.getDataAsString();
+        return Utilities.parseCsv(csvString);
+      } else {
+        return convertExcelBlobToData(attachment);
+      }
+    } catch (e) {
+      summaryReport.errores.push({ error: `Fallo al leer el archivo.`, detalle: e.message });
+      return null;
     }
-  } catch (e) {
-    summaryReport.errores.push({ error: `Fallo al leer el archivo.`, detalle: e.message });
-    return 'FAILURE';
   }
-  
-  let filteredData;
-  if (isV13) {
-    filteredData = filterVMsWithMultipleDailyJobsV13(rawRows, clientConfig.exceptions);
-  } else {
-    filteredData = filterVMsWithMultipleDailyJobsFlattened(rawRows, clientConfig.exceptions);
-  }
-  
-  const finalAlerts = filteredData.rows; 
-  const alertCount = filteredData.vmCount; 
 
-  // --- 5. GESTIÓN DE TICKETS ---
-  const existingTicketKey = findTargetReportTicket(VMS_EN_MAS_DE_UN_JOB_TICKET_SUMMARY, clientConfig.jiraProjectKey);
-
-  if (alertCount === 0) {
-    if (existingTicketKey) {
-      addCommentToJiraTicket(existingTicketKey, "✅ **Anomalía resuelta.** El reporte actual no muestra VMs con jobs duplicados corriendo el mismo día.");
-      summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
+  processData(parsedData, clientConfig, summaryReport) {
+    let filteredData;
+    if (this.isV13) {
+      filteredData = filterVMsWithMultipleDailyJobsV13(parsedData, clientConfig.exceptions);
     } else {
-      summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
+      filteredData = filterVMsWithMultipleDailyJobsFlattened(parsedData, clientConfig.exceptions);
     }
-    
-    const closeResult = buscarYCerrarTareaProgramada(VMS_EN_MAS_DE_UN_JOB_TASK_NAME, clientConfig, false);
-    if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-    return 'SUCCESS';
 
-  } else {
-    const baseName = attachmentToUse.getName().replace(/\.(xlsx|csv)$/i, "");
+    if (filteredData.vmCount === 0) {
+      return { headers: [], finalAlerts: [], rowsForExport: [], reasonsText: "" };
+    }
+
+    const headers = filteredData.rows.length > 0 ? filteredData.rows[0] : [];
+    const finalAlerts = filteredData.rows.length > 1 ? filteredData.rows.slice(1) : [];
+
+    return { 
+      headers: headers, 
+      finalAlerts: finalAlerts, 
+      rowsForExport: finalAlerts, 
+      reasonsText: filteredData.vmCount.toString()
+    };
+  }
+
+  findExistingTicket(clientConfig) {
+    return findTargetReportTicket(VMS_EN_MAS_DE_UN_JOB_TICKET_SUMMARY, clientConfig.jiraProjectKey);
+  }
+
+  handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
+    const alertCount = parseInt(reasonsText, 10) || finalAlerts.length;
+    const baseName = attachmentName.replace(/\.(xlsx|csv|zip)$/i, "");
     const newFileName = `${baseName} - FILTRADO.xlsx`;
     const columnsToIgnore = ["Average VM Processing Time", "Average VM Transferred Data(GB)"];
-    const xlsxBlob = generateStyledReportBlob(finalAlerts, newFileName, columnsToIgnore, "Virtual Machine");
     
+    const dataForExport = [headers, ...finalAlerts];
+    const xlsxBlob = generateStyledReportBlob(dataForExport, newFileName, columnsToIgnore, "Virtual Machine");
+
     if (existingTicketKey) {
       const attachmentResult = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
       if (attachmentResult.status === 'SUCCESS') {
@@ -165,34 +122,32 @@ function processSingleDuplicateJobMessage(message, summaryReport) {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Ticket existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> actualizado.` });
         
-        const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, VMS_EN_MAS_DE_UN_JOB_OPERATION_NAME); 
+        const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName); 
         if (accountIdAsignado) ticketInformativo(existingTicketKey, accountIdAsignado);
-        
-        const closeResult = buscarYCerrarTareaProgramada(VMS_EN_MAS_DE_UN_JOB_TASK_NAME, clientConfig, false);
-        if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-        return 'SUCCESS';
       } else {
         summaryReport.advertencias.push(attachmentResult.detail);
-        return attachmentResult.status;
       }
     } else {
-      const summary = VMS_EN_MAS_DE_UN_JOB_TICKET_SUMMARY;
       const description = `Se han detectado ${alertCount} VMs que están siendo respaldadas por más de un Job en esquema 'Daily' o 'Weekly' corriendo el mismo día, duplicando consumo.\n\nSe adjunta reporte filtrado.`;
       
-      const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, VMS_EN_MAS_DE_UN_JOB_OPERATION_NAME);
+      const creationResult = createTicketAndNotify(VMS_EN_MAS_DE_UN_JOB_TICKET_SUMMARY, description, xlsxBlob, clientConfig, this.operationName);
       
       if (creationResult.status === 'SUCCESS') {
         summaryReport.exitos.push(creationResult.detail);
-        const closeResult = buscarYCerrarTareaProgramada(VMS_EN_MAS_DE_UN_JOB_TASK_NAME, clientConfig, false);
-        if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
       } else if (creationResult.status === 'ERROR') {
         summaryReport.errores.push(creationResult.detail);
       } else {
         summaryReport.advertencias.push(creationResult.detail);
       }
-      return creationResult.status;
     }
+
+    if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+    return { status: 'SUCCESS' };
   }
+}
+
+function processDuplicateJobEmails() {
+  new VMsEnMasDeUnJobProcessor().processEmails();
 }
 
 function filterVMsWithMultipleDailyJobsV13(allRows, exceptions) {

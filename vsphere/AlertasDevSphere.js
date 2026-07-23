@@ -3,6 +3,7 @@
  * IMPLEMENTA:
  * - Lógica DRP con MAPEO para redirigir tickets según el asunto.
  * - Estandarizado para usar FuncionesCompartidas.gs.
+ * Refactorizado utilizando la clase base MailProcessor.
  */
 
 // --- CONFIGURACIÓN DE LA OPERACIÓN "ALERTAS DE VSPHERE" ---
@@ -25,145 +26,124 @@ const VSPHERE_ALERTAS_SIN_TICKET = [
 ];
 
 // --- MAPEO DE CLIENTES DRP ---
-// Mapea el nombre que aparece en el ASUNTO DEL CORREO (ej. "BERSA")
-// con el nombre EXACTO que está en la Columna B de tu Índice Maestro.
 const DRP_CLIENT_NAME_MAP = {
   "BERSA": "Operaciones Banco de Entre Rios",
   "SANTA FE": "Operaciones Banco Santa Fe",
   "SAN JUAN": "Operaciones Banco de San Juan",
   "SANTA CRUZ": "Operaciones Banco de Santa Cruz"
-  // Añade más mapeos aquí si es necesario.
 };
 
-// --- LÓGICA PRINCIPAL (ESTANDARIZADA) ---
-
-function processVsphereEmails() {
-  const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
-  const searchQuery = construirBusquedaGmail(VSPHERE_EMAIL_SUBJECT);
-  const threads = GmailApp.search(searchQuery);
-  
-  if (threads.length > 0) {
-    threads.forEach(thread => {
-      const message = thread.getMessages()[thread.getMessageCount() - 1];
-      if (message.isUnread()) {
-        try {
-          const processingStatus = processSingleVsphereMessage(message, summaryReport);
-          if (processingStatus !== 'HTTP_500') {
-            thread.markRead();
-          }
-        } catch (e) {
-          summaryReport.errores.push({ error: e.message, detalle: `Procesando correo con asunto: "${message.getSubject()}"` });
-        }
-      }
+class VsphereAlertsProcessor extends MailProcessor {
+  constructor() {
+    super({
+      operationName: VSPHERE_OPERATION_NAME,
+      emailSubject: VSPHERE_EMAIL_SUBJECT,
+      attachmentMatch: VSPHERE_FILENAME_MATCH,
+      scheduledTaskName: VSPHERE_SCHEDULED_TASK_NAME_TO_CLOSE
     });
+    this.isDRP = false;
   }
-  enviarResumenSlack(VSPHERE_OPERATION_NAME, summaryReport);
-}
 
-/**
- * Procesa un solo correo. Detecta reportes DRP usando una nueva lógica de extracción (RegEx)
- * basada en los asuntos de ejemplo
- */
-function processSingleVsphereMessage(message, summaryReport) {
-  const senderEmail = message.getFrom();
-  const emailSubject = message.getSubject();
-  let overallStatus = 'SUCCESS';
-
-  // --- INICIO DE LA LÓGICA "DRP OVERRIDE" ---
-  let clientConfig = null;
-  let isDRP = false;
-  const subjectLower = emailSubject.toLowerCase();
-
-  // 1. Verificamos si es un reporte DRP
-  if (subjectLower.includes('drp')) {
-    // 2. Usamos RegEx para extraer el nombre del cliente
-    const drpMatch = emailSubject.match(/Alertas de vSphere\s(.*?)\s\(/i);
-
-    if (drpMatch && drpMatch[1]) {
-      let drpClientName = drpMatch[1].trim(); 
-      Logger.log(`Modo DRP detectado. Nombre extraído: "${drpClientName}"`);
+  processSingleMessage(message, summaryReport) {
+    const emailSubject = message.getSubject();
+    if (emailSubject.toLowerCase().includes("success")) {
+      const senderEmail = message.getFrom();
+      let clientConfig = getClientConfig(senderEmail, this.operationName);
+      clientConfig = this.resolveClientConfig(clientConfig, senderEmail, null, message, summaryReport);
       
-      // 3. Usamos el mapa para traducir el nombre
-      const mappedClientName = DRP_CLIENT_NAME_MAP[drpClientName.toUpperCase()];
-      
-      if (mappedClientName) {
-        Logger.log(`Nombre mapeado a: "${mappedClientName}"`);
-        drpClientName = mappedClientName; 
+      if (clientConfig) {
+        summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con [SUCCESS].` });
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+      }
+      return { status: 'SUCCESS' };
+    }
+    
+    return super.processSingleMessage(message, summaryReport);
+  }
+
+  resolveClientConfig(config, sender, attachment, message, summaryReport) {
+    const emailSubject = message.getSubject();
+    const subjectLower = emailSubject.toLowerCase();
+    this.isDRP = false;
+
+    if (subjectLower.includes('drp')) {
+      const drpMatch = emailSubject.match(/Alertas de vSphere\s(.*?)\s\(/i);
+      if (drpMatch && drpMatch[1]) {
+        let drpClientName = drpMatch[1].trim();
+        Logger.log(`Modo DRP detectado. Nombre extraído: "${drpClientName}"`);
+        
+        const mappedClientName = DRP_CLIENT_NAME_MAP[drpClientName.toUpperCase()];
+        if (mappedClientName) {
+          Logger.log(`Nombre mapeado a: "${mappedClientName}"`);
+          drpClientName = mappedClientName;
+        } else {
+          Logger.log(`Nombre "${drpClientName}" no encontrado en el mapa DRP. Se usará el nombre tal cual.`);
+        }
+        
+        config = getClientConfigByName(drpClientName, this.operationName);
+        this.isDRP = true;
       } else {
-        Logger.log(`Nombre "${drpClientName}" no encontrado en el mapa DRP. Se usará el nombre tal cual.`);
+        Logger.log(`ADVERTENCIA: Asunto DRP detectado, pero no se pudo extraer el nombre del cliente. Asunto: "${emailSubject}"`);
+      }
+    }
+
+    if (!config) {
+      if (this.isDRP) Logger.log(`Búsqueda DRP por nombre falló. Revirtiendo a búsqueda por remitente.`);
+      config = getClientConfig(sender, this.operationName);
+      this.isDRP = false;
+    }
+    return config;
+  }
+
+  parseAttachment(attachment, summaryReport) {
+    try {
+      const jsonString = attachment.getDataAsString("UTF-8");
+      const parsedJson = JSON.parse(jsonString.replace(/^\uFEFF/, ''));
+      const reportData = parsedJson.Report || parsedJson.alerts || parsedJson;
+      
+      if (!reportData || !Array.isArray(reportData) || reportData.length === 0) {
+        return [];
       }
       
-      // 4. Buscamos la configuración por el nombre mapeado
-      clientConfig = getClientConfigByName(drpClientName, VSPHERE_OPERATION_NAME);
-      isDRP = true;
-      
-    } else {
-      Logger.log(`ADVERTENCIA: Asunto DRP detectado, pero no se pudo extraer el nombre del cliente. Asunto: "${emailSubject}"`);
+      const originalHeaders = Object.keys(reportData[0]);
+      const reportRows = reportData.map(obj => originalHeaders.map(header => obj[header]));
+      return [originalHeaders, ...reportRows];
+    } catch (e) {
+      summaryReport.errores.push({ error: "El archivo JSON es inválido.", detalle: e.message });
+      return null;
     }
   }
 
-  // 5. Si no es DRP, usamos el método normal
-  if (!clientConfig) {
-    if (isDRP) Logger.log(`Búsqueda DRP por nombre falló. Revirtiendo a búsqueda por remitente.`);
-    clientConfig = getClientConfig(senderEmail, VSPHERE_OPERATION_NAME);
-    isDRP = false;
-  }
-  // --- FIN DE LA LÓGICA "DRP OVERRIDE" ---
+  processData(parsedData, clientConfig, summaryReport) {
+    const originalHeaders = parsedData[0];
+    const reportRows = parsedData.slice(1);
+    const headers = originalHeaders.map(h => normalizarEncabezado(h));
+    
+    const groupingColIndex = headers.indexOf(normalizarEncabezado(VSPHERE_GROUPING_COLUMN_NAME));
+    const objectNameColIndex = headers.indexOf(normalizarEncabezado(VSPHERE_OBJECT_NAME_COLUMN));
 
-  if (!clientConfig) {
-      summaryReport.errores.push({ error: "Configuración de cliente no encontrada.", detalle: `Para remitente: ${senderEmail}` });
-      return 'FAILURE';
-  }
-  
-  Logger.log(`Procesando reporte para el cliente: ${clientConfig.clientName} (Proyecto Jira: ${clientConfig.jiraProjectKey})`);
-  
-  if (emailSubject.toLowerCase().includes("success")) {
-    summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con [SUCCESS].` });
-    const closeResult = buscarYCerrarTareaProgramada(VSPHERE_SCHEDULED_TASK_NAME_TO_CLOSE, clientConfig, false);
-    if(closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-    return 'SUCCESS';
-  }
+    if (groupingColIndex === -1 || objectNameColIndex === -1) {
+      summaryReport.errores.push({ error: `Columnas clave de agrupación u objeto no encontradas en el JSON.` });
+      return null;
+    }
 
-  const attachment = message.getAttachments().find(att => att.getName().toLowerCase().endsWith(VSPHERE_FILENAME_MATCH));
-  if (!attachment) {
-      Logger.log("No se encontró un adjunto JSON válido para procesar.");
-      return 'SUCCESS';
-  }
+    const finalAlerts = reportRows.filter(row => {
+      const isRowEmpty = row.join('').trim() === '';
+      if (isRowEmpty) return false;
+      return !isRowExcepted(row, headers, clientConfig.exceptions);
+    });
 
-  const jsonString = attachment.getDataAsString("UTF-8");
-  let reportData;
-  try {
-    const parsedJson = JSON.parse(jsonString.replace(/^\uFEFF/, ''));
-    reportData = parsedJson.Report || parsedJson.alerts || parsedJson;
-  } catch (e) {
-    summaryReport.errores.push({ error: "El archivo JSON es inválido.", detalle: `Asunto: ${emailSubject}` });
-    return 'FAILURE';
-  }
+    // In this specific script, we don't return a single array of alerts.
+    // We actually group them and create multiple tickets.
+    // MailProcessor expects finalAlerts, but we need custom logic to group them.
+    // We will return the grouped alerts as "finalAlerts" and handle them in handleAlerts.
+    
+    if (finalAlerts.length === 0) {
+      return { headers: originalHeaders, finalAlerts: [], rowsForExport: [], reasonsText: "" };
+    }
 
-  if (!reportData || !Array.isArray(reportData) || reportData.length === 0) {
-    summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías (archivo vacío).` });
-    const closeResult = buscarYCerrarTareaProgramada(VSPHERE_SCHEDULED_TASK_NAME_TO_CLOSE, clientConfig, false);
-    if(closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-    return 'SUCCESS';
-  }
-
-  const originalHeaders = Object.keys(reportData[0]);
-  const headers = originalHeaders.map(h => normalizarEncabezado(h));
-  const reportRows = reportData.map(obj => originalHeaders.map(header => obj[header]));
-  const finalAlerts = reportRows.filter(row => (row.join('').trim() !== '') && !isRowExcepted(row, headers, clientConfig.exceptions));
-
-  const groupingColIndex = headers.indexOf(normalizarEncabezado(VSPHERE_GROUPING_COLUMN_NAME));
-  const objectNameColIndex = headers.indexOf(normalizarEncabezado(VSPHERE_OBJECT_NAME_COLUMN));
-
-  if (groupingColIndex === -1 || objectNameColIndex === -1) {
-    summaryReport.errores.push({ error: `Columnas clave de agrupación u objeto no encontradas en el JSON.` });
-    return 'FAILURE';
-  }
-
-  if (finalAlerts.length > 0) {
     const groupedAlerts = {};
     finalAlerts.forEach(row => {
-      // --- FIX: Limpiamos comillas simples y dobles para no romper la búsqueda JQL de Jira ---
       let alertName = (row[groupingColIndex] || "Sin Nombre").trim();
       alertName = alertName.replace(/['"]/g, ""); 
       
@@ -171,10 +151,33 @@ function processSingleVsphereMessage(message, summaryReport) {
       groupedAlerts[alertName].push(row);
     });
 
+    return { 
+      headers: originalHeaders, 
+      finalAlerts: finalAlerts, // Not empty, so handleAlerts will be called
+      rowsForExport: groupedAlerts, // We pass the grouped alerts here
+      reasonsText: objectNameColIndex // Pass the col index to use it in handleAlerts
+    };
+  }
+
+  findExistingTicket(clientConfig) {
+    // Return null, because each group might have its own ticket.
+    return null;
+  }
+
+  handleNoAlerts(existingTicketKey, clientConfig, summaryReport) {
+    summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado. Todas las anomalías fueron exceptuadas o el archivo estaba vacío.` });
+    if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+    return { status: 'SUCCESS' };
+  }
+
+  handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
+    const groupedAlerts = rowsForExport;
+    const objectNameColIndex = reasonsText;
+    let overallStatus = 'SUCCESS';
+
     for (const alertName in groupedAlerts) {
       Logger.log(`\n--- Procesando grupo: "${alertName}" ---`);
 
-      // Alertas excluidas de ticketing — solo se reportan por mail
       const esAlertaSinTicket = VSPHERE_ALERTAS_SIN_TICKET.some(a =>
         alertName.toLowerCase().includes(a.toLowerCase())
       );
@@ -184,10 +187,9 @@ function processSingleVsphereMessage(message, summaryReport) {
       }
 
       const alertGroupRows = groupedAlerts[alertName];
-      
       let summary = VSPHERE_JIRA_GROUPED_SUMMARY_TEMPLATE.replace("{ALERT_NAME}", alertName);
 
-      if (isDRP) {
+      if (this.isDRP) {
         summary = summary.replace("Alertas de vSphere", "Alertas de vSphere DRP");
       }
       
@@ -196,10 +198,10 @@ function processSingleVsphereMessage(message, summaryReport) {
         summary = summary.substring(0, JIRA_SUMMARY_MAX_LENGTH - 3) + "...";
       }
 
-      const existingTicketKey = findExistingJiraTicket(summary, clientConfig.jiraProjectKey);
+      const ticketKey = findExistingJiraTicket(summary, clientConfig.jiraProjectKey);
       
-      if (existingTicketKey) { // Actualizar Ticket Existente
-        if (haSidoActualizadoHoy(existingTicketKey, alertName)) {
+      if (ticketKey) {
+        if (haSidoActualizadoHoy(ticketKey, alertName)) {
           continue;
         }
         const todayMarker = `[AUTO-UPDATE:${new Date().toISOString().slice(0, 10)}]`;
@@ -207,19 +209,15 @@ function processSingleVsphereMessage(message, summaryReport) {
         
         if (alertGroupRows.length > VSPHERE_ALERT_THRESHOLD_FOR_ATTACHMENT) {
           const newFileName = `Reporte ${alertName} (Actualizado).xlsx`;
-          const xlsxBlob = convertDataToXlsxBlob([originalHeaders, ...alertGroupRows], newFileName);
-          attachmentStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
+          const xlsxBlob = convertDataToXlsxBlob([headers, ...alertGroupRows], newFileName);
+          attachmentStatus = addAttachmentToJiraTicket(ticketKey, xlsxBlob);
           if (attachmentStatus.status === 'SUCCESS') {
             const commentText = `${todayMarker} ${alertName}\n\n🚨 **La anomalía persiste.** Se adjunta reporte con **${alertGroupRows.length}** objetos afectados.`;
-            addCommentToJiraTicket(existingTicketKey, commentText);
-            summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con nuevo reporte.` });
+            addCommentToJiraTicket(ticketKey, commentText);
+            summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${ticketKey}|${ticketKey}> con nuevo reporte.` });
 
-            // --- BLOQUE INFORMATIVO: ticket existente con adjunto ---
             const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, summary);
-            if (accountIdAsignado) {
-              ticketInformativo(existingTicketKey, accountIdAsignado);
-            }
-
+            if (accountIdAsignado) ticketInformativo(ticketKey, accountIdAsignado);
           } else {
             summaryReport.advertencias.push(attachmentStatus.detail);
           }
@@ -227,33 +225,30 @@ function processSingleVsphereMessage(message, summaryReport) {
           let comment = `${todayMarker} ${alertName}\n\n🚨 **La anomalía persiste.** Se ha vuelto a detectar la alerta *"${alertName}"*.\n\n`;
           comment += `*Objetos Afectados en este reporte (${alertGroupRows.length}):*\n`;
           alertGroupRows.forEach(row => (comment += `• ${row[objectNameColIndex] || "(objeto sin nombre)"}\n`));
-          addCommentToJiraTicket(existingTicketKey, comment);
-          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertGroupRows.length} objetos.` });
+          addCommentToJiraTicket(ticketKey, comment);
+          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${ticketKey}|${ticketKey}> con ${alertGroupRows.length} objetos.` });
 
-          // --- BLOQUE INFORMATIVO: ticket existente sin adjunto ---
           const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, summary);
-          if (accountIdAsignado) {
-            ticketInformativo(existingTicketKey, accountIdAsignado);
-          }
+          if (accountIdAsignado) ticketInformativo(ticketKey, accountIdAsignado);
         }
         if (attachmentStatus.status !== 'SUCCESS') overallStatus = attachmentStatus.status;
 
-      } else { // Crear Ticket Nuevo
+      } else {
         let description = "";
         let xlsxBlob = null;
         if (alertGroupRows.length > VSPHERE_ALERT_THRESHOLD_FOR_ATTACHMENT) {
           description = `Se detectaron ${alertGroupRows.length} objetos afectados por la alerta *"${alertName}"*. Se adjunta un reporte con el detalle.`;
           const newFileName = `Reporte ${alertName}.xlsx`;
-          xlsxBlob = convertDataToXlsxBlob([originalHeaders, ...alertGroupRows], newFileName);
+          xlsxBlob = convertDataToXlsxBlob([headers, ...alertGroupRows], newFileName);
         } else {
-          description = buildVsphereDescription(alertName, originalHeaders, alertGroupRows, objectNameColIndex);
+          description = `Se detectó la siguiente alerta:\n\n*Alarma:* ${alertName}\n\n*Objetos Afectados (${alertGroupRows.length}):*\n`;
+          alertGroupRows.forEach(rowData => {
+            const objectName = rowData[objectNameColIndex] || "(objeto sin nombre)";
+            description += `• ${objectName}\n`;
+          });
         }
 
-        // --- CAMBIO: se pasa `summary` en lugar de VSPHERE_OPERATION_NAME
-        //     para que chequearSiEsInformativa (dentro de createTicketAndNotify)
-        //     matchee contra los nombres específicos de la hoja Informativas. ---
         const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, summary);
-        
         if (creationResult.status !== 'SUCCESS') overallStatus = creationResult.status;
         if (creationResult.status === 'SUCCESS') {
           summaryReport.exitos.push(creationResult.detail);
@@ -262,30 +257,13 @@ function processSingleVsphereMessage(message, summaryReport) {
         }
       } 
     }
-  } else {
-    summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado. Todas las anomalías fueron exceptuadas.` });
+    
+    if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+    return { status: overallStatus };
   }
-  
-  const closeResult = buscarYCerrarTareaProgramada(VSPHERE_SCHEDULED_TASK_NAME_TO_CLOSE, clientConfig, false);
-  if(closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-  
-  Logger.log(`--- Finalizado el procesamiento para [Alertas de vSphere]. ---`);
-  return overallStatus;
 }
 
-// --- FUNCIONES AUXILIARES ---
-
-function buildVsphereDescription(alertName, originalHeaders, rows, objectNameColIndex) {
-  let description = `Se detectó la siguiente alerta:\n\n*Alarma:* ${alertName}\n\n`;
-  description += `*Objetos Afectados (${rows.length}):*\n`;
-  
-  if (objectNameColIndex === -1) {
-    description += "Error: No se pudo encontrar la columna de objetos para listar.\n\n";
-  } else {
-    rows.forEach(rowData => {
-      const objectName = rowData[objectNameColIndex] || "(objeto sin nombre)";
-      description += `• ${objectName}\n`;
-    });
-  }
-  return description;
+function processVsphereEmails() {
+  new VsphereAlertsProcessor().processEmails();
 }
+

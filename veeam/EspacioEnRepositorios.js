@@ -19,120 +19,81 @@ const REPO_SPACE_TICKET_SUMMARY = "Se detectaron repositorios con poco espacio d
 
 // --- FUNCIÓN PRINCIPAL (TRIGGER) ---
 
-function processRepositorySpaceEmails() {
-  const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
-  
-  const searchQuery = construirBusquedaGmail(REPO_SPACE_EMAIL_SUBJECT);
-  const threads = GmailApp.search(searchQuery);
-
-  if (threads.length > 0) {
-    threads.forEach(thread => {
-      const message = thread.getMessages()[thread.getMessageCount() - 1];
-      if (message.isUnread()) {
-        try {
-          const processingStatus = processSingleRepositorySpaceMessage(message, summaryReport);
-          if (processingStatus !== 'HTTP_500') {
-             thread.markRead();
-          }
-        } catch (e) {
-          summaryReport.errores.push({ error: `Error Crítico en Script ${REPO_SPACE_OPERATION_NAME}: ${e.message}`, detalle: `Stack: ${e.stack}` });
-        }
-      }
+class EspacioEnRepositoriosProcessor extends MailProcessor {
+  constructor() {
+    super({
+      operationName: REPO_SPACE_OPERATION_NAME,
+      emailSubject: REPO_SPACE_EMAIL_SUBJECT,
+      attachmentMatch: REPO_SPACE_FILENAME_MATCH,
+      scheduledTaskName: REPO_SPACE_TASK_NAME
     });
   }
-  
-  enviarResumenSlack(REPO_SPACE_OPERATION_NAME, summaryReport);
-}
 
-
-// --- LÓGICA DE PROCESAMIENTO ---
-
-function processSingleRepositorySpaceMessage(message, summaryReport) {
-  Logger.log(`--- Iniciando procesamiento para [${REPO_SPACE_OPERATION_NAME}] del correo: "${message.getSubject()}" ---`);
-  
-  // --- [NUEVO] VALIDACIÓN DE ASUNTO (CONTIENE + CASE INSENSITIVE) ---
-  const subjectLower = message.getSubject().toLowerCase();
-  const requiredSubjectPart = REPO_SPACE_EMAIL_SUBJECT.toLowerCase();
-
-  if (!subjectLower.includes(requiredSubjectPart)) {
-    Logger.log(`El asunto "${message.getSubject()}" no contiene la frase requerida "${REPO_SPACE_EMAIL_SUBJECT}". Se omite.`);
-    return 'SUCCESS'; 
-  }
-  // ------------------------------------------------------------------
-
-  const senderEmail = message.getFrom();
-  const searchString = REPO_SPACE_FILENAME_MATCH.toLowerCase().trim();
-
-  // 1. Buscar adjunto Excel (.xlsx)
-  const attachment = message.getAttachments().find(att => {
-    const attName = att.getName().toLowerCase();
-    const isNameMatch = attName.includes(searchString);
-    const isExcel = (att.getContentType() === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || attName.endsWith(".xlsx"));
-    return isNameMatch && isExcel;
-  });
-
-  if (!attachment) {
-    Logger.log(`No se encontró un adjunto Excel (.xlsx) válido.`);
-    return 'SUCCESS'; 
+  processSingleMessage(message, summaryReport) {
+    const subjectLower = message.getSubject().toLowerCase();
+    const requiredSubjectPart = this.emailSubject.toLowerCase();
+    if (!subjectLower.includes(requiredSubjectPart)) {
+      Logger.log(`El asunto "${message.getSubject()}" no contiene la frase requerida "${this.emailSubject}". Se omite.`);
+      return { status: 'SUCCESS' };
+    }
+    return super.processSingleMessage(message, summaryReport);
   }
 
-  // 2. Obtener configuración
-  const clientConfig = getClientConfig(senderEmail, REPO_SPACE_OPERATION_NAME);
-  if (!clientConfig) {
-    summaryReport.errores.push({ error: "Configuración de cliente no encontrada.", detalle: `Remitente: ${senderEmail}` });
-    return 'FAILURE';
+  findAttachment(message) {
+    const searchString = this.attachmentMatch.toLowerCase().trim();
+    return message.getAttachments().find(att => {
+      const attName = att.getName().toLowerCase();
+      const isNameMatch = attName.includes(searchString);
+      const isExcel = (att.getContentType() === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || attName.endsWith(".xlsx"));
+      return isNameMatch && isExcel;
+    });
   }
 
-  // --- [LÍNEA AGREGADA ANTERIORMENTE] ---
-  // Forzamos la tecnología a Veeam para este reporte, ignorando el Excel maestro.
-  clientConfig.tecnologia = "Veeam Backup & Replication"; 
-  // ---------------------------
-
-  // 3. Convertir Excel a Datos
-  let rawRows = [];
-  try {
-    // Usamos función local para leer Sheet1
-    rawRows = convertRepoExcelToDataLocal(attachment.copyBlob());
-  } catch (e) {
-    summaryReport.errores.push({ error: "Fallo al leer el archivo Excel.", detalle: e.message });
-    return 'FAILURE';
+  resolveClientConfig(config, sender, attachment, message, summaryReport) {
+    if (config) config.tecnologia = "Veeam Backup & Replication"; 
+    return config;
   }
-  
-  // 4. Filtrar Repositorios (Quitar excepciones)
-  const filteredData = filterRepositoryData(rawRows, clientConfig.exceptions);
-  const finalAlerts = filteredData.rows; 
-  const alertCount = filteredData.vmCount; 
 
-  // 5. Gestión de Tickets en Jira
-  
-  // Usamos la función que EXCLUYE "Tarea Programada"
-  const existingTicketKey = findTargetReportTicketLocal(REPO_SPACE_TICKET_SUMMARY, clientConfig.jiraProjectKey);
+  parseAttachment(attachment, summaryReport) {
+    try {
+      return convertRepoExcelToDataLocal(attachment.copyBlob());
+    } catch (e) {
+      summaryReport.errores.push({ error: "Fallo al leer el archivo Excel.", detalle: e.message });
+      return null;
+    }
+  }
 
-  if (alertCount === 0) {
-    // --- NO HAY ALERTAS ---
+  processData(parsedData, clientConfig, summaryReport) {
+    const filteredData = filterRepositoryData(parsedData, clientConfig.exceptions);
+    if (filteredData.rows.length === 0) {
+      return { headers: [], finalAlerts: [], rowsForExport: [], reasonsText: "" };
+    }
+    const headers = filteredData.rows[0];
+    const finalAlerts = filteredData.rows.slice(1);
+    return { headers, finalAlerts, rowsForExport: filteredData.rows, reasonsText: "" };
+  }
+
+  findExistingTicket(clientConfig) {
+    return findTargetReportTicketLocal(REPO_SPACE_TICKET_SUMMARY, clientConfig.jiraProjectKey);
+  }
+
+  handleNoAlerts(existingTicketKey, clientConfig, summaryReport) {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **Anomalía resuelta.** El reporte actual indica que los repositorios tienen espacio suficiente.");
       summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> como resuelto.` });
     } else {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
-    
-    // Cerrar la tarea programada (Azul) si existe
-    const closeResult = buscarYCerrarTareaProgramada(REPO_SPACE_TASK_NAME, clientConfig, false);
-    if (closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-    
-    return 'SUCCESS';
+    if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+    return { status: 'SUCCESS' };
+  }
 
-  } else {
-    // --- SÍ HAY ALERTAS - GENERAR EXCEL CON ESTILO ---
+  handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
+    const alertCount = finalAlerts.length;
+    const newFileName = attachmentName.replace(/\.xlsx$/i, " - FILTRADO.xlsx");
     
-    const newFileName = attachment.getName().replace(/\.xlsx$/i, " - FILTRADO.xlsx");
-    
-    // --- USO DE LA FUNCIÓN COMPARTIDA PARA FORMATEO ---
-    // Usamos "Repository: Name" para asegurar que la función de formato
-    // también recorte cualquier basura superior que haya sobrevivido al filtro manual.
-    const xlsxBlob = generateStyledReportBlob(finalAlerts, newFileName, [], "Repository: Name");
-    // -------------------------------------------------------------
+    // El método `generateStyledReportBlob` lo espera con la cabecera incluida
+    const xlsxBlob = generateStyledReportBlob([headers, ...finalAlerts], newFileName, [], "Repository: Name");
     
     if (existingTicketKey) {
       const attachmentResult = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
@@ -141,37 +102,34 @@ function processSingleRepositorySpaceMessage(message, summaryReport) {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Ticket existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> actualizado con evidencia.` });
         
-        // Cerramos la tarea programada (Azul)
-        const closeResult = buscarYCerrarTareaProgramada(REPO_SPACE_TASK_NAME, clientConfig, false);
-        if (closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-        const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, REPO_SPACE_OPERATION_NAME); 
-          if (accountIdAsignado) {
-             ticketInformativo(existingTicketKey, accountIdAsignado);
-          }
-        return 'SUCCESS';
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName); 
+        if (accountIdAsignado) ticketInformativo(existingTicketKey, accountIdAsignado);
+        return { status: 'SUCCESS' };
       } else {
         summaryReport.advertencias.push(attachmentResult.detail);
-        return attachmentResult.status;
+        return { status: attachmentResult.status };
       }
     } else {
-      // Crear ticket nuevo (Incidente)
-      const summary = REPO_SPACE_TICKET_SUMMARY;
       const description = `Se ha detectado que **${alertCount}** repositorio(s) tienen un espacio libre crítico (generalmente inferior al 10%).\n\nEsto pone en riesgo la ejecución exitosa de los backups. Por favor revisar el adjunto y tomar acciones de limpieza o expansión.`;
       
-      const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig,REPO_SPACE_OPERATION_NAME);
+      const creationResult = createTicketAndNotify(REPO_SPACE_TICKET_SUMMARY, description, xlsxBlob, clientConfig, this.operationName);
       
       if (creationResult.status === 'SUCCESS') {
         summaryReport.exitos.push(creationResult.detail);
-        const closeResult = buscarYCerrarTareaProgramada(REPO_SPACE_TASK_NAME, clientConfig, false);
-        if (closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       } else if (creationResult.status === 'ERROR') {
         summaryReport.errores.push(creationResult.detail);
       } else {
         summaryReport.advertencias.push(creationResult.detail);
       }
-      return creationResult.status;
+      return { status: creationResult.status };
     }
   }
+}
+
+function processRepositorySpaceEmails() {
+  new EspacioEnRepositoriosProcessor().processEmails();
 }
 
 // --- FUNCIONES LOCALES ---
@@ -300,4 +258,8 @@ function convertRepoExcelToDataLocal(blob) {
       try { Drive.Files.update({trashed: true}, tempFileId); } catch (e) {}
     }
   }
+}
+
+function processEspacioRepositoriosEmails() {
+  new EspacioRepositoriosProcessor().processEmails();
 }

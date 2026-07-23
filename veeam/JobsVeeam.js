@@ -30,176 +30,113 @@ const VEEAM_COLS = {
 // --- LÓGICA PRINCIPAL DE VEEAM JOB WARNINGS ---
 // ==============================================================================
 
-
-
-function processVeeamJobWarnings() {
-  const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
-  
-  // 1. Buscamos correos no leídos con el asunto configurado
-  const searchQuery = construirBusquedaGmail(VEEAM_EMAIL_SUBJECT);
-  const threads = GmailApp.search(searchQuery);
-
-  if (threads.length > 0) {
-    threads.forEach(thread => {
-      // Tomamos el último mensaje del hilo
-      const message = thread.getMessages()[thread.getMessageCount() - 1];
-      if (message.isUnread()) {
-        try {
-          const processingStatus = processSingleVeeamJobMessage(message, summaryReport);
-          // Si fue exitoso (o no hubo nada que reportar), marcamos como leído
-
-          if (processingStatus === 'SUCCESS') {
-            thread.markRead();
-          }
-
-        } catch (e) {
-          summaryReport.errores.push({
-            error: e.message,
-            detalle: `Procesando Veeam Jobs en correo: "${message.getSubject()}"`
-          });
-        }
-      }
+class JobsVeeamProcessor extends MailProcessor {
+  constructor() {
+    super({
+      operationName: VEEAM_OPERATION_NAME,
+      emailSubject: VEEAM_EMAIL_SUBJECT,
+      attachmentMatch: VEEAM_FILENAME_MATCH,
+      scheduledTaskName: VEEAM_SCHEDULED_TASK_NAME
     });
-    // Enviamos resumen a Slack
-    enviarResumenSlack(VEEAM_OPERATION_NAME, summaryReport);
-  }
-}
-
-
-function processSingleVeeamJobMessage(message, summaryReport) {
-  const senderEmail = message.getFrom();
-  const emailSubject = message.getSubject();
-
-  // 1. Configuración Ops
-  const clientConfig = getClientConfig(senderEmail, VEEAM_OPERATION_NAME);
-  if (!clientConfig) {
-    summaryReport.errores.push({ error: "No config found", detalle: senderEmail });
-    return 'FAILURE';
-  }
-  
-  // Forzamos tecnología
-  clientConfig.tecnologia = "Veeam Backup & Replication"; 
-  // Configuración Soporte (para tickets Failed)
-  const clientConfigSop = getClientConfig(senderEmail, VEEAM_OPERATION_NAME, true);
-
-  // 2. Auto-cierre Success
-  if (emailSubject.toLowerCase().includes("success")) {
-    summaryReport.exitos.push({ mensaje: `Reporte Veeam (SUCCESS) de ${clientConfig.clientName}.` });
-    const closeResult = buscarYCerrarTareaProgramada(VEEAM_SCHEDULED_TASK_NAME, clientConfig, false);
-    if(closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
-    return 'SUCCESS';
   }
 
-  // 3. Adjunto
-  const attachment = message.getAttachments().find(att => att.getName().toLowerCase().endsWith(VEEAM_FILENAME_MATCH));
-  if (!attachment) return 'SUCCESS';
-
-  // 4. Leer CSV
-  let allRows = [];
-  try {
-    allRows = Utilities.parseCsv(attachment.getDataAsString("UTF-8"));
-  } catch (e) {
-    summaryReport.errores.push({ error: "Error CSV", detalle: emailSubject });
-    return 'FAILURE';
+  processSingleMessage(message, summaryReport) {
+    this._currentSenderEmail = message.getFrom();
+    const emailSubject = message.getSubject();
+    
+    if (emailSubject.toLowerCase().includes("success")) {
+      const clientConfig = getClientConfig(this._currentSenderEmail, this.operationName);
+      if (clientConfig) {
+        summaryReport.exitos.push({ mensaje: `Reporte Veeam (SUCCESS) de ${clientConfig.clientName}.` });
+        const closeResult = buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if(closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
+      }
+      return { status: 'SUCCESS' };
+    }
+    return super.processSingleMessage(message, summaryReport);
   }
 
-  if (!allRows || allRows.length === 0) return 'FAILURE';
-
-  // Headers
-  const rawHeaders = allRows[0];
-  const headers = rawHeaders.map(h => h.toString().replace(/^\uFEFF|"/g, '').trim());
-
-  const idxResult = headers.indexOf(VEEAM_COLS.RESULT);
-  const idxError = headers.indexOf(VEEAM_COLS.ERROR_MESSAGE);
-  const idxJobName = headers.indexOf(VEEAM_COLS.JOB_NAME);
-  const idxObjectName = headers.indexOf(VEEAM_COLS.OBJECT_NAME); 
-
-  if (idxResult === -1 || idxError === -1 || idxJobName === -1) {
-    summaryReport.errores.push({ error: "Columnas faltantes", detalle: clientConfig.clientName });
-    return 'FAILURE';
+  resolveClientConfig(config, sender, attachment, message, summaryReport) {
+    if (config) config.tecnologia = "Veeam Backup & Replication"; 
+    return config;
   }
 
-  // ===========================================================================
-  // 5. LÓGICA DE RECOLECCIÓN (Por Job)
-  // ===========================================================================
-  
-  const normalizedHeaders = headers.map(h => normalizarEncabezado(h));
-  const ignoredPhrases = ["processing finished with warnings", "job finished with warnings", "finished with warnings"];
+  processData(parsedData, clientConfig, summaryReport) {
+    const rawHeaders = parsedData[0];
+    const headers = rawHeaders.map(h => h.toString().replace(/^\uFEFF|"/g, '').trim());
 
-  // Estructura: { 'JobName': { primaryError: string, isFailed: boolean, items:Array } }
-  const jobsData = {}; 
+    const idxResult = headers.indexOf(VEEAM_COLS.RESULT);
+    const idxError = headers.indexOf(VEEAM_COLS.ERROR_MESSAGE);
+    const idxJobName = headers.indexOf(VEEAM_COLS.JOB_NAME);
+    const idxObjectName = headers.indexOf(VEEAM_COLS.OBJECT_NAME); 
 
-  allRows.forEach(row => {
+    if (idxResult === -1 || idxError === -1 || idxJobName === -1) {
+      summaryReport.errores.push({ error: "Columnas faltantes", detalle: clientConfig.clientName });
+      return null;
+    }
+
+    const normalizedHeaders = headers.map(h => normalizarEncabezado(h));
+    const ignoredPhrases = ["processing finished with warnings", "job finished with warnings", "finished with warnings"];
+
+    const jobsData = {}; 
+
+    for (let i = 1; i < parsedData.length; i++) {
+      const row = parsedData[i];
       const res = row[idxResult];
       const status = res ? res.toString().trim().toLowerCase() : "";
       
-      // Filtros básicos
-      if (!['warning', 'error', 'failed'].includes(status)) return;
-      
-      // --- VALIDACIÓN DE EXCEPCIONES ---
-      if (isRowExcepted(row, normalizedHeaders, clientConfig.exceptions)) return; 
+      if (!['warning', 'error', 'failed'].includes(status)) continue;
+      if (isRowExcepted(row, normalizedHeaders, clientConfig.exceptions)) continue; 
 
       const cleanError = (row[idxError] || "").trim();
-      if (!cleanError) return;
-      if (ignoredPhrases.some(ph => cleanError.toLowerCase().includes(ph))) return;
+      if (!cleanError) continue;
+      if (ignoredPhrases.some(ph => cleanError.toLowerCase().includes(ph))) continue;
 
       const jobName = (row[idxJobName] || "Job Desconocido").trim();
       const vmName = (idxObjectName !== -1 && row[idxObjectName]) ? row[idxObjectName].trim() : "Objeto General";
 
-      // Inicializamos el Job
       if (!jobsData[jobName]) {
-          jobsData[jobName] = { 
-              primaryError: cleanError, // Usamos el primer error válido como clave de agrupación
-              isFailed: false, 
-              items: [] 
-          };
+          jobsData[jobName] = { primaryError: cleanError, isFailed: false, items: [] };
       }
-      
-      // Si hay un failed, el job entero es crítico
       if (status === 'failed' || status === 'error') {
           jobsData[jobName].isFailed = true;
       }
+      jobsData[jobName].items.push({ vm: vmName, error: cleanError });
+    }
 
-      jobsData[jobName].items.push({
-          vm: vmName,
-          error: cleanError
-      });
-  });
+    const ticketsMap = {}; 
+    for (const [jobName, data] of Object.entries(jobsData)) {
+        const errorKey = data.primaryError; 
+        if (!ticketsMap[errorKey]) ticketsMap[errorKey] = [];
+        ticketsMap[errorKey].push({ name: jobName, items: data.items, isFailed: data.isFailed });
+    }
 
-  if (Object.keys(jobsData).length === 0) return 'SUCCESS';
+    const finalAlerts = [];
+    for (const [errorKey, affectedJobs] of Object.entries(ticketsMap)) {
+      finalAlerts.push({ errorKey, affectedJobs });
+    }
 
-  // ===========================================================================
-  // 6. AGRUPACIÓN POR ERROR (Multiples jobs -> 1 Ticket)
-  // ===========================================================================
-  
-  const ticketsMap = {}; 
-
-  for (const [jobName, data] of Object.entries(jobsData)) {
-      const errorKey = data.primaryError; 
-
-      if (!ticketsMap[errorKey]) {
-          ticketsMap[errorKey] = [];
-      }
-
-      ticketsMap[errorKey].push({
-          name: jobName,
-          items: data.items,
-          isFailed: data.isFailed
-      });
+    return { headers, finalAlerts, rowsForExport: [], reasonsText: "" };
   }
 
-  // ===========================================================================
-  // 7. GENERACIÓN DE TICKETS
-  // ===========================================================================
-  let finalStatus = 'SUCCESS';
+  findExistingTicket(clientConfig) {
+    return null;
+  }
 
-  for (const [mainError, affectedJobs] of Object.entries(ticketsMap)) {
-      
+  handleNoAlerts(existingTicketKey, clientConfig, summaryReport) {
+    return { status: 'SUCCESS' };
+  }
+
+  handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
+    let finalStatus = 'SUCCESS';
+    const clientConfigSop = getClientConfig(this._currentSenderEmail, this.operationName, true);
+
+    for (const alertGroup of finalAlerts) {
+      const { errorKey: mainError, affectedJobs } = alertGroup;
       const jobsCount = affectedJobs.length;
       const isTicketCritical = affectedJobs.some(j => j.isFailed);
       const globalStatus = isTicketCritical ? 'Failed' : 'Warning';
 
-      // --- TÍTULO ---
       let targetSummary = "";
       if (jobsCount === 1) {
           targetSummary = `Se detectó el job ${affectedJobs[0].name} finalizado en ${globalStatus}`;
@@ -207,53 +144,44 @@ function processSingleVeeamJobMessage(message, summaryReport) {
           targetSummary = `Se detectaron multiples jobs finalizados en ${globalStatus} (mismo error)`;
       }
 
-      // --- DESCRIPCIÓN ---
       let description = `Se han detectado anomalías (${globalStatus}) en los backups.\n\n`;
-      
       if (jobsCount > 1) {
           description += `*Error Común:* {quote}${mainError}{quote}\n\n`;
       }
 
-// --- FORMATO ESCALONADO ---
       affectedJobs.forEach(job => {
-          description += `* Job: ${job.name}\n`; // Nivel 1
-          
-          // Agrupamos errores por VM
+          description += `* Job: ${job.name}\n`; 
           const vmsMap = {};
           job.items.forEach(item => {
               if (!vmsMap[item.vm]) vmsMap[item.vm] = new Set();
               vmsMap[item.vm].add(item.error);
           });
-
-          // Imprimimos con indentación de Jira
           for (const [vmName, errorsSet] of Object.entries(vmsMap)) {
-              description += `** Objeto: ${vmName}\n`; // Nivel 2 (Con Tab visual)
+              description += `** Objeto: ${vmName}\n`; 
               errorsSet.forEach(err => {
-                  description += `*** Error: ${err}\n`; // Nivel 3 (Más adentro)
+                  description += `*** Error: ${err}\n`; 
               });
           }
           description += `\n`;
       });
-
       description += `Se deberá analizar la anomalía y coordinar solución.`;
 
-      // --- CREAR / ACTUALIZAR TICKET ---
       const activeConfig = isTicketCritical ? clientConfigSop : clientConfig;
       const projectKey = activeConfig.jiraProjectKey;
 
-      const existingTicketKey = findExistingJiraTicket(targetSummary, projectKey);
+      const existingTicket = findExistingJiraTicket(targetSummary, projectKey);
 
-      if (existingTicketKey) {
+      if (existingTicket) {
           let commentText = `El problema persiste en:\n`;
           affectedJobs.forEach(j => commentText += `* ${j.name}\n`);
-          addCommentToJiraTicket(existingTicketKey, commentText);
-          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>.` });
+          addCommentToJiraTicket(existingTicket, commentText);
+          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicket}|${existingTicket}>.` });
       } else {
           let result;
           if (isTicketCritical) {
-              result = createTicketAndNotifySoporte(targetSummary, description, null, clientConfigSop, VEEAM_OPERATION_NAME);
+              result = createTicketAndNotifySoporte(targetSummary, description, null, clientConfigSop, this.operationName);
           } else {
-              result = createTicketAndNotify(targetSummary, description, null, clientConfig, VEEAM_OPERATION_NAME);
+              result = createTicketAndNotify(targetSummary, description, null, clientConfig, this.operationName);
           }
 
           if (result.status === 'SUCCESS') {
@@ -263,9 +191,13 @@ function processSingleVeeamJobMessage(message, summaryReport) {
               finalStatus = 'FAILURE';
           }
       }
+    }
+    return { status: finalStatus };
   }
+}
 
-  return finalStatus;
+function processVeeamJobWarnings() {
+  new JobsVeeamProcessor().processEmails();
 }
 
 // Asegúrate de tener esta función auxiliar también
