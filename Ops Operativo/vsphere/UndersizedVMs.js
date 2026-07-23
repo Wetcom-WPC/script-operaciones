@@ -38,22 +38,6 @@ class UndersizedVMsProcessor extends MailProcessor {
   findExistingTicket(clientConfig) {
     return findExistingJiraTicket(UNDERSIZED_VMS_JIRA_TICKET_SUMMARY, clientConfig.jiraProjectKey);
   }
-    } else {
-      const description = `Se encontraron ${alertCount} VMs subdimensionadas (Undersized). Se adjunta el reporte completo para su revisión.`;
-      const creationResult = createTicketAndNotify(UNDERSIZED_VMS_JIRA_TICKET_SUMMARY, description, xlsxBlob, clientConfig, this.operationName);
-      
-      if (creationResult.status === 'SUCCESS') {
-        summaryReport.exitos.push(creationResult.detail);
-      } else if (creationResult.status === 'ERROR') {
-        summaryReport.errores.push(creationResult.detail);
-      } else {
-        summaryReport.advertencias.push(creationResult.detail);
-      }
-    }
-    
-    if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
-    return { status: 'SUCCESS' };
-  }
 }
 
 function processUndersizedVMsEmails() {

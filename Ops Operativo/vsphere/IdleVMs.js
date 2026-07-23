@@ -37,20 +37,7 @@ class IdleVMsProcessor extends MailProcessor {
   findExistingTicket(clientConfig) {
     return findExistingJiraTicket(IDLE_VMS_JIRA_TICKET_SUMMARY, clientConfig.jiraProjectKey);
   }
-    } else {
-      const description = `Se encontraron ${alertCount} Idle VMs. Se adjunta el reporte completo para su revisión.`;
-      const creationResult = createTicketAndNotify(IDLE_VMS_JIRA_TICKET_SUMMARY, description, xlsxBlob, clientConfig, this.operationName);
-      
-      if (creationResult.status === 'SUCCESS') {
-        summaryReport.exitos.push(creationResult.detail);
-      } else {
-        summaryReport.errores.push(creationResult.detail);
-      }
-    }
-    
-    if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
-    return { status: 'SUCCESS' };
-  }
+
 }
 
 function processIdleVMsEmails() {
