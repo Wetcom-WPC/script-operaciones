@@ -1,5 +1,8 @@
 # CHANGELOG - Ops Playground / Ops Operativo (v2.0)
 
+## Housekeeping - 2026-07-24
+- **Reestructuración de repositorio (sin cambios de código)**: `main` pasó a reflejar 1:1 el contenido del proyecto de Apps Script `Ops Operativo` (sin carpeta contenedora), para que el árbol de GitHub sea fiel al editor de GAS. La rama `refactor-operaciones` cumple el mismo rol como espejo de `Ops Playground`. Se retiró el árbol de código legacy pre-refactor que quedaba duplicado en la raíz (ver commit `chore: retirar estructura legacy pre-refactor de la raiz`). `backup-real-prod` se limpió con el mismo criterio.
+
 ## [2.0.1] - 2026-07-24
 ### Deployed
 - **Primer despliegue real de v2.0 a producción**: el código refactorizado (arquitectura OOP/Template Method documentada en [2.0.0]) fue validado en `Ops Playground` y desplegado a `Ops Operativo` (producción real). Hasta esta versión, producción seguía ejecutando el código monolítico anterior (`FuncionesCompartidas.js`, `Logging.js`).
