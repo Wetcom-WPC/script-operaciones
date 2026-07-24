@@ -4,21 +4,26 @@
  * ================================================================
  */
 
-const WEBHOOKS_POR_POD = {
-  "POD1":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_1"),
-  "POD2":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_2"),
-  "POD3":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_3"),
-  "POD4":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_4"),
-  "POD5":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AUDITOR_POD_5"),
-  "DEFAULT": PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL")
-};
+function getWebhooksPorPod() {
+  const props = PropertiesService.getScriptProperties();
+  // Fallback inteligente para testing: si se configuró el general o POD1, se reutiliza para los PODs sin webhook individual
+  const defaultWebhook = props.getProperty("SLACK_WEBHOOK_GENERAL") || props.getProperty("SLACK_WEBHOOK_AUDITOR_POD_1");
+  return {
+    "POD1":    props.getProperty("SLACK_WEBHOOK_AUDITOR_POD_1") || defaultWebhook,
+    "POD2":    props.getProperty("SLACK_WEBHOOK_AUDITOR_POD_2") || defaultWebhook,
+    "POD3":    props.getProperty("SLACK_WEBHOOK_AUDITOR_POD_3") || defaultWebhook,
+    "POD4":    props.getProperty("SLACK_WEBHOOK_AUDITOR_POD_4") || defaultWebhook,
+    "POD5":    props.getProperty("SLACK_WEBHOOK_AUDITOR_POD_5") || defaultWebhook,
+    "DEFAULT": defaultWebhook
+  };
+}
 
 const SPREADSHEET_ID = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
 const HOJA_INDICE = "Sheet1";
 const HOJA_ADJUNTOS = "Adjuntos";
 
-// --- LISTA DE CORREOS VÁLIDOS (Evita pruebas internas a wpc@) ---
-const CORREOS_PODS = ["pod1@wetcom.com", "pod2@wetcom.com", "pod3@wetcom.com", "pod4@wetcom.com", "pod5@wetcom.com"];
+// --- LISTA DE CORREOS VÁLIDOS (En testing se permite ian.lucero@wetcom.com como destinatario oficial) ---
+const CORREOS_PODS = ["pod1@wetcom.com", "pod2@wetcom.com", "pod3@wetcom.com", "pod4@wetcom.com", "pod5@wetcom.com", "ian.lucero@wetcom.com"];
 
 function auditarMailsOperaciones() {
   const hoy = new Date();
@@ -49,10 +54,10 @@ function auditarMailsOperaciones() {
 
   const clientesPorPod = {};
 
-  // 1. LEEMOS LA HOJA PRINCIPAL
-  const hojaPrincipal = spreadsheet.getSheetByName(HOJA_INDICE);
+  // 1. LEEMOS LA HOJA PRINCIPAL (Primera pestaña por posición, idéntico a MasterSheetSingleton)
+  const hojaPrincipal = spreadsheet.getSheets()[0];
   if (!hojaPrincipal) {
-    Logger.log(`No se encontró la hoja principal: ${HOJA_INDICE}`);
+    Logger.log(`No se encontró la hoja principal en la spreadsheet.`);
     return;
   }
 
@@ -78,8 +83,13 @@ function auditarMailsOperaciones() {
   Logger.log(`[BÚSQUEDA GMAIL] Hilos encontrados en la bandeja: ${hilos.length}`);
 
   const enviosReales = {};
+  const timeGuard = new TimeGuard({ operationName: "Auditor Mail" });
 
-  hilos.forEach(hilo => {
+  for (const hilo of hilos) {
+    if (!timeGuard.check(`Hilo ${hilo.getId()}`)) {
+      Logger.log(`[AuditorMail] TimeGuard activado durante análisis de hilos.`);
+      break;
+    }
     const mensajes = hilo.getMessages();
 
     mensajes.forEach(mensaje => {
@@ -137,13 +147,14 @@ function auditarMailsOperaciones() {
          Logger.log(`   🚫 DESCARTADO: No cumple con la estructura de palabras clave.`);
       }
     });
-  });
+  }
 
   // 4. CRUZAMOS LOS DATOS Y AVISAMOS POR POD
   Logger.log("\n--- GENERANDO REPORTES PARA SLACK ---");
 
   for (const pod in clientesPorPod) {
-     const webhookUrl = WEBHOOKS_POR_POD[pod];
+     const webhooksMap = getWebhooksPorPod();
+     const webhookUrl = webhooksMap[pod];
      if (!webhookUrl) continue;
 
      const listaIdeal = clientesPorPod[pod];
@@ -218,27 +229,39 @@ function procesarHoja(hoja, clientesPorPod, origen) {
     return;
   }
 
-  // Leemos hasta la columna V (22 columnas)
-  const datos = hoja.getRange(2, 1, lastRow - 1, 25).getValues();
+  // Leemos hasta 25 columnas de forma segura para no exceder las columnas máximas de la hoja
+  const numCols = Math.min(25, hoja.getMaxColumns());
+  const datos = hoja.getRange(2, 1, lastRow - 1, numCols).getValues();
 
   Logger.log(`[${origen}] Procesando hoja "${hoja.getName()}" con ${datos.length} filas.`);
 
   datos.forEach((fila, index) => {
     const numeroFila = index + 2;
 
-    // Columna Y = índice 24
-    const pod = fila[24] ? fila[24].toString().trim().toUpperCase() : "";
-    // Columna L = índice 11
-    const cliente = fila[11] ? fila[11].toString().trim() : "";
-    // Columna M = índice 12
-    const serviciosStr = fila[12] ? fila[12].toString().toLowerCase() : "";
-    // Columna D = índice 3
-    const opsKey = fila[3] ? fila[3].toString().trim() : "";
-    // Columna N = índice 13
-    const soporteKey = fila[13] ? fila[13].toString().trim() : ""; 
+    // Columna Y = índice 24. Si está vacía buscamos en cualquier columna de la fila o asignamos DEFAULT
+    let pod = fila[24] ? fila[24].toString().trim().toUpperCase() : "";
+    if (!pod) {
+      const matchPod = String(fila.join(" ")).match(/pod\s*([1-5])/i);
+      if (matchPod) {
+        pod = `POD${matchPod[1]}`;
+      } else {
+        pod = "DEFAULT";
+      }
+    }
 
-    if (!(pod && cliente && (opsKey || soporteKey) && serviciosStr)) {
-      Logger.log(`[${origen}] Fila ${numeroFila} descartada por datos incompletos.`);
+    // Columna L = índice 11, o Columna B = índice 1 si se escribió en formato simplificado (ej: Adjuntos)
+    const cliente = (fila[11] ? fila[11].toString().trim() : "") || (fila[1] ? fila[1].toString().trim() : "") || (fila[0] ? fila[0].toString().trim() : "");
+    // Columna M = índice 12, o Columna C = índice 2, o Columna G = índice 6
+    const serviciosStr = (fila[12] ? fila[12].toString().toLowerCase() : "") || (fila[2] ? fila[2].toString().toLowerCase() : "") || (fila[6] ? fila[6].toString().toLowerCase() : "");
+    // Columna D = índice 3, o Columna N = índice 13, o si no se puso clave se usa el mismo nombre del cliente como fallback
+    let opsKey = fila[3] ? fila[3].toString().trim() : "";
+    let soporteKey = fila[13] ? fila[13].toString().trim() : "";
+    if (!(opsKey || soporteKey) && cliente) {
+      opsKey = cliente;
+    }
+
+    if (!(cliente && (opsKey || soporteKey) && serviciosStr)) {
+      Logger.log(`[${origen}] Fila ${numeroFila} descartada por datos incompletos -> Cliente="${cliente}", OpsKey="${opsKey}", SoporteKey="${soporteKey}", Servicios="${serviciosStr}"`);
       return;
     }
 
@@ -269,7 +292,7 @@ function enviarAlertaSlackPorPod(webhookUrl, mensaje) {
   };
 
   try {
-    UrlFetchApp.fetch(webhookUrl, options);
+    fetchWithRetries(webhookUrl, options);
   } catch (e) {
     Logger.log("Error al enviar a Slack: " + e.message);
   }

@@ -59,8 +59,8 @@ function backupAppsScriptProjectToDrive() {
       while (iteradorArchivos.hasNext()) {
         const archivoOriginal = iteradorArchivos.next();
         
-        // Hacemos la copia
-        archivoOriginal.makeCopy(nombreArchivo, carpetaBackupDia);
+        // Hacemos la copia con Backoff para evitar Rate Limits
+        executeDriveWithBackoff(() => archivoOriginal.makeCopy(nombreArchivo, carpetaBackupDia));
         Logger.log(`✅ Copiado: ${nombreArchivo} (${archivoOriginal.getMimeType()})`);
         archivosCopiados++;
       }

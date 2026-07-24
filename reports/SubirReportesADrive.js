@@ -5,9 +5,14 @@
  */
 
 function organizarReportesEnDrive() {
+  // BUG-03: trigger 24/7 (cada 10 min). Se omite fuera de la ventana operativa (05-15hs AR)
+  // para no consumir cuota de Gmail innecesariamente. Los reportes suelen empezar a llegar
+  // recién cerca de las 6hs, así que arrancar la ventana a las 5hs ya da margen de sobra.
+  if (!dentroDeVentanaOperativa("organizarReportesEnDrive")) return;
+
   var idCarpetaPrincipal = PropertiesService.getScriptProperties().getProperty("DRIVE_AVISO_BASE_FOLDER_ID");
   var idHojaCalculo = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
-  var horasAtras = 2; 
+  var horasAtras = 2;
 
   guardarYConvertirAdjuntosEnDrive(idCarpetaPrincipal, idHojaCalculo, horasAtras);
 }
@@ -22,7 +27,10 @@ function guardarYConvertirAdjuntosEnDrive(idCarpetaPrincipal, idHojaCalculo, hor
   var hojaClientes = spreadsheet.getSheetByName("Sheet1");
   if (!hojaClientes) { Logger.log("ERROR: No se encontró 'Sheet1'."); return; }
 
-  var listaClientesRaw = hojaClientes.getRange("A2:C" + hojaClientes.getLastRow()).getValues();
+  // C-03 fix: el rango era "A2:C" (3 columnas, índices 0-2) pero se leía fila[3] (columna D,
+  // "Jira Project Key" según la planilla real) -> projectKey siempre quedaba undefined,
+  // y por lo tanto el bloque "LÓGICA JIRA" de más abajo (cierre de tareas programadas) nunca corría.
+  var listaClientesRaw = hojaClientes.getRange("A2:D" + hojaClientes.getLastRow()).getValues();
   var clientes = {};
   listaClientesRaw.forEach(function(fila) {
     var remitente    = fila[0];
@@ -32,8 +40,13 @@ function guardarYConvertirAdjuntosEnDrive(idCarpetaPrincipal, idHojaCalculo, hor
       if (!clientes[nombreCliente]) {
         clientes[nombreCliente] = { nombre: nombreCliente, remitentes: [], projectKey: projectKey, carpetaId: null };
       }
-      if (remitente && clientes[nombreCliente].remitentes.indexOf(remitente) === -1) {
-        clientes[nombreCliente].remitentes.push(remitente);
+      if (remitente) {
+        remitente.split(',').forEach(function(s) {
+          var cleanSender = s.trim();
+          if (cleanSender !== "" && clientes[nombreCliente].remitentes.indexOf(cleanSender) === -1) {
+            clientes[nombreCliente].remitentes.push(cleanSender);
+          }
+        });
       }
     }
   });
@@ -57,9 +70,12 @@ function guardarYConvertirAdjuntosEnDrive(idCarpetaPrincipal, idHojaCalculo, hor
             carpetaId: idCarpetaReportes.toString().trim()
           };
         }
-        if (clientesAdjuntos[nombreCliente].remitentes.indexOf(remitente) === -1) {
-          clientesAdjuntos[nombreCliente].remitentes.push(remitente);
-        }
+        remitente.split(',').forEach(function(s) {
+          var cleanSender = s.trim();
+          if (cleanSender !== "" && clientesAdjuntos[nombreCliente].remitentes.indexOf(cleanSender) === -1) {
+            clientesAdjuntos[nombreCliente].remitentes.push(cleanSender);
+          }
+        });
       }
     });
     Logger.log("Clientes Adjuntos cargados: " + Object.keys(clientesAdjuntos).join(", "));
@@ -79,100 +95,116 @@ function guardarYConvertirAdjuntosEnDrive(idCarpetaPrincipal, idHojaCalculo, hor
   ];
   const REPORTES_QUE_CIERRAN_TAREAS_LOWER = REPORTES_QUE_CIERRAN_TAREAS_BASE.map(function(n) { return n.toLowerCase(); });
 
-  // ─── PROCESAR CLIENTES NORMALES (Sheet1) ─────────────────────────────────
-  for (var nombreCliente in clientes) {
-    var carpetaClienteDefault = obtenerOCrearCarpeta(carpetaPrincipal, nombreCliente);
-    var clienteInfo = clientes[nombreCliente];
-
-    clienteInfo.remitentes.forEach(function(remitente) {
-      var query = "from:" + remitente + " newer_than:" + horasAtras + "h";
-      var hilos = GmailApp.search(query);
-
-      hilos.forEach(function(hilo) {
-        hilo.getMessages().forEach(function(mensaje) {
-          var mensajeId = mensaje.getId();
-          var keyPropiedad = "PROCESADO_" + mensajeId;
-          if (scriptProperties.getProperty(keyPropiedad)) return;
-
-          var fechaMensaje = mensaje.getDate();
-          var nombreCarpetaFecha = formatearFechaParaNombre(fechaMensaje);
-          var adjuntos = mensaje.getAttachments();
-
-          if (adjuntos.length > 0) {
-            Logger.log("Procesando mensaje NUEVO ID: " + mensajeId + " de: " + remitente);
-
-            adjuntos.forEach(function(adjunto) {
-              var nombreArchivo = adjunto.getName();
-              var nombreArchivoLower = nombreArchivo.toLowerCase();
-              var carpetaDestinoFinal = carpetaClienteDefault;
-
-              // --- LÓGICA JIRA ---
-              if (clienteInfo.projectKey) {
-                for (var i = 0; i < REPORTES_QUE_CIERRAN_TAREAS_LOWER.length; i++) {
-                  if (nombreArchivoLower.includes(REPORTES_QUE_CIERRAN_TAREAS_LOWER[i])) {
-                    Logger.log("Archivo '" + nombreArchivo + "' detectado para cierre de tarea.");
-                    var tareaKey = findExistingJiraTicket(REPORTES_QUE_CIERRAN_TAREAS_BASE[i], clienteInfo.projectKey, "Tarea Programada");
-                    if (tareaKey) resolveJiraTicket(tareaKey, JIRA_STATUS_TO_CLOSE);
-                    break;
-                  }
-                }
-              }
-
-              // --- LÓGICA DRP ---
-              if (nombreArchivoLower.includes('drp')) {
-                for (var nombreClienteLista in clientes) {
-                  if (nombreArchivoLower.includes(nombreClienteLista.toLowerCase())) {
-                    carpetaDestinoFinal = obtenerOCrearCarpeta(carpetaPrincipal, clientes[nombreClienteLista].nombre);
-                    break;
-                  }
-                }
-              }
-
-              // --- GUARDADO ---
-              var carpetaFecha = obtenerOCrearCarpeta(carpetaDestinoFinal, nombreCarpetaFecha);
-              convertirYGuardar(adjunto, carpetaFecha);
-            });
-
-            scriptProperties.setProperty(keyPropiedad, "true");
-            Logger.log("Mensaje registrado como procesado en memoria interna.");
-          }
-        });
-      });
-    });
+  // --- NUEVO: en vez de un GmailApp.search() por cada remitente de cada cliente (N+1, agotaba la cuota diaria de Gmail),
+  // armamos un índice remitente -> cliente y hacemos búsquedas combinadas por lote ({from:a from:b} = OR en Gmail). ---
+  var indiceRemitentes = [];
+  for (var ncNormal in clientes) {
+    clientes[ncNormal].remitentes.forEach(function(r) { indiceRemitentes.push({ remitente: r, tipo: 'normal', nombreCliente: ncNormal }); });
+  }
+  for (var ncAdj in clientesAdjuntos) {
+    clientesAdjuntos[ncAdj].remitentes.forEach(function(r) { indiceRemitentes.push({ remitente: r, tipo: 'adjunto', nombreCliente: ncAdj }); });
   }
 
-  // ─── PROCESAR CLIENTES ADJUNTOS (pestaña "Adjuntos") ─────────────────────
-  // Sin tickets Jira. Guardan en su carpeta específica (col N del Índice General).
-  for (var nombreClienteAdj in clientesAdjuntos) {
-    var clienteInfoAdj = clientesAdjuntos[nombreClienteAdj];
-    var carpetaClienteAdj = DriveApp.getFolderById(clienteInfoAdj.carpetaId);
+  var carpetaClienteCache = {};
+  function obtenerCarpetaClienteCacheada(nombreCliente) {
+    if (!carpetaClienteCache[nombreCliente]) {
+      carpetaClienteCache[nombreCliente] = obtenerOCrearCarpeta(carpetaPrincipal, nombreCliente);
+    }
+    return carpetaClienteCache[nombreCliente];
+  }
 
-    clienteInfoAdj.remitentes.forEach(function(remitente) {
-      var query = "from:" + remitente + " newer_than:" + horasAtras + "h";
-      var hilos = GmailApp.search(query);
+  function extraerEmailDeFrom(fromHeader) {
+    var match = fromHeader.match(/<(.+)>/);
+    return (match ? match[1] : fromHeader).trim().toLowerCase();
+  }
 
-      hilos.forEach(function(hilo) {
-        hilo.getMessages().forEach(function(mensaje) {
-          var mensajeId = mensaje.getId();
-          var keyPropiedad = "PROCESADO_" + mensajeId;
-          if (scriptProperties.getProperty(keyPropiedad)) return;
+  function emailCoincideConRemitente(emailFrom, remitente) {
+    return emailFrom.indexOf(remitente.trim().toLowerCase()) !== -1;
+  }
 
-          var fechaMensaje = mensaje.getDate();
-          var nombreCarpetaFecha = formatearFechaParaNombre(fechaMensaje);
-          var adjuntos = mensaje.getAttachments();
+  const timeGuard = new TimeGuard({ operationName: "Subir Reportes a Drive" });
+  var TAM_LOTE_REMITENTES = 20; // remitentes por consulta combinada, para no exceder el largo de una query de Gmail
+  for (var i = 0; i < indiceRemitentes.length; i += TAM_LOTE_REMITENTES) {
+    if (!timeGuard.check(`Lote de remitentes ${i}-${i + TAM_LOTE_REMITENTES}`)) {
+      Logger.log(`[SubirReportesADrive] TimeGuard activado en loop de lotes.`);
+      break;
+    }
+    var lote = indiceRemitentes.slice(i, i + TAM_LOTE_REMITENTES);
+    var terminos = lote.map(function(e) { return "from:" + e.remitente; }).join(" ");
+    var query = "{" + terminos + "} newer_than:" + horasAtras + "h";
+    var hilos = GmailApp.search(query);
 
-          if (adjuntos.length > 0) {
-            Logger.log("[ADJUNTOS] Procesando mensaje NUEVO ID: " + mensajeId + " de: " + remitente + " (" + nombreClienteAdj + ")");
+    hilos.forEach(function(hilo) {
+      hilo.getMessages().forEach(function(mensaje) {
+        var mensajeId = mensaje.getId();
+        var keyPropiedad = "PROCESADO_" + mensajeId;
+        if (scriptProperties.getProperty(keyPropiedad)) return;
 
-            adjuntos.forEach(function(adjunto) {
-              var carpetaFecha = obtenerOCrearCarpeta(carpetaClienteAdj, nombreCarpetaFecha);
-              convertirYGuardar(adjunto, carpetaFecha);
-            });
+        var adjuntos = mensaje.getAttachments();
+        if (adjuntos.length === 0) return;
 
-            scriptProperties.setProperty(keyPropiedad, "true");
-            Logger.log("[ADJUNTOS] Mensaje registrado como procesado.");
-          }
-        });
+        var emailRemitente = extraerEmailDeFrom(mensaje.getFrom());
+        var entradaMatch = lote.find(function(e) { return emailCoincideConRemitente(emailRemitente, e.remitente); });
+        if (!entradaMatch) return;
+
+        var fechaMensaje = mensaje.getDate();
+        var nombreCarpetaFecha = formatearFechaParaNombre(fechaMensaje);
+
+        if (entradaMatch.tipo === 'normal') {
+          var clienteInfo = clientes[entradaMatch.nombreCliente];
+          var carpetaClienteDefault = obtenerCarpetaClienteCacheada(entradaMatch.nombreCliente);
+          Logger.log("Procesando mensaje NUEVO ID: " + mensajeId + " de: " + emailRemitente);
+
+          adjuntos.forEach(function(adjunto) {
+            var nombreArchivo = adjunto.getName();
+            var nombreArchivoLower = nombreArchivo.toLowerCase();
+            var carpetaDestinoFinal = carpetaClienteDefault;
+
+            // --- LÓGICA JIRA ---
+            if (clienteInfo.projectKey) {
+              for (var k = 0; k < REPORTES_QUE_CIERRAN_TAREAS_LOWER.length; k++) {
+                if (nombreArchivoLower.includes(REPORTES_QUE_CIERRAN_TAREAS_LOWER[k])) {
+                  Logger.log("Archivo '" + nombreArchivo + "' detectado para cierre de tarea.");
+                  const mappedClientConfig = {
+                    clientName: clienteInfo.nombre,
+                    jiraProjectKey: clienteInfo.projectKey
+                  };
+                  buscarYCerrarTareaProgramada(REPORTES_QUE_CIERRAN_TAREAS_BASE[k], mappedClientConfig, false);
+                  break;
+                }
+              }
+            }
+
+            // --- LÓGICA DRP ---
+            if (nombreArchivoLower.includes('drp')) {
+              for (var nombreClienteLista in clientes) {
+                if (nombreArchivoLower.includes(nombreClienteLista.toLowerCase())) {
+                  carpetaDestinoFinal = obtenerOCrearCarpeta(carpetaPrincipal, clientes[nombreClienteLista].nombre);
+                  break;
+                }
+              }
+            }
+
+            // --- GUARDADO ---
+            var carpetaFecha = obtenerOCrearCarpeta(carpetaDestinoFinal, nombreCarpetaFecha);
+            convertirYGuardar(adjunto, carpetaFecha);
+          });
+
+          scriptProperties.setProperty(keyPropiedad, "true");
+          Logger.log("Mensaje registrado como procesado en memoria interna.");
+        } else {
+          var clienteInfoAdj = clientesAdjuntos[entradaMatch.nombreCliente];
+          var carpetaClienteAdj = DriveApp.getFolderById(clienteInfoAdj.carpetaId);
+          Logger.log("[ADJUNTOS] Procesando mensaje NUEVO ID: " + mensajeId + " de: " + emailRemitente + " (" + entradaMatch.nombreCliente + ")");
+
+          adjuntos.forEach(function(adjunto) {
+            var carpetaFecha = obtenerOCrearCarpeta(carpetaClienteAdj, nombreCarpetaFecha);
+            convertirYGuardar(adjunto, carpetaFecha);
+          });
+
+          scriptProperties.setProperty(keyPropiedad, "true");
+          Logger.log("[ADJUNTOS] Mensaje registrado como procesado.");
+        }
       });
     });
   }
@@ -199,7 +231,7 @@ function convertirYGuardar(adjunto, carpetaDestino) {
       if (csvData.charCodeAt(0) === 0xFEFF) { csvData = csvData.substring(1); }
       var tempSheet = SpreadsheetApp.create("temp_csv_" + Date.now());
       var sheet = tempSheet.getSheets()[0];
-      var data = Utilities.parseCsv(csvData);
+      var data = parseCsvRobust(csvData);
       if (data.length > 0 && data[0].length > 0) {
         sheet.getRange(1, 1, data.length, data[0].length).setValues(data);
         var numColumnas = data[0].length;
@@ -278,7 +310,7 @@ function guardarComoXlsxYBorrarTemp(idTempSheet, carpetaDestino, nuevoNombre) {
   var token = ScriptApp.getOAuthToken();
   var opciones = { headers: { 'Authorization': 'Bearer ' + token }, muteHttpExceptions: true };
   try {
-    var respuesta = UrlFetchApp.fetch(url, opciones);
+    var respuesta = fetchWithRetries(url, opciones);
     if (respuesta.getResponseCode() == 200) {
       crearArchivoSiNoExiste(carpetaDestino, nuevoNombre, respuesta.getBlob());
     } else {

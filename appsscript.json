@@ -10,9 +10,5 @@
         "version": "v3"
       }
     ]
-  },
-  "webapp": {
-    "executeAs": "USER_DEPLOYING",
-    "access": "DOMAIN"
   }
 }

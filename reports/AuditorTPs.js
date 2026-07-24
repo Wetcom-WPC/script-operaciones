@@ -4,7 +4,7 @@
  */
 
 // --- CONFIGURACIÓN DE JIRA ---
-const JIRA_DOMAIN = PropertiesService.getScriptProperties().getProperty("JIRA_DOMAIN"); // Reemplazar con tu dominio de Jira
+
 const JIRA_EMAIL = PropertiesService.getScriptProperties().getProperty("JIRA_EMAIL"); // Reemplazar con el email del usuario de Jira
 const JIRA_API_TOKEN = PropertiesService.getScriptProperties().getProperty("JIRA_API_TOKEN"); // 
 const JIRA_FILTER_ID = PropertiesService.getScriptProperties().getProperty("JIRA_FILTER_AUDITOR_TPS"); // ID del filtro en Jira
@@ -82,7 +82,7 @@ function buscarTicketsPorFiltroJira() {
   };
 
   try {
-    const respuesta = UrlFetchApp.fetch(url, opciones);
+    const respuesta = fetchWithRetries(url, opciones);
     const codigoRespuesta = respuesta.getResponseCode();
     
     if (codigoRespuesta !== 200) {

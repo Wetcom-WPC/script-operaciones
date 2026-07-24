@@ -38,7 +38,7 @@ function generarReporteTareasCerradas() {
   };
 
   try {
-    const response = UrlFetchApp.fetch(endpoint, options);
+    const response = fetchWithRetries(endpoint, options);
     const data = JSON.parse(response.getContentText());
     
     if (response.getResponseCode() !== 200) {

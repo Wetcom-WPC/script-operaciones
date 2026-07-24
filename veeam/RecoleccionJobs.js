@@ -77,12 +77,13 @@ Ante cualquier duda o consulta estamos a su disposición.`;
   }
 
   // === ENVIAR EL MAIL ===
-  MailApp.sendEmail({
+  sendEmail({
     to: destinatario,
     cc: ccDestinatario,
     subject: asunto,
     body: cuerpo,
-    attachments: adjuntos
+    attachments: adjuntos,
+    name: 'Wetcom Proactive Center'
   });
 
   Logger.log(`📧 Mail enviado correctamente con asunto: "${asunto}" y el archivo ${nombreArchivoEsperado}.`);
@@ -92,6 +93,13 @@ Ante cualquier duda o consulta estamos a su disposición.`;
   const tareaProgamada = buscarYCerrarTareaProgramada(RECOLECCION_SCHEDULED_TASK_NAME_TO_CLOSE, clientConfig, false);
 }
 function crearTriggerDiario() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => {
+    if (t.getHandlerFunction() === "enviarMailRecoleccionDiarios") {
+      ScriptApp.deleteTrigger(t);
+      Logger.log("🗑️ Se eliminó un activador antiguo duplicado de enviarMailRecoleccionDiarios.");
+    }
+  });
 
   // Crea el nuevo activador basado en tiempo
   ScriptApp.newTrigger("enviarMailRecoleccionDiarios")

@@ -8,15 +8,20 @@
 const JIRA_FILTER_VSPHERE = PropertiesService.getScriptProperties().getProperty("JIRA_FILTER_VSPHERE_DIARIO"); 
 const JIRA_FILTER_VEEAM   = PropertiesService.getScriptProperties().getProperty("JIRA_FILTER_VEEAM");   
 const JIRA_FILTER_NUTANIX = PropertiesService.getScriptProperties().getProperty("JIRA_FILTER_NUTANIX"); // <-- NUEVO FILTRO
-const EMAIL_CC_GLOBAL     = "wpc@wetcom.com";
+const EMAIL_CC_GLOBAL     = "";
 
 // --- 2. FUNCIONES DE EJECUCIÓN ---
 
 function ejecutarReporteVsphere() {
   Logger.log("--- Iniciando Reporte vSphere (posible Horizon) ---");
   const tickets = generarReporteDiarioDeTickets(JIRA_FILTER_VSPHERE);
-  const consumo = generarReporteConsumoVsphere();
-  motorDeEnvio("vSphere", tickets, consumo);
+  // Legacy: antes se llamaba generarReporteConsumoVsphere() sin argumento. Esa función requiere
+  // un opsKey por-cliente (ver vsphere/ConsumoCPUMemoria.js) y sin él corta de inmediato y
+  // devuelve [] sin procesar nada -> el bloque de "consumo" del mail diario de vSphere jamás
+  // tuvo datos. Es el único punto del código que la invoca, así que se retira la llamada
+  // rota. El reporte de consumo por cliente sigue disponible vía processConsumoCPUMemoriaEmails(opsKey)
+  // si se decide cablearlo a un trigger/flujo con opsKey real.
+  motorDeEnvio("vSphere", tickets, null);
 }
 
 function ejecutarReporteVeeam() {
@@ -151,12 +156,26 @@ function motorDeEnvio(tecnologiaProcesada, datosTickets, datosConsumo) {
 
     htmlBody += `<br><p>Ante cualquier duda o consulta, estamos a su disposición.</p><p>Saludos cordiales.</p></div>`;
 
-    GmailApp.sendEmail(emailDestino, asunto, "", { 
+    sendEmail({
+      to: emailDestino,
+      subject: asunto,
       htmlBody: htmlBody,
-      cc: EMAIL_CC_GLOBAL 
+      cc: EMAIL_CC_GLOBAL,
+      name: 'Wetcom Proactive Center'
     });
     
     Logger.log(`Reporte [${nombreTecnicaMail}] enviado para ${empresa} (CC: ${EMAIL_CC_GLOBAL})`);
+
+    // --- CERRAR TAREA PROGRAMADA ---
+    try {
+      const clientConfig = getClientConfigByName(empresa, tecnologiaProcesada);
+      if (clientConfig) {
+        const taskName = `Envio de Reporte ${tecnologiaProcesada}`;
+        buscarYCerrarTareaProgramada(taskName, clientConfig, false);
+      }
+    } catch (e) {
+      Logger.log(`Advertencia: No se pudo cerrar la tarea programada para ${empresa}: ${e.message}`);
+    }
   }
 }
 
@@ -165,20 +184,21 @@ function obtenerConfiguracionIndice() {
   const mapaEmpresaPod = {};
   const mapaEmpresaTecs = {}; 
   try {
-    const sheet = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID).getSheets()[0];
-    const datos = sheet.getRange("B2:M" + sheet.getLastRow()).getValues();
-    datos.forEach(fila => {
-      const nombreJira = fila[0];      
-      const equipoPOD = fila[7];       
-      const nombreReporte = fila[10];  
-      const serviciosM = fila[11];     
+    const fullData = typeof MasterSheetSingleton !== 'undefined' ? MasterSheetSingleton.getMasterData() : SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID).getSheets()[0].getDataRange().getValues();
+    // Omitimos encabezado en índice 0
+    for (let i = 1; i < fullData.length; i++) {
+      const fila = fullData[i];
+      const nombreJira = fila[1];      // Col B
+      const equipoPOD = fila[8];       // Col I
+      const nombreReporte = fila[11];  // Col L
+      const serviciosM = fila[12];     // Col M
       if (nombreJira && nombreReporte) {
-        const empUnificada = nombreReporte.trim();
-        mapaUnificado[nombreJira.trim()] = empUnificada;
-        if (equipoPOD) mapaEmpresaPod[empUnificada] = equipoPOD.trim();
+        const empUnificada = nombreReporte.toString().trim();
+        mapaUnificado[nombreJira.toString().trim()] = empUnificada;
+        if (equipoPOD) mapaEmpresaPod[empUnificada] = equipoPOD.toString().trim();
         if (serviciosM) mapaEmpresaTecs[empUnificada] = String(serviciosM).trim();
       }
-    });
+    }
   } catch (e) {
     Logger.log("Error leyendo el Índice: " + e.message);
   }

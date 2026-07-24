@@ -199,7 +199,7 @@ function procesarInfraestructuraCliente(cliente, emailDestino, rootFolderId, pod
         try {
           intentos++;
           console.log(`⏳ [${cliente}] Abriendo archivo: ${file.getName()} (Intento ${intentos})`);
-          const tempSheetFile = Drive.Files.copy({ mimeType: MimeType.GOOGLE_SHEETS, name: `[TEMP_LIC]` }, file.getId());
+          const tempSheetFile = executeDriveWithBackoff(() => Drive.Files.copy({ mimeType: MimeType.GOOGLE_SHEETS, name: `[TEMP_LIC]` }, file.getId()));
           tempSheetId = tempSheetFile.id;
           Utilities.sleep(10000); 
           const tempSpreadsheet = SpreadsheetApp.openById(tempSheetId);
@@ -598,7 +598,12 @@ function enviarAlertaLicencias(cliente, destinatarioRaw, todasLasLicencias) {
   cuerpoHtml += `</div><p style="margin-top: 25px; font-size: 12px; color: #666;">Saludos,<br><b>Wetcom Proactive Center</b></p></div>`;
   
   if (emailsAEnviar) {
-    GmailApp.sendEmail(emailsAEnviar, asunto, "", { htmlBody: cuerpoHtml, name: 'Wetcom Proactive Center' });
+    sendEmail({
+      to: emailsAEnviar,
+      subject: asunto,
+      htmlBody: cuerpoHtml,
+      name: 'Wetcom Proactive Center'
+    });
   }
 }
 
@@ -611,9 +616,7 @@ function enviarAlertaSlackDetallada(cliente, alertas) {
   let msg = `*Reporte de Licencias - ${cliente}*\n`;
   if (vencidas.length > 0) msg += `🔴 *CRÍTICO:* ${vencidas.length} licencias vencidas en uso.\n`;
   if (proximas.length > 0) msg += `🟡 *WARNING:* ${proximas.length} próximas a vencer.\n`;
-  try {
-    UrlFetchApp.fetch(SLACK_WEBHOOK_URL, { method: "post", contentType: "application/json", payload: JSON.stringify({ text: msg }) });
-  } catch (e) {}
+  sendSlackMessage(SLACK_WEBHOOK_URL, msg);
 }
 
 /**

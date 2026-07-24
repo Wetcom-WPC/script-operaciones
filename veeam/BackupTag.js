@@ -73,12 +73,13 @@ Saludos.`;
   }
 
   // === ENVIAR EL MAIL ===
-  MailApp.sendEmail({
+  sendEmail({
     to: destinatario,
     cc: ccDestinatario,
     subject: asunto,
     body: cuerpo,
-    attachments: adjuntos
+    attachments: adjuntos,
+    name: 'Wetcom Proactive Center'
   });
 
   Logger.log(`📧 Mail enviado correctamente con asunto: "${asunto}"`);

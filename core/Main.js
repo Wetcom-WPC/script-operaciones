@@ -28,7 +28,8 @@ const LISTA_DE_TAREAS = [
   'processDuplicateJobEmails',
   'processRepositorySpaceEmails',
   'processHorizonDashboardEmails',
-  'processHorizonProblemMachinesEmails'
+  'processHorizonProblemMachinesEmails',
+  'processTanzuEmails'
 ];
 
 // --- CONFIGURACIÓN DE LA VENTANA DE EJECUCIÓN ---
@@ -37,7 +38,7 @@ const HORA_FIN = 15    // 12 AM termina definitivamente -- hasta las 15 PM
 
 function iniciarDiaOperativo() {
   Logger.log("Iniciando el ciclo diario de operaciones...");
-  crearNuevoActivador('ejecutarCicloDeOperaciones', 1); 
+  crearNuevoActivador('ejecutarCicloDeOperaciones', 5); 
 }
 
 /**
@@ -83,7 +84,11 @@ function ejecutarCicloDeOperaciones() {
       const nombreFuncion = LISTA_DE_TAREAS[indiceActual];
       try {
         Logger.log(`==> Ejecutando [${indiceActual + 1}/${LISTA_DE_TAREAS.length}]: ${nombreFuncion}`);
-        this[nombreFuncion](); // Llama a la función dinámicamente
+        if (typeof this[nombreFuncion] === 'function') {
+          this[nombreFuncion](); // Llama a la función dinámicamente
+        } else {
+          Logger.log(`### ADVERTENCIA: La función ${nombreFuncion} no está definida o no es ejecutable. ###`);
+        }
         Logger.log(`<== Finalizado: ${nombreFuncion}`);
       } catch (e) {
         Logger.log(`### ERROR en ${nombreFuncion}: ${e.message} ###`);
@@ -100,23 +105,26 @@ function ejecutarCicloDeOperaciones() {
     
     // 5. Gestión del siguiente paso
     if (indiceActual < LISTA_DE_TAREAS.length) {
-      // Quedan tareas: guardar índice y re-programar en 2 min
+      // Quedan tareas: guardar índice y re-programar en 5 min
       scriptProperties.setProperty('INDICE_SIGUIENTE_TAREA', indiceActual);
-      crearNuevoActivador('ejecutarCicloDeOperaciones', 2);
+      crearNuevoActivador('ejecutarCicloDeOperaciones', 5);
     } else {
       // Ciclo completado
       Logger.log("--- ¡CICLO COMPLETO DE TAREAS FINALIZADO! ---");
       scriptProperties.deleteProperty('INDICE_SIGUIENTE_TAREA');
       
       if (horaActual < HORA_FIN) {
-        Logger.log(`Aún en ventana (${horaActual}hs). Reiniciando bucle en 2 min.`);
-        crearNuevoActivador('ejecutarCicloDeOperaciones', 2);
+        Logger.log(`Aún en ventana (${horaActual}hs). Reiniciando bucle en 5 min.`);
+        crearNuevoActivador('ejecutarCicloDeOperaciones', 5);
       } else {
         Logger.log("Fin de ventana operativa. Ejecutando reportes finales de cierre...");
         
         try { generarReporteDiarioDeTickets(); } catch (e) {}
         try { generarReporteTareasCerradas(); } catch (e) {}
-        try { generarReporteConsumoVsphere(); } catch (e) {}
+        // A-04: se eliminó la llamada a generarReporteConsumoVsphere() sin argumento.
+        // Esa función requiere un opsKey (es por-cliente) y sin él salía de inmediato
+        // logueando "Key: undefined" sin hacer nada; además su retorno se descartaba.
+        // El reporte de consumo se envía por cliente desde ejecutarReporteVsphere() (EnvioMailTecnologias.js).
         try { registrarResumenDiario(); } catch(e) {}
         
         lock.releaseLock();

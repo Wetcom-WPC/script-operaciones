@@ -128,7 +128,7 @@ function procesarCliente(cliente, rootFolderId, emailDestino, idExcepciones) {
       } catch (err) {
         console.error(`   Error archivo ${fileName}: ${err.message}`);
       } finally {
-        if (tempId) Drive.Files.remove(tempId);
+        borrarArchivoTemporalSeguro(tempId);
       }
     }
   }
@@ -251,10 +251,6 @@ function escapeRegExp(string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
 }
 
-function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); 
-}
-
 function normalizarTexto(txt) {
   if (!txt) return "";
   return String(txt).trim().toLowerCase().replace(/\s+/g, ' ');
@@ -263,6 +259,23 @@ function normalizarTexto(txt) {
 // ======================================================
 // HERRAMIENTAS DE EXCEL Y EMAIL
 // ======================================================
+
+function borrarArchivoTemporalSeguro(fileId) {
+  if (!fileId) return;
+  try {
+    if (typeof Drive !== 'undefined' && Drive.Files && Drive.Files.remove) {
+      Drive.Files.remove(fileId);
+    } else {
+      DriveApp.getFileById(fileId).setTrashed(true);
+    }
+  } catch (e1) {
+    try {
+      DriveApp.getFileById(fileId).setTrashed(true);
+    } catch (e2) {
+      console.warn(`[CasoGire] No se pudo eliminar archivo temporal ${fileId}: ${e2.message}`);
+    }
+  }
+}
 
 function crearExcelFiltrado(headers, filas, nombreArchivo) {
   const ssTemp = SpreadsheetApp.create("Temp_Export_" + new Date().getTime());
@@ -279,7 +292,7 @@ function crearExcelFiltrado(headers, filas, nombreArchivo) {
       muteHttpExceptions: true
     };
     
-    const response = UrlFetchApp.fetch(url, params);
+    const response = fetchWithRetries(url, params);
     if (response.getResponseCode() === 200) {
       const blob = response.getBlob();
       blob.setName(nombreArchivo);
@@ -288,7 +301,7 @@ function crearExcelFiltrado(headers, filas, nombreArchivo) {
   } catch(e) {
     console.error("Error generando Excel: " + e.message);
   } finally {
-    Drive.Files.remove(ssTemp.getId());
+    borrarArchivoTemporalSeguro(ssTemp.getId());
   }
   return null;
 }
@@ -331,7 +344,22 @@ Ante cualquier duda o consulta, estamos a su disposición.
 
 Saludos cordiales.`;
 
-  GmailApp.sendEmail(destinatario, asunto, cuerpo, {
+  const htmlBody = buildHtmlEmailTemplate({
+    title: asunto,
+    preheader: `Reporte de Operaciones vSphere - ${cliente}`,
+    statusColor: "#ffc107",
+    contentHtml: `<p>Estimados, buenos días, espero que se encuentren bien.</p>
+<p>Envío a continuación los reportes de operaciones de vSphere correspondientes al día de la fecha.</p>
+<p><strong>Se adjuntan reportes del día de la fecha con anomalías.</strong></p>
+<p>Ante cualquier duda o consulta, estamos a su disposición.</p>
+<p>Saludos cordiales.</p>`
+  });
+
+  sendEmail({
+    to: destinatario,
+    subject: asunto,
+    body: cuerpo,
+    htmlBody: htmlBody,
     cc: CC_EMAIL,
     attachments: adjuntos,
     name: 'Operaciones Wetcom'
@@ -364,7 +392,22 @@ Ante cualquier duda o consulta, estamos a su disposición.
 
 Saludos cordiales.`;
 
-  GmailApp.sendEmail(destinatario, asunto, cuerpo, {
+  const htmlBody = buildHtmlEmailTemplate({
+    title: asunto,
+    preheader: `Validaciones correctas vSphere - ${cliente}`,
+    statusColor: "#28a745",
+    contentHtml: `<p>Estimados, buenos días, espero que se encuentren bien.</p>
+<p>Envío a continuación el estado de operaciones de vSphere correspondiente al día de la fecha.</p>
+<p><strong>Se informa que las validaciones del día de la fecha finalizaron correctamente sin anomalías detectadas.</strong></p>
+<p>Ante cualquier duda o consulta, estamos a su disposición.</p>
+<p>Saludos cordiales.</p>`
+  });
+
+  sendEmail({
+    to: destinatario,
+    subject: asunto,
+    body: cuerpo,
+    htmlBody: htmlBody,
     cc: CC_EMAIL,
     name: 'Operaciones Wetcom'
   });

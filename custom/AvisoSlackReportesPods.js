@@ -14,14 +14,17 @@ var AVISO_BASE_FOLDER_ID  = PropertiesService.getScriptProperties().getProperty(
 var AVISO_CONFIG_SHEET_ID = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID"); // Índice General
 var AVISO_CONFIG_TAB_NAME = "Configuracion Reportes";
 
-var AVISO_WEBHOOKS = {
-  "POD1":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_1"),
-  "POD2":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_2"),
-  "POD3":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_3"),
-  "POD4":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_4"),
-  "POD5":    PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_AVISOS_POD_5"),
-  "DEFAULT": PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL")
-};
+function getAvisoWebhooks() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    "POD1":    props.getProperty("SLACK_WEBHOOK_AVISOS_POD_1"),
+    "POD2":    props.getProperty("SLACK_WEBHOOK_AVISOS_POD_2"),
+    "POD3":    props.getProperty("SLACK_WEBHOOK_AVISOS_POD_3"),
+    "POD4":    props.getProperty("SLACK_WEBHOOK_AVISOS_POD_4"),
+    "POD5":    props.getProperty("SLACK_WEBHOOK_AVISOS_POD_5"),
+    "DEFAULT": props.getProperty("SLACK_WEBHOOK_GENERAL")
+  };
+}
 
 // ─── FUNCIÓN PRINCIPAL ───────────────────────────────────────────────────────
 
@@ -133,7 +136,8 @@ function verificarReporte() {
 
       for (var pod in mensajesPorPod) {
         if (mensajesPorPod[pod].length > 0) {
-          var webhookUrl = AVISO_WEBHOOKS[pod] || AVISO_WEBHOOKS["DEFAULT"];
+          var webhooksMap = getAvisoWebhooks();
+          var webhookUrl = webhooksMap[pod] || webhooksMap["DEFAULT"];
           _enviarMensajeSlackPod(mensajesPorPod[pod].join("\n"), webhookUrl);
         }
       }
@@ -178,7 +182,7 @@ function _enviarMensajeSlackPod(mensaje, webhookUrl) {
   var payload = JSON.stringify({ text: mensaje });
   var options = { method: "post", contentType: "application/json", payload: payload };
   try {
-    UrlFetchApp.fetch(webhookUrl, options);
+    fetchWithRetries(webhookUrl, options);
   } catch (e) {
     Logger.log("Error al enviar mensaje a Slack: " + e);
   }

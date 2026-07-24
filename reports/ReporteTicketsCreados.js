@@ -13,19 +13,18 @@ function obtenerDatosDelIndice() {
   const mapaPortales = {}; 
 
   try {
-    const sheet = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID).getSheets()[0];
+    const fullData = typeof MasterSheetSingleton !== 'undefined' ? MasterSheetSingleton.getMasterData() : SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID).getSheets()[0].getDataRange().getValues();
     
-    // CAMBIO 1: Ampliamos la lectura desde la columna B hasta la O (Letra O)
-    const datos = sheet.getRange("B2:O" + sheet.getLastRow()).getValues();
-    
-    datos.forEach(fila => {
-      // Índices del array: B=0, C=1, D=2, E=3 ... I=7 ... N=12, O=13
-      const nombreProyecto = fila[0] ? String(fila[0]).trim() : null;  // Col B
-      const claveOps = fila[2] ? String(fila[2]).trim() : null;        // Col D
-      const portalOps = fila[3] ? String(fila[3]).trim() : null;       // Col E
-      const equipoCliente = fila[7] ? String(fila[7]).trim() : null;   // Col I
-      const claveSoporte = fila[12] ? String(fila[12]).trim() : null;  // Col N
-      const portalSoporte = fila[13] ? String(fila[13]).trim() : null; // Col O
+    // Omitimos encabezado (índice 0)
+    for (let i = 1; i < fullData.length; i++) {
+      const fila = fullData[i];
+      // Índices del array con getDataRange: A=0, B=1, C=2, D=3, E=4 ... I=8 ... N=13, O=14
+      const nombreProyecto = fila[1] ? String(fila[1]).trim() : null;  // Col B
+      const claveOps = fila[3] ? String(fila[3]).trim() : null;        // Col D
+      const portalOps = fila[4] ? String(fila[4]).trim() : null;       // Col E
+      const equipoCliente = fila[8] ? String(fila[8]).trim() : null;   // Col I
+      const claveSoporte = fila[13] ? String(fila[13]).trim() : null;  // Col N
+      const portalSoporte = fila[14] ? String(fila[14]).trim() : null; // Col O
       
       if (nombreProyecto) {
         mapaProyectos[nombreProyecto] = equipoCliente || "Sin Equipo Asignado";
@@ -40,7 +39,7 @@ function obtenerDatosDelIndice() {
       if (claveSoporte && portalSoporte) {
         mapaPortales[claveSoporte] = portalSoporte;
       }
-    });
+    }
     Logger.log("Mapas de referencia (Ops y Soporte) creados con éxito.");
   } catch (e) {
     Logger.log(`Error al crear los mapas de referencia: ${e.message}`);
@@ -80,7 +79,7 @@ function generarReporteDiarioDeTickets(filtroId) {
         "muteHttpExceptions": true
       };
       
-      const response = UrlFetchApp.fetch(endpoint, options);
+      const response = fetchWithRetries(endpoint, options);
       const data = JSON.parse(response.getContentText());
 
       if (data.issues) {

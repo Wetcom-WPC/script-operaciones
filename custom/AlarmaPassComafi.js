@@ -3,23 +3,19 @@
  * Ejecución: Día 12 de cada mes, entre las 8:00 y las 9:00 AM.
  */
 
-// 1. REEMPLAZA ESTA URL CON EL WEBHOOK DE TU CANAL DE SLACK
-const SLACK_WEBHOOK_URL_COMAFI = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_COMAFI"); 
-
 function enviarAlertaPasswordMiqueas() {
-  
-  // 2. REEMPLAZA ESTO CON EL ID DE SLACK DE THIAGO (Ej: "U0123ABCD")
-  const idThiago = "U087XUMAQSJ"; 
+  const webhookUrl = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_COMAFI");
+  if (!webhookUrl || webhookUrl.trim() === "") {
+    Logger.log("[AlarmaPassComafi] Error: SLACK_WEBHOOK_COMAFI no está configurado en las Script Properties.");
+    return;
+  }
 
-  // Armamos el mensaje con el formato de menciones de Slack (<!channel> y <@ID>)
-  const mensaje = `🚨 *ATENCIÓN:* Se venció la password de Miqueas de Comafi y hay que restablecerla.\n\n` +
+  const idThiago = "U087XUMAQSJ"; 
+  const mensaje = `🚨 *ATENCIÓN <@${idThiago}>:* Se venció la password de Miqueas de Comafi y hay que restablecerla.\n\n` +
                   `🔗 *Link para restablecer:* https://passwordreset.microsoftonline.com/passwordreset#!/\n` +
                   `🔑 *Aclaración:* Pedir token a Nico Moraez.`;
 
-  const payload = {
-    "text": mensaje
-  };
-
+  const payload = { "text": mensaje };
   const options = {
     "method": "post",
     "contentType": "application/json",
@@ -27,7 +23,7 @@ function enviarAlertaPasswordMiqueas() {
   };
 
   try {
-    UrlFetchApp.fetch(SLACK_WEBHOOK_URL_COMAFI, options);
+    fetchWithRetries(webhookUrl, options);
     Logger.log("Mensaje enviado a Slack con éxito.");
   } catch (e) {
     Logger.log("Error al enviar mensaje a Slack: " + e.message);
