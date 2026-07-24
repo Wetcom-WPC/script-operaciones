@@ -121,7 +121,10 @@ function ejecutarCicloDeOperaciones() {
         
         try { generarReporteDiarioDeTickets(); } catch (e) {}
         try { generarReporteTareasCerradas(); } catch (e) {}
-        try { generarReporteConsumoVsphere(); } catch (e) {}
+        // A-04: se eliminó la llamada a generarReporteConsumoVsphere() sin argumento.
+        // Esa función requiere un opsKey (es por-cliente) y sin él salía de inmediato
+        // logueando "Key: undefined" sin hacer nada; además su retorno se descartaba.
+        // El reporte de consumo se envía por cliente desde ejecutarReporteVsphere() (EnvioMailTecnologias.js).
         try { registrarResumenDiario(); } catch(e) {}
         
         lock.releaseLock();

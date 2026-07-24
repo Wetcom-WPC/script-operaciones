@@ -124,12 +124,17 @@ class ProxiesVeeamProcessor extends MailProcessor {
 }
 
 function processProxyAlarms() {
+  // BUG-03: trigger 24/7 (cada 15 min). Se omite fuera de la ventana operativa (05-15hs AR)
+  // para no consumir cuota de Gmail. Las alertas usan is:unread, así que las que lleguen
+  // fuera de horario quedan sin leer y se procesan en la primera corrida dentro de la ventana.
+  if (!dentroDeVentanaOperativa("processProxyAlarms")) return;
   new ProxiesVeeamProcessor().processEmails();
 }
 
 function getAllAlertsSortedByDate() {
   const threads = GmailApp.search(PROXY_ALARM_SEARCH_QUERY);
   const allMessages = [];
+  const descartados = []; // C-04: acumulamos descartes y emitimos un único resumen al final
 
   threads.forEach(thread => {
     thread.getMessages().forEach(message => {
@@ -174,11 +179,20 @@ function getAllAlertsSortedByDate() {
             originalMessage: message
           });
         } else {
-            Logger.log(`Correo descartado. Asunto: "${subject}". Proxy detectado: "${proxyIdentifier}". Estado detectado: "${state}".`);
+            // C-04: en vez de spamear un log por cada correo, acumulamos para un resumen final.
+            descartados.push({ subject: subject, proxy: proxyIdentifier, state: state });
         }
       }
     });
   });
+
+  // C-04: resumen único de descartes (evita decenas de líneas repetidas en el log).
+  if (descartados.length > 0) {
+    Logger.log(`[Proxies Veeam] Se descartaron ${descartados.length} correo(s) por formato no reconocido (proxy o estado no detectado):`);
+    descartados.slice(0, 10).forEach(d => Logger.log(`  • Asunto: "${d.subject}" | Proxy: "${d.proxy}" | Estado: "${d.state}"`));
+    if (descartados.length > 10) Logger.log(`  • ... y ${descartados.length - 10} más.`);
+  }
+
   return allMessages.sort((a, b) => a.date - b.date);
 }
 

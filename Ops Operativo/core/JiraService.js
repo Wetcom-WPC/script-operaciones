@@ -227,8 +227,13 @@ function createTicketCOMAFI(summary, description, attachmentBlob, clientConfig) 
     if (attachmentBlob) {
       const attachmentResult = addAttachmentToJiraTicket(issue.issueKey, attachmentBlob);
       if (attachmentResult.status !== 'SUCCESS') {
-        addCommentToJiraTicket(issue.issueKey, `🚨 **¡Atención!** Se creó este ticket pero **falló la subida del reporte adjunto**. El sistema reintentará adjuntarlo automáticamente.`);
-        return attachmentResult;
+        // A-02: un 500 de Jira no siempre significa que el archivo no llegó. Confirmamos
+        // contra la API real antes de rendirnos, para no re-subir el mismo adjunto en el
+        // reintento (idempotencia), igual que createTicketAndNotify.
+        if (!buscarAdjuntoEnTicket(issue.issueKey, attachmentBlob.getName())) {
+          addCommentToJiraTicket(issue.issueKey, `🚨 **¡Atención!** Se creó este ticket pero **falló la subida del reporte adjunto**. El sistema reintentará adjuntarlo automáticamente.`);
+          return attachmentResult;
+        }
       }
     }
     return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.` } };
@@ -339,22 +344,9 @@ function ticketInformativo(issueKey, accountId, timeGuard = null) {
 
   try {
     // 1. AGREGAR COMENTARIO INFORMATIVO
-    const commentPayload = JSON.stringify({
-      "body": {
-        "type": "doc",
-        "version": 1,
-        "content": [{
-          "type": "paragraph",
-          "content": [{ "type": "text", "text": "Ticket cerrado automáticamente por regla informativa." }]
-        }]
-      }
-    });
-    fetchWithRetries(`${baseUrl}/comment`, {
-      method: "post",
-      headers: headers,
-      payload: commentPayload,
-      muteHttpExceptions: true
-    });
+    // A-03: unificado a través de addCommentToJiraTicket (v3 + ADF + interno) para no
+    // duplicar la construcción manual de ADF y mantener una sola vía de comentarios.
+    addCommentToJiraTicket(issueKey, "Ticket cerrado automáticamente por regla informativa.");
 
     // 2. PRIMER SALTO: A "EN PROGRESO"
     fetchWithRetries(transitionsUrl, {
@@ -530,12 +522,44 @@ function resolveJiraTicket(issueKey, statusToClose) {
   } catch (e) { return { status: 'ERROR', detail: { error: e.message } }; }
 }
 
+/**
+ * Convierte texto plano (con saltos de línea) al formato ADF (Atlassian Document Format)
+ * que exige la API v3 de Jira. Cada línea se convierte en un nodo de texto separado por
+ * hardBreak, de modo que un marcador de una sola línea (ej. "[AUTO-UPDATE:fecha] tarea")
+ * queda íntegro en un único nodo de texto y es detectable al hacer JSON.stringify() del body.
+ * @param {string} texto Texto plano del comentario.
+ * @returns {Object} Documento ADF válido para el campo "body".
+ */
+function construirAdfDesdeTexto(texto) {
+  const lineas = String(texto == null ? "" : texto).split("\n");
+  const content = [];
+  lineas.forEach((linea, idx) => {
+    if (idx > 0) content.push({ "type": "hardBreak" });
+    if (linea !== "") content.push({ "type": "text", "text": linea });
+  });
+  if (content.length === 0) content.push({ "type": "text", "text": " " });
+  return { "type": "doc", "version": 1, "content": [{ "type": "paragraph", "content": content }] };
+}
+
+/**
+ * Agrega un comentario INTERNO a un ticket de Jira.
+ *
+ * A-03: Unificado a la API de plataforma v3 (/rest/api/3/issue/.../comment) con cuerpo ADF.
+ * Antes usaba /rest/servicedeskapi con body string, mientras que haSidoActualizadoHoy LEE los
+ * comentarios vía v3 (ADF). Esa mezcla de APIs hacía frágil la detección del marcador
+ * anti-duplicado [AUTO-UPDATE:fecha]. Con escritor y lector en la misma API/formato, el
+ * marcador siempre coincide. La propiedad sd.public.comment=internal preserva el
+ * comportamiento anterior (public:false → comentario interno, no visible al cliente).
+ */
 function addCommentToJiraTicket(issueKey, commentText) {
-  const endpoint = `${JIRA_DOMAIN}/rest/servicedeskapi/request/${issueKey}/comment`;
-  const payload = { "body": commentText, "public": false };
+  const endpoint = `${JIRA_DOMAIN}/rest/api/3/issue/${issueKey}/comment`;
+  const payload = {
+    "body": construirAdfDesdeTexto(commentText),
+    "properties": [{ "key": "sd.public.comment", "value": { "internal": true } }]
+  };
   const options = { "method": "post", "contentType": "application/json", "headers": getJiraHeaders(), "payload": JSON.stringify(payload), "muteHttpExceptions": true };
-  try { fetchWithRetries(endpoint, options); } catch (e) { 
-    Logger.log(`[JiraService] Fallo al comentar en ${issueKey}: ${e.message}`); 
+  try { fetchWithRetries(endpoint, options); } catch (e) {
+    Logger.log(`[JiraService] Fallo al comentar en ${issueKey}: ${e.message}`);
   }
 }
 

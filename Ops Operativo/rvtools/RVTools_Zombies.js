@@ -46,14 +46,21 @@ function procesarZombiesVmdk(spreadsheet, clientConfig, summaryReport, vcenterFQ
 
     if (anomalies.length === 0) return { headers: [], anomalies: [] };
 
-    // FIX: usar normalizarEncabezado() tanto para "vCenter" como para los encabezados
-    // del reporte, garantizando la misma normalización que usa isRowExcepted internamente.
-    // Antes se usaba ["vcenter", ...normalizedHeaders] con lowercase manual, lo que
-    // producía desajuste cuando normalizarEncabezado() no lowercasea de la misma forma.
-    const headersParaExcepcion = [
-      normalizarEncabezado("vCenter"),
-      ...originalHeaders.map(h => normalizarEncabezado(h))
-    ];
+    // FIX (BUG-01): El Excel de excepciones de "Zombies VMDKs" referencia la columna "name",
+    // pero en la pestaña vHealth de RVTools la columna del objeto suele llamarse "Object"
+    // (por eso la detección de objectIndex admite "object"/"vm"). Como normalizarEncabezado("Object")
+    // devuelve "object" != "name", isRowExcepted nunca encontraba la columna y TODAS las reglas de
+    // excepción (fcd, hbrdisk.RDID, appvolumes, cp-parent-, TEMPLATE) quedaban sin aplicarse.
+    //
+    // Solución robusta e independiente de la versión de RVTools: forzamos que la columna detectada
+    // como objeto se exponga con el nombre canónico "name" y la de mensaje como "message" en el
+    // arreglo de encabezados que consume el motor de excepciones. Como isRowExcepted vuelve a
+    // normalizar cada encabezado, pasar nombres ya canónicos es idempotente y seguro.
+    const headersParaExcepcion = ["vcenter", ...originalHeaders.map(h => normalizarEncabezado(h))];
+    headersParaExcepcion[objectIndex + 1] = "name";     // +1 compensa el vCenter agregado al frente
+    headersParaExcepcion[msgTypeIndex + 1] = "message";
+
+    Logger.log(`[ZombieDebug] headersParaExcepcion: [${headersParaExcepcion.join(", ")}] | objectIndex=${objectIndex}, msgTypeIndex=${msgTypeIndex}`);
 
     const finalAnomalies = anomalies.filter(row => {
       const rowWithVcenter = [vcenterFQDN, ...row];

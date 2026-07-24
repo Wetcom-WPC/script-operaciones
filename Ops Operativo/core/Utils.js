@@ -62,20 +62,39 @@ class TimeGuard {
 
 /**
  * Función de diagnóstico para ver los encabezados de un reporte tal como los ve el script.
- * Se ejecuta manualmente desde el editor de Apps Script.
+ *
+ * SpreadsheetApp.getUi() solo funciona si la ejecución viene de un contexto de UI real
+ * (un menú personalizado clickeado dentro de la hoja abierta, onOpen, onEdit, etc.).
+ * Ejecutar con el botón "Run" del editor de Apps Script NUNCA tiene esa sesión de UI,
+ * así que getUi() tira "Cannot call SpreadsheetApp.getUi() from this context." sin importar
+ * qué función la llame. Por eso ahora acepta `operationName` como parámetro opcional:
+ * pasándolo (ej. desde manual_diagnosticarEncabezados en custom/HerramientasManuales.js)
+ * se puede correr headless desde el editor sin depender de la UI. Si se omite, intenta el
+ * prompt de UI como antes (solo funciona si se invoca desde un menú de la hoja).
+ * @param {string} [operationName] Nombre EXACTO de la operación (ej. "VMs operativas", "Cluster DRS").
  */
-function diagnosticarEncabezadosDeReporte() {
-  const ui = SpreadsheetApp.getUi();
-  const result = ui.prompt(
-    'Diagnóstico de Encabezados',
-    'Ingresa el nombre EXACTO de la operación (ej. "VMs operativas", "Cluster DRS"):',
-    ui.ButtonSet.OK_CANCEL);
+function diagnosticarEncabezadosDeReporte(operationName) {
+  if (!operationName) {
+    let ui;
+    try {
+      ui = SpreadsheetApp.getUi();
+    } catch (e) {
+      Logger.log('[diagnosticarEncabezadosDeReporte] No hay contexto de UI disponible (se ejecutó fuera de un menú de hoja). Pasa el nombre de la operación como parámetro, ej: diagnosticarEncabezadosDeReporte("VMs operativas").');
+      return;
+    }
+    const result = ui.prompt(
+      'Diagnóstico de Encabezados',
+      'Ingresa el nombre EXACTO de la operación (ej. "VMs operativas", "Cluster DRS"):',
+      ui.ButtonSet.OK_CANCEL);
 
-  if (result.getSelectedButton() !== ui.Button.OK || !result.getResponseText()) {
-    return;
+    if (result.getSelectedButton() !== ui.Button.OK || !result.getResponseText()) {
+      return;
+    }
+    operationName = result.getResponseText().trim();
+  } else {
+    operationName = operationName.trim();
   }
-  
-  const operationName = result.getResponseText().trim();
+
   Logger.log(`--- Iniciando diagnóstico para la operación: "${operationName}" ---`);
 
   const searchQuery = `subject:"${operationName}" has:attachment`;
@@ -127,7 +146,7 @@ function diagnosticarEncabezadosDeReporte() {
       Logger.log(`[${index}] "${header}"`);
     });
     Logger.log("--------------------------------");
-    SpreadsheetApp.getUi().alert("Diagnóstico completo. Revisa los logs para ver los encabezados.");
+    try { SpreadsheetApp.getUi().alert("Diagnóstico completo. Revisa los logs para ver los encabezados."); } catch (e) { /* sin contexto de UI (ejecución headless): el resultado ya quedó en el log */ }
   } else {
     Logger.log("No se pudieron extraer encabezados del reporte.");
   }
@@ -135,6 +154,37 @@ function diagnosticarEncabezadosDeReporte() {
 function forzarReautorizacion() {
   // Esta función no hace nada.
   MailApp.sendEmail("test@test.com", "test", "test");
+}
+
+// --- VENTANA HORARIA OPERATIVA (BUG-03) -----------------------------------
+// El día operativo de la Mesa es de 05:00 a 15:00 (hora Argentina). Los triggers
+// que corren 24/7 (ej. organizarReportesEnDrive cada 10 min, processProxyAlarms
+// cada 15 min) consumían cuota de Gmail las 24 horas. Estos límites permiten
+// omitir la ejecución fuera de la ventana operativa.
+const HORARIO_OPERATIVO_INICIO = 5;   // inclusive (05:00)
+const HORARIO_OPERATIVO_FIN = 15;     // exclusive (hasta las 14:59)
+const HORARIO_OPERATIVO_TZ = "America/Argentina/Buenos_Aires";
+
+/**
+ * Indica si el momento actual está dentro de la ventana operativa (05:00–15:00 hora Argentina).
+ * @returns {boolean} `true` si se debe ejecutar, `false` si está fuera de horario.
+ */
+function estaEnHorarioOperativo() {
+  const hora = parseInt(Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, "H"), 10);
+  return hora >= HORARIO_OPERATIVO_INICIO && hora < HORARIO_OPERATIVO_FIN;
+}
+
+/**
+ * Guarda de ejecución para triggers 24/7. Registra en log y devuelve `false`
+ * si estamos fuera del horario operativo, para que la función que llama pueda
+ * cortar temprano: `if (!dentroDeVentanaOperativa("miTrigger")) return;`
+ * @param {string} [nombreTrigger=""] Nombre del trigger, solo para el log.
+ * @returns {boolean} `true` si se puede continuar, `false` si se debe omitir.
+ */
+function dentroDeVentanaOperativa(nombreTrigger = "") {
+  if (estaEnHorarioOperativo()) return true;
+  Logger.log(`[HorarioOperativo] Fuera de la ventana operativa (${HORARIO_OPERATIVO_INICIO}-${HORARIO_OPERATIVO_FIN}hs AR). Ejecución omitida${nombreTrigger ? `: ${nombreTrigger}` : ""}.`);
+  return false;
 }
 
 /**

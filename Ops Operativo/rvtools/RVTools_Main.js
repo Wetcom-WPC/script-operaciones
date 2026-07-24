@@ -10,10 +10,6 @@
 
 const RVTOOLS_ROW_LIMIT_FOR_TABLE = 7;
 
-function hola() {
-  procesarRVToolsManual("WPC - Operaciones Testing", "1REqgcvp0q0nDFHYuULKhzb2Yc-Hdnw7h");
-}
-
 /**
  * FUNCIÓN PRINCIPAL: Invocada desde la Sheet (checkbox Col U) o desde
  * procesarEnviosPorLote (trigger de tiempo cada 5 min).
@@ -213,25 +209,43 @@ function gestionarReporteRVTools(clientConfig, summaryReport, taskName, ticketTi
       if (existingTicketKey) {
         let attachmentIsReady = true;
 
-        // --- ADJUNTO ---
+        // --- ADJUNTO (con reintento a nivel aplicación - BUG-02) ---
+        // fetchWithRetries ya reintenta a nivel HTTP, pero un 500 de Jira puede tardar
+        // varios minutos en resolverse. Reintentamos hasta 3 veces con pausa de 30s,
+        // verificando primero si el adjunto ya existe (idempotencia) para no duplicarlo.
         if (xlsxBlob) {
           const attachmentName = newFileName;
-          if (!buscarAdjuntoEnTicket(existingTicketKey, attachmentName)) {
-            const attachmentResult = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
-            if (attachmentResult.status !== 'SUCCESS') {
-              attachmentIsReady = false;
-              summaryReport.errores.push({
-                error: "Fallo al adjuntar Excel en " + existingTicketKey,
-                detalle: JSON.stringify(attachmentResult.detail)
-              });
-            } else {
-              // FIX: registrar el adjunto exitoso en exitos para que enviarResumenSlack
-              // tenga contenido incluso cuando haSidoActualizadoHoy salta el comment.
-              // Antes este push no existía, dejando summaryReport vacío → Slack silencioso.
-              summaryReport.exitos.push({
-                mensaje: `📎 Adjunto subido a <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>: _${attachmentName}_`
-              });
+          const MAX_ATTACH_RETRIES = 3;
+          let attachmentResult = { status: 'PENDING' };
+
+          for (let attempt = 1; attempt <= MAX_ATTACH_RETRIES; attempt++) {
+            // Idempotencia: si ya está subido (por este intento o uno previo), no reintentar.
+            if (buscarAdjuntoEnTicket(existingTicketKey, attachmentName)) {
+              attachmentResult = { status: 'SUCCESS' };
+              break;
             }
+            attachmentResult = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
+            if (attachmentResult.status === 'SUCCESS') break;
+
+            Logger.log(`[RVTools] Reintento de adjunto ${attempt}/${MAX_ATTACH_RETRIES} en ${existingTicketKey} (status: ${attachmentResult.status}).`);
+            if (attempt < MAX_ATTACH_RETRIES) Utilities.sleep(30000);
+          }
+
+          if (attachmentResult.status === 'SUCCESS') {
+            // FIX: registrar el adjunto exitoso en exitos para que enviarResumenSlack
+            // tenga contenido incluso cuando haSidoActualizadoHoy salta el comment.
+            // Antes este push no existía, dejando summaryReport vacío → Slack silencioso.
+            summaryReport.exitos.push({
+              mensaje: `📎 Adjunto subido a <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>: _${attachmentName}_`
+            });
+          } else {
+            attachmentIsReady = false;
+            summaryReport.errores.push({
+              error: "Fallo al adjuntar Excel en " + existingTicketKey,
+              cliente: clientConfig.clientName,   // A-01: identifica el cliente real en Slack
+              ticket: existingTicketKey,
+              detalle: JSON.stringify(attachmentResult.detail)
+            });
           }
         }
 
@@ -261,6 +275,7 @@ function gestionarReporteRVTools(clientConfig, summaryReport, taskName, ticketTi
         } else {
           summaryReport.errores.push({
             error: "No se pudo crear el ticket de " + taskName,
+            cliente: clientConfig.clientName,   // A-01
             detalle: JSON.stringify(creationResult.detail)
           });
         }
@@ -279,6 +294,7 @@ function gestionarReporteRVTools(clientConfig, summaryReport, taskName, ticketTi
   } catch (e) {
     summaryReport.errores.push({
       error: "Fallo crítico al gestionar reporte para " + taskName,
+      cliente: (clientConfig && clientConfig.clientName) || "Desconocido",   // A-01
       detalle: e.message
     });
   }

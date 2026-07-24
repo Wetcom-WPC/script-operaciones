@@ -5,9 +5,14 @@
  */
 
 function organizarReportesEnDrive() {
+  // BUG-03: trigger 24/7 (cada 10 min). Se omite fuera de la ventana operativa (05-15hs AR)
+  // para no consumir cuota de Gmail innecesariamente. Los reportes suelen empezar a llegar
+  // recién cerca de las 6hs, así que arrancar la ventana a las 5hs ya da margen de sobra.
+  if (!dentroDeVentanaOperativa("organizarReportesEnDrive")) return;
+
   var idCarpetaPrincipal = PropertiesService.getScriptProperties().getProperty("DRIVE_AVISO_BASE_FOLDER_ID");
   var idHojaCalculo = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
-  var horasAtras = 2; 
+  var horasAtras = 2;
 
   guardarYConvertirAdjuntosEnDrive(idCarpetaPrincipal, idHojaCalculo, horasAtras);
 }
@@ -22,7 +27,10 @@ function guardarYConvertirAdjuntosEnDrive(idCarpetaPrincipal, idHojaCalculo, hor
   var hojaClientes = spreadsheet.getSheetByName("Sheet1");
   if (!hojaClientes) { Logger.log("ERROR: No se encontró 'Sheet1'."); return; }
 
-  var listaClientesRaw = hojaClientes.getRange("A2:C" + hojaClientes.getLastRow()).getValues();
+  // C-03 fix: el rango era "A2:C" (3 columnas, índices 0-2) pero se leía fila[3] (columna D,
+  // "Jira Project Key" según la planilla real) -> projectKey siempre quedaba undefined,
+  // y por lo tanto el bloque "LÓGICA JIRA" de más abajo (cierre de tareas programadas) nunca corría.
+  var listaClientesRaw = hojaClientes.getRange("A2:D" + hojaClientes.getLastRow()).getValues();
   var clientes = {};
   listaClientesRaw.forEach(function(fila) {
     var remitente    = fila[0];
