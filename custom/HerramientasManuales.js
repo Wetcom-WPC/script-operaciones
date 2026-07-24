@@ -17,7 +17,7 @@
 // Cliente y carpeta de Drive usados para probar el flujo de RVTools.
 // (Reemplaza al viejo hola() que estaba en RVTools_Main.js — C-01).
 const MANUAL_TEST_CLIENT_NAME = "WPC - Operaciones Testing";
-const MANUAL_TEST_RVTOOLS_FOLDER_ID = "1REqgcvp0q0nDFHYuULKhzb2Yc-Hdnw7h";
+const MANUAL_TEST_RVTOOLS_FOLDER_ID = "1hqgJzoMtaqcMdwCSaSHjGBVvYMxe5Tvw";
 
 /**
  * Ejecuta el flujo completo de RVTools (Zombies + ConnectAtPowerOn) contra el
