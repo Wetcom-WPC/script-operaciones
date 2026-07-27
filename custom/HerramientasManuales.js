@@ -321,8 +321,16 @@ function manual_cerrarTareasProgramadas() {
 
   let cerradas = 0, fallidas = 0;
   const omitidas = { noAutomatizada: [], enEjecucion: [], sinEvidencia: [] };
+  // Cuántos reportes procesados hoy hay por cliente. Sirve para distinguir dos casos muy
+  // distintos: "a este cliente no le llegó/procesó NINGÚN reporte" (problema del cliente o
+  // del ciclo) vs "llegaron varios pero justo ese no" (el reporte puntual falta).
+  const reportesPorCliente = {};
 
   _obtenerProyectosDelIndice().forEach(({ clientName, projectKey, remitentes }) => {
+    reportesPorCliente[clientName] = evidencia.filter(e =>
+      remitentes.some(r => e.from.indexOf(r) !== -1)
+    ).length;
+
     _buscarTareasProgramadasAbiertas(projectKey).forEach(tarea => {
       const nombre = tarea.summary.trim();
       const etiqueta = `${tarea.key} — ${clientName} — ${nombre}`;
@@ -338,7 +346,7 @@ function manual_cerrarTareasProgramadas() {
         return;
       }
       if (!_hayEvidenciaDeReporte(evidencia, remitentes, nombre)) {
-        omitidas.sinEvidencia.push(etiqueta);
+        omitidas.sinEvidencia.push({ etiqueta, clientName });
         return;
       }
 
@@ -367,8 +375,23 @@ function manual_cerrarTareasProgramadas() {
 
   if (omitidas.sinEvidencia.length > 0) {
     Logger.log(`\n--- Sin evidencia (el reporte no llegó o no se procesó; revisar antes de cerrar a mano) ---`);
-    omitidas.sinEvidencia.forEach(t => Logger.log(`   ${t}`));
+
+    // Agrupamos por cliente e informamos cuántos reportes SÍ se procesaron de cada uno.
+    const porCliente = {};
+    omitidas.sinEvidencia.forEach(({ etiqueta, clientName }) => {
+      if (!porCliente[clientName]) porCliente[clientName] = [];
+      porCliente[clientName].push(etiqueta);
+    });
+
+    Object.keys(porCliente).forEach(cliente => {
+      const procesados = reportesPorCliente[cliente] || 0;
+      const veredicto = procesados === 0
+        ? "🚨 NINGÚN reporte de este cliente se procesó hoy: el problema es del cliente o del ciclo, no de estas tareas puntuales."
+        : `${procesados} reporte(s) de este cliente SÍ se procesaron hoy: solo faltan estos.`;
+      Logger.log(`\n   ${cliente} — ${veredicto}`);
+      porCliente[cliente].forEach(t => Logger.log(`      ${t}`));
+    });
   }
 
-  return { cerradas, fallidas, omitidas };
+  return { cerradas, fallidas, omitidas, reportesPorCliente };
 }
