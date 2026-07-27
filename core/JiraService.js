@@ -501,25 +501,51 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
   } catch (e) { return null; }
 }
 
+/**
+ * Transiciona un ticket al estado indicado.
+ *
+ * Los llamadores suelen descartar el resultado, así que cada fallo se loguea con
+ * su motivo concreto. Antes devolvía 'FAILURE' sin dejar rastro y un cierre que
+ * nunca ocurría era indistinguible de uno exitoso: las tareas programadas
+ * quedaban abiertas sin que nada lo reportara.
+ *
+ * @param {string} issueKey Clave del ticket.
+ * @param {string} statusToClose Nombre EXACTO del estado destino (ej. "Finalizado").
+ * @returns {{status: string, detail?: Object}}
+ */
 function resolveJiraTicket(issueKey, statusToClose) {
   try {
     const transitionsUrl = `${JIRA_DOMAIN}/rest/api/3/issue/${issueKey}/transitions`;
     const optionsGet = { "method": "get", "headers": getJiraHeaders(), "muteHttpExceptions": true };
     const responseGet = fetchWithRetries(transitionsUrl, optionsGet);
-    if (responseGet.getResponseCode() !== 200) return { status: 'FAILURE' };
+    if (responseGet.getResponseCode() !== 200) {
+      Logger.log(`[JIRA] No se pudieron leer las transiciones de ${issueKey} (HTTP ${responseGet.getResponseCode()}). El ticket queda abierto.`);
+      return { status: 'FAILURE' };
+    }
 
     const data = JSON.parse(responseGet.getContentText());
     const closeTransition = data.transitions.find(t => t.to.name === statusToClose);
-    if (closeTransition) {
-      const payload = { "transition": { "id": closeTransition.id } };
-      const optionsPost = { "method": "post", "contentType": "application/json", "headers": getJiraHeaders(), "payload": JSON.stringify(payload), "muteHttpExceptions": true };
-      const responsePost = fetchWithRetries(transitionsUrl, optionsPost);
-      if (responsePost.getResponseCode() === 204) {
-        return { status: 'SUCCESS' };
-      }
+
+    if (!closeTransition) {
+      const disponibles = data.transitions.map(t => t.to.name).join(", ");
+      Logger.log(`[JIRA] ${issueKey} NO se cerró: no existe una transición hacia "${statusToClose}". Destinos disponibles: [${disponibles}]. Revisar JIRA_STATUS_TO_CLOSE en core/ConfiguracionGlobal.js.`);
+      return { status: 'FAILURE', detail: { ticketKey: issueKey, problema: `No existe transición a "${statusToClose}"`, disponibles } };
     }
-    return { status: 'FAILURE' };
-  } catch (e) { return { status: 'ERROR', detail: { error: e.message } }; }
+
+    const payload = { "transition": { "id": closeTransition.id } };
+    const optionsPost = { "method": "post", "contentType": "application/json", "headers": getJiraHeaders(), "payload": JSON.stringify(payload), "muteHttpExceptions": true };
+    const responsePost = fetchWithRetries(transitionsUrl, optionsPost);
+
+    if (responsePost.getResponseCode() === 204) {
+      return { status: 'SUCCESS' };
+    }
+
+    Logger.log(`[JIRA] Falló la transición de ${issueKey} a "${statusToClose}" (HTTP ${responsePost.getResponseCode()}): ${responsePost.getContentText()}`);
+    return { status: 'FAILURE', detail: { ticketKey: issueKey, problema: `La transición devolvió HTTP ${responsePost.getResponseCode()}` } };
+  } catch (e) {
+    Logger.log(`[JIRA] Excepción al cerrar ${issueKey}: ${e.message}`);
+    return { status: 'ERROR', detail: { error: e.message } };
+  }
 }
 
 /**
