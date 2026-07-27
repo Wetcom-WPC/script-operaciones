@@ -50,6 +50,11 @@ function etiquetarYMarcarProcesado(thread, status) {
   }
 }
 
+// Tope de hilos que trae la búsqueda global de pendientes. GmailApp.search admite hasta 500.
+// Estaba en 200 y las corridas del 27/07/2026 devolvían exactamente 200 todas las veces,
+// señal de que se estaba truncando el resultado. Ver la advertencia en fetchAndFilterGlobalThreads.
+const LIMITE_HILOS_PENDIENTES = 450;
+
 let _globalPendingThreads = null;
 let _validSendersCache = null;
 
@@ -62,8 +67,16 @@ let _validSendersCache = null;
 function fetchAndFilterGlobalThreads(emailSubject) {
   if (!_globalPendingThreads) {
     Logger.log("[MailUtils] Obteniendo todos los hilos [OPS-PENDIENTE] globales (caché de ejecución)...");
-    _globalPendingThreads = GmailApp.search(`has:attachment (label:${OPS_LABEL_PENDIENTE} OR is:unread) -label:${OPS_LABEL_PROCESADO}`, 0, 200);
+    _globalPendingThreads = GmailApp.search(`has:attachment (label:${OPS_LABEL_PENDIENTE} OR is:unread) -label:${OPS_LABEL_PROCESADO}`, 0, LIMITE_HILOS_PENDIENTES);
     Logger.log(`[MailUtils] Se obtuvieron ${_globalPendingThreads.length} hilos en total.`);
+
+    // Si la búsqueda vuelve justo con el tope, Gmail truncó el resultado y hay reportes
+    // que este ciclo NUNCA va a ver: quedan sin procesar sin que nada lo reporte.
+    // El riesgo es real porque la consulta incluye `is:unread`, así que cualquier correo
+    // no leído con adjunto (aunque no sea un reporte) compite por el cupo.
+    if (_globalPendingThreads.length >= LIMITE_HILOS_PENDIENTES) {
+      Logger.log(`[MailUtils] ⚠️ ADVERTENCIA: la búsqueda alcanzó el tope de ${LIMITE_HILOS_PENDIENTES} hilos. Es MUY probable que haya reportes pendientes fuera de ese corte, que este ciclo no va a procesar. Revisar la bandeja: correos no leídos con adjunto que no sean reportes ocupan lugar.`);
+    }
   }
 
   if (!_validSendersCache) {
