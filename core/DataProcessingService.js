@@ -118,6 +118,11 @@ const COLUMN_ALIASES = {
   "used space (%)": ["utilization (%)", "space used (%)", "percent used", "uso (%)", "utilizacion (%)", "used space percent", "percentage of used space"],
   "snapshot space (gb)": ["snapshot space", "espacio snapshot (gb)", "snapshot size (gb)", "snapshot size", "space", "size (gb)", "tamanio (gb)", "size", "snapshot_space"],
   "partition usage (%)": ["porcentaje de uso (%)", "porcentaje de uso", "free space (%)", "uso de particion (%)", "uso de particion", "partition usage", "partition_usage_(%)"],
+  // Los reportes en español traen la columna como "Particion" pero las reglas del Excel de
+  // excepciones la referencian como "Partition". Sin este alias las reglas de "Capacidad de
+  // particiones" NUNCA se aplicaban (mismo problema que tenía Zombies con name/Object).
+  // Ojo: es la columna del NOMBRE de la partición, distinta de "partition usage (%)" (el %).
+  "partition": ["particion", "partición", "particiones", "unidad", "drive"],
   "number_days_old": ["age", "days old", "dias", "antiguedad", "number days old", "created"],
   "number_snapshots": ["cantidad", "snapshots", "number snapshots", "count"]
 };
@@ -150,6 +155,31 @@ function normalizarEncabezado(header) {
 }
 
 
+// Columnas de excepción ya advertidas en esta ejecución, para no repetir el mismo aviso.
+const _columnasDeExcepcionAdvertidas = {};
+
+/**
+ * Avisa UNA sola vez por columna que una regla de excepción apunta a una columna
+ * inexistente en el reporte.
+ *
+ * Antes se logueaba dentro del filtro por fila: en la corrida del 27/07/2026 generó
+ * 618 líneas idénticas (el 64% del log), tapando el resto de los mensajes. Además
+ * ahora se listan los encabezados disponibles, que es lo que permite detectar de
+ * un vistazo un desajuste de idioma (ej. la regla dice "Partition" y el reporte
+ * trae "Particion").
+ *
+ * @param {string} columnaOriginal Nombre tal como figura en el Excel de excepciones.
+ * @param {string} columnaNormalizada Su forma normalizada.
+ * @param {Array<string>} headersDelReporte Encabezados normalizados del reporte.
+ */
+function advertirColumnaDeExcepcionFaltante(columnaOriginal, columnaNormalizada, headersDelReporte) {
+  const clave = `${columnaNormalizada}::${headersDelReporte.join(",")}`;
+  if (_columnasDeExcepcionAdvertidas[clave]) return;
+  _columnasDeExcepcionAdvertidas[clave] = true;
+
+  Logger.log(`ADVERTENCIA DE EXCEPCIÓN: La columna "${columnaOriginal}" (normalizada como "${columnaNormalizada}") definida en el Excel de excepciones no se encontró en el reporte. La regla NO se aplica. Encabezados disponibles: [${headersDelReporte.join(", ")}]`);
+}
+
 /**
  * FUNCIÓN MODIFICADA
  * Verifica si una fila de reporte debe ser omitida según las reglas de excepción.
@@ -169,8 +199,7 @@ function isRowExcepted(reportRow, headers, exceptions) {
       const colIndex = normalizedHeaders.indexOf(normalizedConditionColumn);
 
       if (colIndex === -1) {
-        // Este log es útil para depurar por qué una regla de excepción no funciona
-        Logger.log(`ADVERTENCIA DE EXCEPCIÓN: La columna "${condition.column}" (normalizada como "${normalizedConditionColumn}") definida en el Excel de excepciones no se encontró en el reporte.`);
+        advertirColumnaDeExcepcionFaltante(condition.column, normalizedConditionColumn, normalizedHeaders);
         return false; // La condición falla porque la columna no existe en el reporte
       }
       const reportValueStr = (reportRow[colIndex] || "").trim();
