@@ -51,4 +51,4 @@ Los cambios se prueban primero en el proyecto de Apps Script **Ops Playground** 
 
 Los tokens, contraseñas y webhooks **no** deben subirse en texto plano a GitHub. Todo token se configura a través de `Configuración del Proyecto → Propiedades de la Secuencia de Comandos` en la interfaz de Google Apps Script.
 
-Para el historial de cambios, ver [`CHANGELOG.md`](CHANGELOG.md).
+Para el historial de cambios, ver [`CHANGELOG.md`](CHANGELOG.md). Para las convenciones de trabajo y errores a evitar (importante antes de tocar código), ver [`AGENTS.md`](AGENTS.md).
