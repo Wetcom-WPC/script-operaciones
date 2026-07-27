@@ -85,21 +85,103 @@ function manual_diagnosticarEncabezados() {
 // =================================================================
 
 /**
- * Devuelve los proyectos de Jira del Índice Maestro, sin repetir.
- * @returns {Array<{clientName: string, projectKey: string}>}
+ * Tareas Programadas que la automatización cierra al procesar el correo del reporte.
+ * Se cierra ÚNICAMENTE lo que esté en esta lista: todo lo demás (pedidos de clientes,
+ * tickets [INTERNO], mantenimientos manuales como "Rotacion Credenciales") lo hace una
+ * persona, y darlo por cerrado sería marcar como hecho algo que nadie hizo.
+ *
+ * Quedan afuera a propósito los reportes que cierra organizarReportesEnDrive
+ * ("VMs protegidas", "Replicas protegidas", "Hosts y VMs con contencion de CPU",
+ * "Capacity Planning", "VM Daily Protection Status", "Inventario de VMs"): esos se
+ * cierran solos al correr esa función, que sí verifica que el archivo haya llegado.
+ */
+const TAREAS_QUE_CIERRA_LA_AUTOMATIZACION = [
+  "Affinity Rules",
+  "Alertas de vROps",
+  "Alertas de vSphere",
+  "Backup por tag",
+  "Capacidad de particiones",
+  "Cluster DRS",
+  "Componentes de View",
+  "Dashboard View",
+  "Discos Montados en Proxy",
+  "Espacio en datastores",
+  "Estado de Agentes View",
+  "Idle VMs",
+  "Jobs de Veeam",
+  "Oversized VMs",
+  "Storage DRS",
+  "Undersized VMs",
+  "VMs apagadas por periodo de tiempo significativo",
+  "VMs con Preguntas",
+  "VMs con snapshots",
+  "VMs en datastores locales",
+  "VMs inaccesibles",
+  "VMs operativas"
+];
+
+// Solo se cierran tareas en este estado. Una "En Ejecución" puede ser trabajo real en curso.
+const ESTADO_TAREA_CERRABLE = "Pendiente de Ejecución";
+
+/**
+ * Devuelve los clientes del Índice Maestro con su proyecto de Jira y sus remitentes.
+ * @returns {Array<{clientName: string, projectKey: string, remitentes: Array<string>}>}
  */
 function _obtenerProyectosDelIndice() {
   const proyectos = [];
   const vistos = {};
   MasterSheetSingleton.getMasterData().slice(1).forEach(fila => {
+    const remitentesRaw = fila[0] ? String(fila[0]) : "";
     const clientName = fila[1] ? String(fila[1]).trim() : "";
     const projectKey = fila[3] ? String(fila[3]).trim().toUpperCase() : "";
-    if (projectKey && !vistos[projectKey]) {
-      vistos[projectKey] = true;
-      proyectos.push({ clientName, projectKey });
+    if (!projectKey) return;
+
+    const remitentes = remitentesRaw.split(',').map(r => r.trim().toLowerCase()).filter(r => r !== "");
+
+    if (vistos[projectKey]) {
+      // Un mismo proyecto puede tener varias filas/remitentes: los acumulamos.
+      vistos[projectKey].remitentes = vistos[projectKey].remitentes.concat(remitentes);
+      return;
     }
+    const entrada = { clientName, projectKey, remitentes };
+    vistos[projectKey] = entrada;
+    proyectos.push(entrada);
   });
   return proyectos;
+}
+
+/**
+ * Trae la EVIDENCIA de qué reportes se procesaron efectivamente hoy.
+ *
+ * Una Tarea Programada solo debería cerrarse si su reporte llegó y se proceso. La
+ * prueba de eso es el hilo de Gmail con la etiqueta [OPS-PROCESADO], que el propio
+ * flujo aplica al terminar. Se hace UNA sola búsqueda y se filtra en memoria para
+ * no gastar cuota de Gmail.
+ *
+ * @returns {Array<{from: string, subject: string}>}
+ */
+function _obtenerReportesProcesadosHoy() {
+  const hilos = GmailApp.search(`label:${OPS_LABEL_PROCESADO} newer_than:1d`, 0, 300);
+  Logger.log(`[Evidencia] ${hilos.length} hilos con ${OPS_LABEL_PROCESADO} en las últimas 24 h.`);
+  return hilos.map(hilo => {
+    const msg = hilo.getMessages()[hilo.getMessageCount() - 1];
+    return { from: msg.getFrom().toLowerCase(), subject: msg.getSubject().toLowerCase() };
+  });
+}
+
+/**
+ * Indica si hay evidencia de que el reporte de esa tarea, para ese cliente, se procesó hoy.
+ * @param {Array<{from: string, subject: string}>} evidencia Salida de _obtenerReportesProcesadosHoy().
+ * @param {Array<string>} remitentes Remitentes del cliente según el Índice Maestro.
+ * @param {string} nombreTarea Nombre de la Tarea Programada (coincide con el asunto del reporte).
+ * @returns {boolean}
+ */
+function _hayEvidenciaDeReporte(evidencia, remitentes, nombreTarea) {
+  const asuntoBuscado = nombreTarea.trim().toLowerCase();
+  return evidencia.some(e =>
+    e.subject.indexOf(asuntoBuscado) !== -1 &&
+    remitentes.some(r => e.from.indexOf(r) !== -1)
+  );
 }
 
 /**
@@ -206,53 +288,87 @@ function manual_auditarTareasProgramadas() {
   return { totalAbiertas, conteoPorNombre };
 }
 
-// Poné acá el nombre EXACTO de la tarea a cerrar con manual_cerrarTareasProgramadas
-// (tal como figura en el campo Actividad/summary de Jira). Vacío = todas las abiertas.
+// Acota el cierre a una sola tarea (nombre EXACTO como figura en Jira). Vacío = todas
+// las que pasen las validaciones.
 const MANUAL_CIERRE_NOMBRE_TAREA = "";
 
-// Seguridad: en true solo simula y muestra qué cerraría. Poné false para cerrar de verdad.
+// Seguridad: en true solo simula. Poné false recién después de revisar la simulación.
 const MANUAL_CIERRE_SIMULACION = true;
 
 /**
- * CIERRE MASIVO de Tareas Programadas.
+ * Cierra Tareas Programadas cuyo reporte se procesó efectivamente hoy.
  *
- * ⚠️ Modifica tickets en Jira. Arranca en modo simulación: revisá primero la salida
- * con MANUAL_CIERRE_SIMULACION = true y recién después ponelo en false.
+ * ⚠️ Con MANUAL_CIERRE_SIMULACION = false modifica tickets en Jira.
  *
- * Filtra por MANUAL_CIERRE_NOMBRE_TAREA si está definido; si queda vacío, alcanza a
- * TODAS las tareas programadas abiertas, así que usalo con criterio.
+ * Para cerrar una tarea deben cumplirse las TRES condiciones:
+ *   1. Estar en TAREAS_QUE_CIERRA_LA_AUTOMATIZACION (nunca toca pedidos de clientes,
+ *      tickets [INTERNO] ni mantenimientos manuales).
+ *   2. Estar en estado "Pendiente de Ejecución" (una "En Ejecución" puede ser trabajo real).
+ *   3. Tener EVIDENCIA de que el reporte llegó y se procesó hoy: un hilo de Gmail
+ *      etiquetado [OPS-PROCESADO] de un remitente de ese cliente y con ese asunto.
+ *
+ * Sin la condición 3 esto sería solo un "marcar todo como hecho", que es exactamente
+ * lo que no queremos: daría por cumplidas operaciones que nunca corrieron.
  */
 function manual_cerrarTareasProgramadas() {
   const filtroNombre = MANUAL_CIERRE_NOMBRE_TAREA.trim().toLowerCase();
   const modo = MANUAL_CIERRE_SIMULACION ? "SIMULACIÓN (no se modifica nada)" : "CIERRE REAL";
   Logger.log(`=== CIERRE DE TAREAS PROGRAMADAS — modo: ${modo} ===`);
-  Logger.log(filtroNombre ? `Filtro de nombre: "${MANUAL_CIERRE_NOMBRE_TAREA}"` : "Sin filtro: alcanza a TODAS las abiertas.");
+  if (filtroNombre) Logger.log(`Filtro de nombre: "${MANUAL_CIERRE_NOMBRE_TAREA}"`);
 
-  let cerradas = 0;
-  let fallidas = 0;
+  const evidencia = _obtenerReportesProcesadosHoy();
+  const automatizadas = TAREAS_QUE_CIERRA_LA_AUTOMATIZACION.map(t => t.toLowerCase());
 
-  _obtenerProyectosDelIndice().forEach(({ clientName, projectKey }) => {
+  let cerradas = 0, fallidas = 0;
+  const omitidas = { noAutomatizada: [], enEjecucion: [], sinEvidencia: [] };
+
+  _obtenerProyectosDelIndice().forEach(({ clientName, projectKey, remitentes }) => {
     _buscarTareasProgramadasAbiertas(projectKey).forEach(tarea => {
-      if (filtroNombre && tarea.summary.trim().toLowerCase() !== filtroNombre) return;
+      const nombre = tarea.summary.trim();
+      const etiqueta = `${tarea.key} — ${clientName} — ${nombre}`;
+
+      if (filtroNombre && nombre.toLowerCase() !== filtroNombre) return;
+
+      if (automatizadas.indexOf(nombre.toLowerCase()) === -1) {
+        omitidas.noAutomatizada.push(etiqueta);
+        return;
+      }
+      if (tarea.status !== ESTADO_TAREA_CERRABLE) {
+        omitidas.enEjecucion.push(`${etiqueta} [${tarea.status}]`);
+        return;
+      }
+      if (!_hayEvidenciaDeReporte(evidencia, remitentes, nombre)) {
+        omitidas.sinEvidencia.push(etiqueta);
+        return;
+      }
 
       if (MANUAL_CIERRE_SIMULACION) {
-        Logger.log(`   [simulado] ${tarea.key} — ${clientName} — ${tarea.summary}`);
+        Logger.log(`   [simulado] ${etiqueta}`);
         cerradas++;
         return;
       }
 
       const resultado = resolveJiraTicket(tarea.key, JIRA_STATUS_TO_CLOSE);
       if (resultado && resultado.status === 'SUCCESS') {
-        Logger.log(`   ✅ ${tarea.key} cerrada — ${clientName} — ${tarea.summary}`);
+        Logger.log(`   ✅ ${etiqueta}`);
         cerradas++;
       } else {
-        const destinos = _obtenerTransicionesDisponibles(tarea.key);
-        Logger.log(`   ❌ ${tarea.key} NO se pudo cerrar — ${tarea.summary}. Destinos disponibles: [${destinos.join(", ")}]`);
+        Logger.log(`   ❌ No se pudo cerrar ${etiqueta}`);
         fallidas++;
       }
     });
   });
 
   Logger.log(`\n=== RESULTADO: ${cerradas} ${MANUAL_CIERRE_SIMULACION ? "se cerrarían" : "cerradas"}, ${fallidas} fallidas ===`);
-  return { cerradas, fallidas };
+  Logger.log(`Omitidas por seguridad:`);
+  Logger.log(`   ${omitidas.noAutomatizada.length} no las maneja la automatización (las cierra una persona)`);
+  Logger.log(`   ${omitidas.enEjecucion.length} en un estado distinto de "${ESTADO_TAREA_CERRABLE}"`);
+  Logger.log(`   ${omitidas.sinEvidencia.length} SIN evidencia de que el reporte se haya procesado hoy`);
+
+  if (omitidas.sinEvidencia.length > 0) {
+    Logger.log(`\n--- Sin evidencia (el reporte no llegó o no se procesó; revisar antes de cerrar a mano) ---`);
+    omitidas.sinEvidencia.forEach(t => Logger.log(`   ${t}`));
+  }
+
+  return { cerradas, fallidas, omitidas };
 }
