@@ -122,21 +122,30 @@ class VMsConSnapshotsProcessor extends MailProcessor {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Ticket ${existingTicketKey} actualizado con tabla.` });
       } else {
-        const xlsxBlob = convertDataToXlsxBlob([headers, ...rowsForExport], "Reporte-Filtrado.xlsx");
+        // El nombre DEBE incluir la fecha del reporte: addAttachmentToJiraTicket omite adjuntos
+        // que ya existen en el ticket, y con un nombre fijo la actualización del día siguiente
+        // se descartaría por error. Se usa la misma convención que MailProcessor.handleAlerts.
+        const nombreReporte = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const xlsxBlob = convertDataToXlsxBlob([headers, ...rowsForExport], nombreReporte);
         const attStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
         
         if (attStatus.status === 'SUCCESS') {
             commentText += "Se adjunta reporte detallado.";
             addCommentToJiraTicket(existingTicketKey, commentText);
             summaryReport.exitos.push({ mensaje: `Ticket ${existingTicketKey} actualizado con adjunto.` });
-            
+
             const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName);
             if (accountIdAsignado) ticketInformativo(existingTicketKey, accountIdAsignado);
         } else {
+            // No cerrar la tarea programada acá: el reporte todavía no se adjuntó. Si un 500
+            // transitorio de Jira cierra la tarea de todos modos, el próximo reintento la
+            // encuentra ya cerrada (NOT_FOUND es terminal en buscarYCerrarTareaProgramada) y el
+            // correo se aparta a [OPS-ERROR] para siempre aunque el 500 se hubiera resuelto solo.
             summaryReport.advertencias.push("Fallo al adjuntar.");
+            return { status: attStatus.status === 'HTTP_500' ? 'HTTP_500' : 'FAILURE' };
         }
       }
-      
+
       if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       return { status: 'SUCCESS' };
       
@@ -158,11 +167,26 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       }
      
       const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, this.operationName);
-      if (creationResult.status === 'SUCCESS') summaryReport.exitos.push(creationResult.detail);
-      else if (creationResult.status === 'ERROR') summaryReport.errores.push(creationResult.detail);
-      
+      const estadoCreacion = (creationResult && creationResult.status) ? creationResult.status : 'ERROR';
+
+      if (estadoCreacion === 'SUCCESS') {
+        summaryReport.exitos.push(creationResult.detail);
+      } else {
+        // Mismo motivo que en la rama de ticket existente: si el reporte no se llegó a adjuntar,
+        // NO se cierra la tarea programada. Cerrarla acá hace que el reintento la encuentre
+        // cerrada (NOT_FOUND es terminal) y mande el correo a [OPS-ERROR] para siempre, aunque
+        // el 500 de Jira haya sido pasajero.
+        summaryReport.errores.push(creationResult && creationResult.detail ? creationResult.detail : {
+          cliente: clientConfig.clientName,
+          error: `No se pudo crear/completar el ticket de "${this.operationName}"`,
+          detalle: `Estado devuelto: ${estadoCreacion}. El correo queda pendiente y se reintenta.`
+        });
+        Logger.log(`[${this.operationName}] Creación/adjunto no confirmado (estado ${estadoCreacion}). NO se cierra la tarea programada; el correo se reintenta.`);
+        return { status: estadoCreacion };
+      }
+
       if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
-      return { status: creationResult.status };
+      return { status: estadoCreacion };
     }
   }
 }

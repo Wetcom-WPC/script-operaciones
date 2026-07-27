@@ -75,6 +75,23 @@ function buscarYCerrarTareaProgramada(taskNameBase, clientConfig, useClientNameI
 
   const projectKey = clientConfig.jiraProjectKey;
 
+  // --- GUARDA CENTRAL: no cerrar la TP si el correo ya falló en algún paso ---
+  // Cerrar la tarea programada es lo ÚLTIMO que debe pasar: significa "este reporte quedó listo".
+  // Si el adjunto falló (ej. HTTP 500 de Jira), cerrarla igual rompe el reintento: en el próximo
+  // ciclo la tarea ya no aparece abierta, buscarYCerrarTareaProgramada devuelve NOT_FOUND (que es
+  // terminal) y el correo se aparta a [OPS-ERROR] para siempre, aunque el 500 fuera pasajero.
+  // Unos 20 processors llaman a esta función sin mirar el resultado del paso anterior, así que la
+  // verificación vive acá, en un solo lugar, en vez de parchear cada uno (mismo criterio que
+  // MailProcessor.aplicarFallosRegistrados — ver AGENTS.md §5 y §7).
+  if (typeof obtenerFallosDelMensaje === "function") {
+    const fallosPrevios = obtenerFallosDelMensaje();
+    if (fallosPrevios.length > 0) {
+      const motivos = fallosPrevios.map(function (f) { return `${f.origen}: ${f.detalle}`; }).join(" | ");
+      Logger.log(`⏸ NO se cierra la tarea programada "${taskNameBase}" (proyecto ${projectKey}): el correo tiene ${fallosPrevios.length} paso(s) fallido(s), así que el reporte todavía no está completo. La tarea queda ABIERTA para que el reintento pueda cerrarla. Detalle: ${motivos}`);
+      return { status: 'DEFERRED' };
+    }
+  }
+
   Logger.log(`Buscando Tarea Programada para el reporte de "${taskNameBase}"...`);
   Logger.log(` -> Nombre del Ticket: "${fullTaskName}"`);
   Logger.log(` -> Dentro del Proyecto de Jira: "${projectKey}"`);
@@ -86,6 +103,11 @@ function buscarYCerrarTareaProgramada(taskNameBase, clientConfig, useClientNameI
     return resolveJiraTicket(taskKeyToClose, JIRA_STATUS_TO_CLOSE);
   } else {
     Logger.log(`ℹ No se encontró una tarea programada abierta con ese nombre en el proyecto ${projectKey}.`);
+    // Decisión del equipo (27/07/2026): NOT_FOUND cuenta como NO procesado, así que se
+    // registra como fallo y el correo se reintenta en vez de darse por terminado.
+    // Terminal: reintentar no la va a hacer aparecer. O la tarea no existe, o el nombre no
+    // coincide, o ya fue cerrada a mano. Necesita que una persona lo revise.
+    registrarFalloDePaso("buscarYCerrarTareaProgramada", `No se encontró la tarea programada "${fullTaskName}" abierta en el proyecto ${projectKey} (cliente ${clientConfig.clientName}). Verificar que exista y que el nombre coincida exactamente.`, true);
     return { status: 'NOT_FOUND' };
   }
 }
@@ -520,6 +542,7 @@ function resolveJiraTicket(issueKey, statusToClose) {
     const responseGet = fetchWithRetries(transitionsUrl, optionsGet);
     if (responseGet.getResponseCode() !== 200) {
       Logger.log(`[JIRA] No se pudieron leer las transiciones de ${issueKey} (HTTP ${responseGet.getResponseCode()}). El ticket queda abierto.`);
+      registrarFalloDePaso("resolveJiraTicket", `Ticket ${issueKey}: HTTP ${responseGet.getResponseCode()} al leer las transiciones; no se pudo cerrar.`);
       return { status: 'FAILURE' };
     }
 
@@ -529,6 +552,7 @@ function resolveJiraTicket(issueKey, statusToClose) {
     if (!closeTransition) {
       const disponibles = data.transitions.map(t => t.to.name).join(", ");
       Logger.log(`[JIRA] ${issueKey} NO se cerró: no existe una transición hacia "${statusToClose}". Destinos disponibles: [${disponibles}]. Revisar JIRA_STATUS_TO_CLOSE en core/ConfiguracionGlobal.js.`);
+      registrarFalloDePaso("resolveJiraTicket", `Ticket ${issueKey}: no existe transición hacia "${statusToClose}". Disponibles: [${disponibles}]. Revisar JIRA_STATUS_TO_CLOSE.`);
       return { status: 'FAILURE', detail: { ticketKey: issueKey, problema: `No existe transición a "${statusToClose}"`, disponibles } };
     }
 
@@ -541,9 +565,11 @@ function resolveJiraTicket(issueKey, statusToClose) {
     }
 
     Logger.log(`[JIRA] Falló la transición de ${issueKey} a "${statusToClose}" (HTTP ${responsePost.getResponseCode()}): ${responsePost.getContentText()}`);
+    registrarFalloDePaso("resolveJiraTicket", `Ticket ${issueKey}: la transición a "${statusToClose}" devolvió HTTP ${responsePost.getResponseCode()}.`);
     return { status: 'FAILURE', detail: { ticketKey: issueKey, problema: `La transición devolvió HTTP ${responsePost.getResponseCode()}` } };
   } catch (e) {
     Logger.log(`[JIRA] Excepción al cerrar ${issueKey}: ${e.message}`);
+    registrarFalloDePaso("resolveJiraTicket", `Ticket ${issueKey}: excepción al cerrar (${e.message}).`);
     return { status: 'ERROR', detail: { error: e.message } };
   }
 }
@@ -584,8 +610,15 @@ function addCommentToJiraTicket(issueKey, commentText) {
     "properties": [{ "key": "sd.public.comment", "value": { "internal": true } }]
   };
   const options = { "method": "post", "contentType": "application/json", "headers": getJiraHeaders(), "payload": JSON.stringify(payload), "muteHttpExceptions": true };
-  try { fetchWithRetries(endpoint, options); } catch (e) {
+  try {
+    const respuesta = fetchWithRetries(endpoint, options);
+    const codigo = respuesta.getResponseCode();
+    if (codigo < 200 || codigo >= 300) {
+      registrarFalloDePaso("addCommentToJiraTicket", `Ticket ${issueKey}: HTTP ${codigo} al comentar. Respuesta: ${respuesta.getContentText()}`);
+    }
+  } catch (e) {
     Logger.log(`[JiraService] Fallo al comentar en ${issueKey}: ${e.message}`);
+    registrarFalloDePaso("addCommentToJiraTicket", `Ticket ${issueKey}: excepción al comentar (${e.message}).`);
   }
 }
 
@@ -595,11 +628,32 @@ function addAttachmentToJiraTicket(issueKey, fileBlob) {
   // Devolvemos un resultado de error manejable en vez de lanzar.
   if (!fileBlob) {
     Logger.log(`[JIRA ATTACH] Se omitió el adjunto en ${issueKey}: el blob es nulo.`);
+    registrarFalloDePaso("addAttachmentToJiraTicket", `Ticket ${issueKey}: no se generó el archivo a adjuntar (blob nulo).`);
     return { status: 'ERROR', detail: { ticketKey: issueKey, error: "Adjunto nulo: no se generó el archivo a subir.", accion: "Revisar la generación del Excel (convertDataToXlsxBlob)." } };
   }
 
+  // --- IDEMPOTENCIA CENTRAL ---
+  // Un HTTP 500 espurio de Jira (el archivo sí llegó) deja el correo pendiente y el próximo
+  // ciclo lo reprocesa: sin esta verificación se adjuntaba una segunda copia. Estaba resuelto
+  // solo en MailProcessor.handleAlerts, pero 21 processors sobrescriben ese método y llaman
+  // acá directo, así que la verificación vive donde ocurre el adjunto (AGENTS.md §5).
+  // IMPORTANTE: depende de que los nombres incluyan la fecha del reporte; si un archivo se
+  // llamara igual todos los días, la actualización diaria se omitiría por error.
+  const nombreArchivo = fileBlob.getName();
+  if (buscarAdjuntoEnTicket(issueKey, nombreArchivo)) {
+    Logger.log(`[JIRA ATTACH] "${nombreArchivo}" ya estaba adjunto en ${issueKey}: se omite para no duplicarlo.`);
+    return { status: 'SUCCESS', detail: { ticketKey: issueKey, omitido: true } };
+  }
+
   const endpoint = `${JIRA_DOMAIN}/rest/api/2/issue/${issueKey}/attachments`;
-  const boundary = `------${Utilities.base64Encode(Math.random().toString())}`;
+  // El boundary debe ser un "token" RFC 2045 válido: va sin comillas dentro del Content-Type.
+  // Antes se usaba base64(Math.random()), cuyo alfabeto incluye "/" y "=" — ambos son tspecials
+  // y NO pueden ir en un token sin comillas. Como el "=" de padding aparece según la longitud
+  // del número (que varía en cada llamada) y el "/" cae al azar dentro del encoding, el mismo
+  // adjunto subía bien a veces y otras devolvía HTTP 500 (Jira no lograba parsear el multipart).
+  // Se vio el 27/07/2026: 200 a las 18:33 y 500 en tres corridas seguidas después.
+  // Un UUID en hexadecimal solo tiene [0-9a-f], siempre válido.
+  const boundary = `----OpsScriptBoundary${Utilities.getUuid().replace(/-/g, '')}`;
   const data = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileBlob.getName()}"\r\nContent-Type: ${fileBlob.getContentType()}\r\n\r\n`;
   const payload = Utilities.newBlob(data).getBytes().concat(fileBlob.getBytes()).concat(Utilities.newBlob(`\r\n--${boundary}--\r\n`).getBytes());
   const options = {
@@ -613,11 +667,17 @@ function addAttachmentToJiraTicket(issueKey, fileBlob) {
     const responseText = response.getContentText();
     Logger.log(`[JIRA ATTACH] Issue: ${issueKey} | Response Code: ${responseCode} | Body: ${responseText}`);
     if (responseCode === 200) return { status: 'SUCCESS' };
-    if (responseCode === 500) return { status: 'HTTP_500', detail: { ticketKey: issueKey, problema: 'Error 500 de Jira al adjuntar. Detalle: ' + responseText, accion: 'Se reintentará.' } };
-    return { status: 'WARNING', detail: { ticketKey: issueKey, problema: 'Fallo genérico al adjuntar: ' + responseText, accion: 'Revisar manualmente.' } };
-  } catch (e) { 
+
+    if (responseCode === 500) {
+      registrarFalloDePaso("addAttachmentToJiraTicket", `Ticket ${issueKey}: Jira devolvió HTTP 500 al adjuntar "${nombreArchivo}". El correo queda pendiente para reintentar.`);
+      return { status: 'HTTP_500', detail: { ticketKey: issueKey, problema: `Error 500 de Jira al adjuntar "${nombreArchivo}".`, accion: 'Se reintentará en el próximo ciclo.' } };
+    }
+    registrarFalloDePaso("addAttachmentToJiraTicket", `Ticket ${issueKey}: HTTP ${responseCode} al adjuntar "${nombreArchivo}". Respuesta: ${responseText}`);
+    return { status: 'WARNING', detail: { ticketKey: issueKey, problema: `HTTP ${responseCode} al adjuntar "${nombreArchivo}".`, accion: 'Revisar manualmente.' } };
+  } catch (e) {
     Logger.log(`[JIRA ATTACH ERROR] Excepción al adjuntar en ${issueKey}: ${e.message}`);
-    return { status: 'ERROR', detail: { error: e.message } }; 
+    registrarFalloDePaso("addAttachmentToJiraTicket", `Ticket ${issueKey}: excepción al adjuntar (${e.message}).`);
+    return { status: 'ERROR', detail: { error: e.message } };
   }
 }
 

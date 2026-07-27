@@ -1,5 +1,26 @@
 # CHANGELOG - Ops Playground / Ops Operativo (v2.0)
 
+## [2.1.0] - 2026-07-27
+### Deployed
+- Desplegado a producción (`Ops Operativo`) el 27/07/2026 ~19:50. Backup previo: rama `main` en GitHub (`36e48df`) + snapshot crudo local en `_archivo local/backup-prod-pre-v2.1.0-20260727`. Se preservaron el `.clasp.json` de producción y el bloque `webapp` del manifest (el manifest de Playground no lo tiene).
+
+### Added
+- **Pipeline unificado**: `ejecutarCicloDeOperaciones` absorbió a `organizarReportesEnDrive`. Los reportes se procesan y se archivan en Drive dentro del mismo ciclo, en vez de depender de un trigger aparte con ventana `newer_than` (origen del incidente del 27/07).
+- **Registro único de processors** (`core/Main.js`, `obtenerRegistroDeProcesadores`): fuente única de verdad de la que salen tanto el orden de ejecución como los asuntos "reclamados". Antes eran dos listas paralelas mantenidas a mano.
+- **`core/DriveReportService.js`**: concentra el archivado en Drive que vivía en `reports/SubirReportesADrive.js` (que queda como wrapper delgado).
+- **`reports/ReportesSinProcessor.js`**: catch-all que corre último y archiva lo que ningún processor reclamó, para que ningún reporte se pierda en silencio al apagar el trigger viejo.
+- **`veeam/VeeamOneReportes.js`**: processors de Veeam ONE (solo archivan y cierran su tarea programada).
+- **Pasos declarados en `MailProcessor`** (`'tickets'` / `'drive'`): el correo solo se marca `[OPS-PROCESADO]` si TODOS los pasos declarados salieron bien.
+
+### Fixed
+- **El ciclo procesaba correos de días anteriores**: la búsqueda de Gmail no tenía filtro de fecha, así que la primera corrida del catch-all barrió el backlog desde el 24/07 hasta que el TimeGuard cortó la ejecución. Ahora los correos nuevos (`is:unread`) se limitan al día de ejecución; los reintentos ya etiquetados `[OPS-PENDIENTE]` siguen sin límite de fecha, para no abandonar un reporte que falló ayer.
+- **HTTP 500 intermitente de Jira al adjuntar**: el boundary del multipart se armaba con `base64(Math.random())`, cuyo alfabeto incluye `/` y `=` — ambos son *tspecials* (RFC 2045) y son inválidos en un token sin comillas del `Content-Type`. Según qué caracteres salieran, el mismo adjunto subía bien (200) o devolvía 500. Ahora se usa un UUID en hexadecimal.
+- **Tareas programadas cerradas sobre reportes incompletos**: `buscarYCerrarTareaProgramada` ahora se niega a cerrar la tarea si el correo ya tiene pasos fallidos. Cerrarla igual rompía el reintento: la corrida siguiente la encontraba cerrada → `NOT_FOUND` (terminal) → el correo terminaba en `[OPS-ERROR]` para siempre, aunque el 500 fuera pasajero. La guarda es central porque ~20 processors la llaman sin mirar el resultado del paso anterior.
+
+### Known gaps
+- El catch-all archiva también correos que no son reportes (invitaciones de calendario, minutas, adjuntos sueltos de hilos internos). Pendiente acotar el criterio.
+- De los 31 processors, la validación del 27/07 solo ejercitó 3 con correos reales (snapshots, VMs protegidas, catch-all); el resto corrió contra cero correos.
+
 ## Housekeeping - 2026-07-24
 - **Reestructuración de repositorio (sin cambios de código)**: `main` pasó a reflejar 1:1 el contenido del proyecto de Apps Script `Ops Operativo` (sin carpeta contenedora), para que el árbol de GitHub sea fiel al editor de GAS. La rama `refactor-operaciones` cumple el mismo rol como espejo de `Ops Playground`. Se retiró el árbol de código legacy pre-refactor que quedaba duplicado en la raíz (ver commit `chore: retirar estructura legacy pre-refactor de la raiz`). `backup-real-prod` se limpió con el mismo criterio.
 
