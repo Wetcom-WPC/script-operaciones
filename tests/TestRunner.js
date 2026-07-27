@@ -107,6 +107,27 @@ function runAllTests() {
                "parseCsvRobust + normalizarEncabezado: se encuentra 'Partition Usage (%)'");
   } catch(e) { Logger.log("Error en Test detectarSeparadorCsv: " + e.message); }
 
+  // Test: parseCsvDeReporte — causa raíz del incidente del 27/07/2026. Los CSV con
+  // TODOS los campos entrecomillados quedaban en una sola columna porque se les
+  // quitaban las comillas externas a ciegas, descompensando el balance de comillas.
+  try {
+    const csvEntrecomillado = '"Name","DRS Configuration","Datacenter"\n"CL-01","Disabled","DC1"';
+    const filas = parseCsvDeReporte(csvEntrecomillado);
+    assertEqual(filas[0].length, 3, "parseCsvDeReporte: campos entrecomillados -> 3 columnas (no 1)");
+    const headersNorm = filas[0].map(h => normalizarEncabezado(h));
+    assertTrue(headersNorm.indexOf(normalizarEncabezado("DRS Configuration")) !== -1,
+               "parseCsvDeReporte: se encuentra 'DRS Configuration' tras normalizar");
+
+    // El caso que la limpieza original SÍ resolvía debe seguir funcionando.
+    const csvFilaEnvuelta = '"Name,DRS Configuration,Datacenter"\n"CL-01,Disabled,DC1"';
+    assertEqual(parseCsvDeReporte(csvFilaEnvuelta)[0].length, 3,
+                "parseCsvDeReporte: fila entera envuelta en comillas se desenvuelve");
+
+    // Un valor con el separador adentro no debe partirse.
+    const conSeparadorInterno = parseCsvDeReporte('"Name","Cluster"\n"vm1","PROD, DRP"');
+    assertEqual(conSeparadorInterno[1][1], "PROD, DRP", "parseCsvDeReporte: valor con coma interna intacto");
+  } catch(e) { Logger.log("Error en Test parseCsvDeReporte: " + e.message); }
+
   // Test: isRowExcepted
   try {
     const headers = ["vm name", "status"]; // Ya normalizados
