@@ -1,0 +1,37 @@
+{
+  "timeZone": "America/Argentina/Buenos_Aires",
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "dependencies": {
+    "libraries": [
+      {
+        "userSymbol": "AutomatizarOperaciones",
+        "libraryId": "1wVCbInNTiICrLfn57O07d1ZYxHCzHcN7MxwM0B-m1GfeZmN5j4_MGErN",
+        "version": "0",
+        "developmentMode": true
+      }
+    ],
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Drive",
+        "version": "v3",
+        "serviceId": "drive"
+      }
+    ]
+  },
+  "webapp": {
+    "executeAs": "USER_DEPLOYING",
+    "access": "MYSELF"
+  },
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://mail.google.com/",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/script.scriptapp"
+  ]
+}
