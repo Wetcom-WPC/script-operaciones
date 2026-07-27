@@ -57,9 +57,23 @@ function procesarZombiesVmdk(spreadsheet, clientConfig, summaryReport, vcenterFQ
     // arreglo de encabezados que consume el motor de excepciones. Como isRowExcepted vuelve a
     // normalizar cada encabezado, pasar nombres ya canónicos es idempotente y seguro.
     const headersParaExcepcion = ["vcenter", ...originalHeaders.map(h => normalizarEncabezado(h))];
-    headersParaExcepcion[objectIndex + 1] = "name";     // +1 compensa el vCenter agregado al frente
-    headersParaExcepcion[msgTypeIndex + 1] = "message";
+    const idxName = objectIndex + 1;      // +1 compensa el vCenter agregado al frente
+    const idxMessage = msgTypeIndex + 1;
 
+    // vHealth suele traer más de una columna que normaliza a "message" (ej. "Message" y
+    // "Message Type"). Como isRowExcepted resuelve la columna con indexOf(), que devuelve la
+    // PRIMERA coincidencia, una regla sobre "message" leería la columna equivocada. Renombramos
+    // las repetidas para que "name" y "message" identifiquen sin ambigüedad a las detectadas.
+    headersParaExcepcion.forEach((h, i) => {
+      if (i !== idxName && h === "name") headersParaExcepcion[i] = `name_col${i}`;
+      if (i !== idxMessage && h === "message") headersParaExcepcion[i] = `message_col${i}`;
+    });
+    headersParaExcepcion[idxName] = "name";
+    headersParaExcepcion[idxMessage] = "message";
+
+    // Se loguean también los encabezados ORIGINALES: si alguna regla de excepción no aplica,
+    // esto muestra de inmediato contra qué columnas reales se está comparando.
+    Logger.log(`[ZombieDebug] originales: [${originalHeaders.join(", ")}]`);
     Logger.log(`[ZombieDebug] headersParaExcepcion: [${headersParaExcepcion.join(", ")}] | objectIndex=${objectIndex}, msgTypeIndex=${msgTypeIndex}`);
 
     const finalAnomalies = anomalies.filter(row => {
