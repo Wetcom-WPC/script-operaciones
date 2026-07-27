@@ -46,15 +46,15 @@ function manual_probarHorarioOperativo() {
 }
 
 /**
- * Ejecuta organizarReportesEnDrive IGNORANDO la guarda horaria (para pruebas fuera de horario).
- * Llama directamente a la lógica interna con una ventana de búsqueda de 2h.
+ * Archiva en Drive los reportes que ningún processor reclamó (el catch-all del pipeline).
+ *
+ * Reemplaza a `manual_organizarReportesAhora`, que llamaba a `guardarYConvertirAdjuntosEnDrive`:
+ * esa función desapareció en la Etapa 2, cuando el archivado pasó a ser un paso de cada
+ * processor. Para archivar el reporte de una operación puntual, ejecutar esa operación.
  */
-function manual_organizarReportesAhora() {
-  const props = PropertiesService.getScriptProperties();
-  const idCarpetaPrincipal = props.getProperty("DRIVE_AVISO_BASE_FOLDER_ID");
-  const idHojaCalculo = props.getProperty("MASTER_INDEX_SHEET_ID");
-  Logger.log("[manual_organizarReportesAhora] Ejecutando guardarYConvertirAdjuntosEnDrive (bypass de horario, ventana 2h)...");
-  guardarYConvertirAdjuntosEnDrive(idCarpetaPrincipal, idHojaCalculo, 2);
+function manual_archivarReportesSinProcessor() {
+  Logger.log("[manual_archivarReportesSinProcessor] Buscando correos que ningún processor reclama...");
+  processReportesSinProcessorEmails();
 }
 
 /**

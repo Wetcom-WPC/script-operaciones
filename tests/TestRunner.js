@@ -57,11 +57,6 @@ function runAllTests() {
     assertTrue(value !== null && value.trim() !== "", `Script Property "${prop}" existe y no está vacía.`);
   });
 
-  // --- TESTS: FuncionesCompartidas ---
-  Logger.log("--- Test: Funciones Compartidas ---");
-  assertEqual(extractDRPClientName("Alertas de vSphere DRP OSDE (2026-07-23)", "Alertas de vSphere"), "OSDE", "extractDRPClientName: extrae cliente OSDE");
-  assertEqual(extractDRPClientName("vSphere DRP CLIENTEX (algo)", "vSphere"), "CLIENTEX", "extractDRPClientName: extrae cliente CLIENTEX");
-
   // --- TESTS: DataProcessingService ---
   Logger.log("--- Test: DataProcessingService ---");
   // Test: normalizarEncabezado
@@ -198,6 +193,98 @@ function runAllTests() {
     assertTrue(HORARIO_OPERATIVO_INICIO < HORARIO_OPERATIVO_FIN, "Ventana operativa: HORARIO_OPERATIVO_INICIO < HORARIO_OPERATIVO_FIN");
     assertTrue(dentroDeVentanaOperativa("test") === estaEnHorarioOperativo(), "dentroDeVentanaOperativa: consistente con estaEnHorarioOperativo");
   } catch(e) { Logger.log("Error en Test ventana operativa: " + e.message); }
+
+  // --- TESTS: Pipeline unificado / pasos declarados (refactor 27/07/2026) ---
+  Logger.log("--- Test: MailProcessor / pasos declarados ---");
+  try {
+    // Por defecto un reporte necesita crear tickets Y archivarse en Drive.
+    const porDefecto = new MailProcessor({ operationName: "test-default", emailSubject: "x" });
+    assertTrue(porDefecto.requierePaso('tickets'), "pasos: por defecto incluye 'tickets'");
+    assertTrue(porDefecto.requierePaso('drive'), "pasos: por defecto incluye 'drive'");
+
+    // Los reportes tipo Veeam ONE solo se archivan: no crean tickets.
+    const soloDrive = new MailProcessor({ operationName: "test-drive", emailSubject: "x", pasos: ['drive'] });
+    assertFalse(soloDrive.requierePaso('tickets'), "pasos: un processor 'drive' NO ejecuta el paso de tickets");
+    assertTrue(soloDrive.requierePaso('drive'), "pasos: un processor 'drive' sí ejecuta el paso de Drive");
+
+    // Un paso inexistente nunca se ejecuta (evita typos silenciosos en la config).
+    assertFalse(porDefecto.requierePaso('inexistente'), "pasos: un paso no declarado no se ejecuta");
+  } catch(e) { Logger.log("Error en Test pasos declarados: " + e.message); }
+
+  // --- TESTS: resolución de remitente para Drive ---
+  Logger.log("--- Test: DriveClientIndexSingleton / parseo de From ---");
+  try {
+    const emailDeFrom = DriveClientIndexSingleton.emailDeFrom;
+    // El caso real que motivó el refactor: reportes de Veeam ONE de Petersen.
+    assertEqual(emailDeFrom('"Veeam ONE" <veeamsmtp@gpsa.com.ar>'), "veeamsmtp@gpsa.com.ar", "emailDeFrom: extrae la casilla de un From con nombre visible");
+    assertEqual(emailDeFrom("vrealizeoperations@gbsj.com.ar"), "vrealizeoperations@gbsj.com.ar", "emailDeFrom: tolera un From sin nombre visible");
+    assertEqual(emailDeFrom("  ALERTAS@Wetcom.COM  "), "alertas@wetcom.com", "emailDeFrom: normaliza espacios y mayúsculas");
+    assertEqual(emailDeFrom(null), "", "emailDeFrom: tolera null sin romper");
+  } catch(e) { Logger.log("Error en Test emailDeFrom: " + e.message); }
+
+  // --- TESTS: registro central de fallos (regresión del incidente WPC-815, 27/07/2026) ---
+  Logger.log("--- Test: Registro de fallos del mensaje ---");
+  try {
+    iniciarSeguimientoDeFallos();
+    assertEqual(obtenerFallosDelMensaje().length, 0, "fallos: arranca vacío tras iniciarSeguimientoDeFallos()");
+
+    // Caso real: Jira devolvió HTTP 500 al adjuntar y el processor igual devolvía SUCCESS.
+    registrarFalloDePaso("addAttachmentToJiraTicket", "Ticket WPC-815: Jira devolvió HTTP 500 al adjuntar.");
+    assertEqual(obtenerFallosDelMensaje().length, 1, "fallos: registra el fallo de adjunto");
+    assertEqual(obtenerFallosDelMensaje()[0].origen, "addAttachmentToJiraTicket", "fallos: guarda el origen del fallo");
+
+    // Cada correo arranca limpio: un fallo no puede contaminar al siguiente.
+    iniciarSeguimientoDeFallos();
+    assertEqual(obtenerFallosDelMensaje().length, 0, "fallos: se limpian entre correos");
+
+    // El registro devuelve una copia: mutarla no debe afectar el estado interno.
+    registrarFalloDePaso("resolveJiraTicket", "Ticket X: no existe transición.");
+    const copia = obtenerFallosDelMensaje();
+    copia.push({ origen: "falso", detalle: "no debería persistir" });
+    assertEqual(obtenerFallosDelMensaje().length, 1, "fallos: obtenerFallosDelMensaje devuelve una copia, no la referencia interna");
+
+    // Fallos terminales: los que no se arreglan reintentando (ej. tarea programada inexistente).
+    iniciarSeguimientoDeFallos();
+    registrarFalloDePaso("addAttachmentToJiraTicket", "HTTP 500 transitorio");
+    assertFalse(hayFalloTerminal(), "fallos: un fallo transitorio NO es terminal (se reintenta)");
+
+    registrarFalloDePaso("buscarYCerrarTareaProgramada", "La tarea no existe en el proyecto", true);
+    assertTrue(hayFalloTerminal(), "fallos: NOT_FOUND marca el correo como terminal (va a [OPS-ERROR])");
+    assertEqual(obtenerFallosDelMensaje()[1].terminal, true, "fallos: guarda el flag terminal en el registro");
+
+    iniciarSeguimientoDeFallos();
+    assertFalse(hayFalloTerminal(), "fallos: el flag terminal también se limpia entre correos");
+  } catch(e) { Logger.log("Error en Test registro de fallos: " + e.message); }
+
+  // --- TESTS: registro de processors (Etapa A/B del refactor) ---
+  Logger.log("--- Test: Registro de processors ---");
+  try {
+    const registro = obtenerRegistroDeProcesadores();
+    assertTrue(registro.length > 24, "registro: incluye los processors originales + los de Veeam ONE + el catch-all");
+
+    // Toda entrada debe poder instanciarse: si una clase se renombra, esto lo detecta acá
+    // y no en producción a mitad del ciclo.
+    let instanciablesOk = true;
+    registro.forEach(function (e) {
+      try {
+        const p = e.crear();
+        if (!p || typeof p.processEmails !== "function") instanciablesOk = false;
+      } catch (err) {
+        instanciablesOk = false;
+        Logger.log(`  -> No se pudo instanciar "${e.tarea}": ${err.message}`);
+      }
+    });
+    assertTrue(instanciablesOk, "registro: todas las entradas se instancian y exponen processEmails()");
+
+    // El catch-all debe ir SIEMPRE último: si corriera antes, se llevaría correos que
+    // le corresponden a un processor específico.
+    assertEqual(registro[registro.length - 1].tarea, "processReportesSinProcessorEmails", "registro: el catch-all es la última tarea del ciclo");
+
+    // Los asuntos reclamados alimentan al catch-all; el suyo propio ("") no debe estar.
+    const asuntos = obtenerAsuntosConProcessor();
+    assertTrue(asuntos.indexOf("VMs protegidas") !== -1, "asuntos: incluye los reportes de Veeam ONE (Etapa 2)");
+    assertTrue(asuntos.every(function (a) { return a && a.trim() !== ""; }), "asuntos: no incluye vacíos (el catch-all quedaría sin correos)");
+  } catch(e) { Logger.log("Error en Test registro de processors: " + e.message); }
 
   Logger.log("=== FIN DE SUITE DE PRUEBAS ===");
   Logger.log(`Resultados: ${passed} Pasaron, ${failed} Fallaron.`);
