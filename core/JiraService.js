@@ -564,6 +564,14 @@ function addCommentToJiraTicket(issueKey, commentText) {
 }
 
 function addAttachmentToJiraTicket(issueKey, fileBlob) {
+  // Guarda defensiva: un blob nulo (ej. convertDataToXlsxBlob() que falló) reventaba acá
+  // con "Cannot read properties of null (reading 'getName')" y abortaba toda la operación.
+  // Devolvemos un resultado de error manejable en vez de lanzar.
+  if (!fileBlob) {
+    Logger.log(`[JIRA ATTACH] Se omitió el adjunto en ${issueKey}: el blob es nulo.`);
+    return { status: 'ERROR', detail: { ticketKey: issueKey, error: "Adjunto nulo: no se generó el archivo a subir.", accion: "Revisar la generación del Excel (convertDataToXlsxBlob)." } };
+  }
+
   const endpoint = `${JIRA_DOMAIN}/rest/api/2/issue/${issueKey}/attachments`;
   const boundary = `------${Utilities.base64Encode(Math.random().toString())}`;
   const data = `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${fileBlob.getName()}"\r\nContent-Type: ${fileBlob.getContentType()}\r\n\r\n`;

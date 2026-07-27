@@ -178,9 +178,12 @@ class MailProcessor {
       });
       csvData = cleanedLines.join("\n");
 
-      const firstLine = csvData.split(/\n/)[0];
-      const separator = firstLine.includes(";") ? ";" : ",";
-      return parseCsvRobust(csvData, separator);
+      // La detección del separador vive en detectarSeparadorCsv() (DataProcessingService.js).
+      // NO reimplementarla acá: antes este método calculaba el separador por su cuenta con
+      // `firstLine.includes(";") ? ";" : ","` y se lo pasaba explícito a parseCsvRobust, lo que
+      // anulaba la autodetección. Bastaba un ";" suelto dentro de un valor para que el CSV se
+      // partiera mal y TODAS las operaciones fallaran con "Columna X no encontrada".
+      return parseCsvRobust(csvData);
     } catch (e) {
       summaryReport.errores.push({ error: "Error parseando CSV", detalle: e.message });
       return null;
@@ -221,6 +224,19 @@ class MailProcessor {
     const alertCount = finalAlerts.length;
     const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
     const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
+
+    // convertDataToXlsxBlob() devuelve null si falla (datos mal formados, error de Drive, etc).
+    // Sin esta guarda el null llegaba hasta addAttachmentToJiraTicket() y explotaba con
+    // "Cannot read properties of null (reading 'getName')", abortando el correo entero.
+    // Cortamos acá con un error claro y dejamos el thread sin marcar para que se reintente.
+    if (!xlsxBlob) {
+      summaryReport.errores.push({
+        error: "No se pudo generar el Excel del reporte",
+        cliente: clientConfig.clientName,
+        detalle: `Operación "${this.operationName}": convertDataToXlsxBlob() devolvió null para ${alertCount} fila(s). Se reintentará en el próximo ciclo.`
+      });
+      return { status: 'FAILURE' };
+    }
 
     if (existingTicketKey) {
       const attachmentResult = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
