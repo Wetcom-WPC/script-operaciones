@@ -76,6 +76,43 @@ function parseCsvRobust(csvText, separator = null) {
   return result;
 }
 
+/**
+ * Parsea el CSV de un reporte adjunto, tolerando exports que envuelven la fila
+ * ENTERA entre comillas ("a,b,c") en lugar de entrecomillar campo por campo
+ * ("a","b","c").
+ *
+ * El orden importa: primero intentamos el parseo estándar y SOLO desenvolvemos
+ * si el resultado quedó degenerado (todas las filas en una sola columna que
+ * todavía contiene el separador). Desenvolver a ciegas es justamente lo que
+ * rompió el 27/07/2026: una fila con todos los campos entrecomillados también
+ * empieza y termina con comillas, y quitárselas descompensa el balance dejando
+ * TODA la fila como un único campo, con lo que fallaban todos los lookups de
+ * columnas ("Columna X no encontrada") en todas las operaciones.
+ *
+ * @param {string} csvText Contenido del adjunto como texto.
+ * @returns {Array<Array<string>>} Matriz de filas y columnas.
+ */
+function parseCsvDeReporte(csvText) {
+  const filas = parseCsvRobust(csvText);
+
+  const separador = detectarSeparadorCsv(csvText);
+  const quedoEnUnaSolaColumna = filas.length > 0 && filas.every(fila => fila.length === 1);
+  const necesitaDesenvolverse = quedoEnUnaSolaColumna && filas.some(fila => fila[0].includes(separador));
+
+  if (!necesitaDesenvolverse) return filas;
+
+  const desenvuelto = csvText.split(/\r\n|\n|\r/).map(linea => {
+    const limpia = linea.trim();
+    if (limpia.startsWith('"') && limpia.endsWith('"')) {
+      return limpia.substring(1, limpia.length - 1).replace(/""/g, '"');
+    }
+    return limpia;
+  }).join("\n");
+
+  Logger.log("[parseCsvDeReporte] El CSV venía con la fila entera entre comillas: se desenvolvió y reparseó.");
+  return parseCsvRobust(desenvuelto, separador);
+}
+
 const COLUMN_ALIASES = {
   "name": ["virtual machine", "vm", "vm name", "nombre", "machine"],
   "used space (%)": ["utilization (%)", "space used (%)", "percent used", "uso (%)", "utilizacion (%)", "used space percent", "percentage of used space"],
@@ -174,16 +211,24 @@ function convertDataToXlsxBlob(dataArray, newFileName) {
       return null;
     }
     
-    const numColumns = dataArray[0].length;
-    for (let i = 1; i < dataArray.length; i++) {
+    // El ancho del rango se toma de la fila MÁS ANCHA, no del encabezado: si alguna
+    // fila trae más columnas que el encabezado, setValues() falla con
+    // "The number of columns in the data does not match the number of columns in the range".
+    // Normalizamos todas las filas a ese ancho rellenando con vacíos.
+    const numColumns = dataArray.reduce((max, fila) => Math.max(max, fila.length), 0);
+    if (numColumns === 0) {
+      Logger.log("Error en convertDataToXlsxBlob: no hay columnas para exportar.");
+      return null;
+    }
+    for (let i = 0; i < dataArray.length; i++) {
       while (dataArray[i].length < numColumns) {
         dataArray[i].push('');
       }
     }
-    
+
     tempSheet = SpreadsheetApp.create(`Temp_Conversion_${new Date().getTime()}`);
     const sheet = tempSheet.getSheets()[0];
-    sheet.getRange(1, 1, dataArray.length, dataArray[0].length).setValues(dataArray);
+    sheet.getRange(1, 1, dataArray.length, numColumns).setValues(dataArray);
     SpreadsheetApp.flush();
 
     const url = `https://docs.google.com/spreadsheets/d/${tempSheet.getId()}/export?format=xlsx`;

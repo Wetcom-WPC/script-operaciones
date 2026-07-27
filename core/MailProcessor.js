@@ -165,25 +165,11 @@ class MailProcessor {
 
   parseAttachment(attachment, summaryReport) {
     try {
-      let csvData = attachment.getDataAsString("UTF-8");
-      
-      // Limpieza automática de filas totalmente envueltas en comillas (bug de exportación)
-      const lines = csvData.split(/\r\n|\n|\r/);
-      const cleanedLines = lines.map(line => {
-        let clean = line.trim();
-        if (clean.startsWith('"') && clean.endsWith('"')) {
-          clean = clean.substring(1, clean.length - 1).replace(/""/g, '"');
-        }
-        return clean;
-      });
-      csvData = cleanedLines.join("\n");
-
-      // La detección del separador vive en detectarSeparadorCsv() (DataProcessingService.js).
-      // NO reimplementarla acá: antes este método calculaba el separador por su cuenta con
-      // `firstLine.includes(";") ? ";" : ","` y se lo pasaba explícito a parseCsvRobust, lo que
-      // anulaba la autodetección. Bastaba un ";" suelto dentro de un valor para que el CSV se
-      // partiera mal y TODAS las operaciones fallaran con "Columna X no encontrada".
-      return parseCsvRobust(csvData);
+      // Todo el parseo (detección de separador y tolerancia a filas envueltas en
+      // comillas) vive en parseCsvDeReporte() / DataProcessingService.js.
+      // NO reimplementar acá ninguna de esas dos cosas: este método tenía su propia
+      // copia de ambas y fue el origen del incidente del 27/07/2026.
+      return parseCsvDeReporte(attachment.getDataAsString("UTF-8"));
     } catch (e) {
       summaryReport.errores.push({ error: "Error parseando CSV", detalle: e.message });
       return null;

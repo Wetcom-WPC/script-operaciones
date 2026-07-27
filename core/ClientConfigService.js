@@ -282,8 +282,15 @@ function getClientConfig(senderEmail, operationName, soporte = false) {
     }
 
     const requestTypeId = getRequestTypeIdForServiceDesk(serviceDeskId, requestTypeName);
-    const requestTypeIdSop = getRequestTypeIdForServiceDesk(serviceDeskIdSop, requestTypeNameSop);
     if (!requestTypeId) return null;
+
+    // El request type de Soporte solo se resuelve si realmente se va a usar y si el
+    // Índice Maestro tiene cargadas sus columnas. Antes se pedía SIEMPRE, y para los
+    // clientes sin datos de soporte generaba un HTTP 404 de Jira por cada correo
+    // ("Invalid space key 'requesttype'"), ensuciando el log y gastando cuota de API.
+    const requestTypeIdSop = (soporte && serviceDeskIdSop && requestTypeNameSop)
+      ? getRequestTypeIdForServiceDesk(serviceDeskIdSop, requestTypeNameSop)
+      : null;
     
     const { exceptionSheet, exceptionData: rawExceptionData } = MasterSheetSingleton.getExceptionData(exceptionFileId, operationName);
     
