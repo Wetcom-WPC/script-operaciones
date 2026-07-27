@@ -1,4 +1,43 @@
 /**
+ * Detecta el separador de un CSV (coma o punto y coma).
+ *
+ * ÚNICA fuente de verdad para la detección de separador: no duplicar esta lógica
+ * en otros módulos. Es robusta frente a los tres casos que rompían antes:
+ *   1. Un ";" o "," suelto dentro de un valor: contamos ocurrencias en vez de solo
+ *      detectar presencia, porque el separador real aparece una vez por columna.
+ *   2. Separadores dentro de comillas: los ignoramos, así un nombre como
+ *      "Datastore PROD; DRP" no se confunde con un separador.
+ *   3. Primera línea vacía o de preámbulo (títulos, "Scope:", "Date:"): miramos
+ *      varias líneas y no solo la primera, así una línea sin separadores no decide.
+ *
+ * @param {string|Array<string>} contenido Texto completo del CSV o su lista de líneas.
+ * @param {number} [lineasAMuestrear=5] Cuántas líneas no vacías analizar.
+ * @returns {string} El separador detectado: ";" o "," (por defecto ",").
+ */
+function detectarSeparadorCsv(contenido, lineasAMuestrear = 5) {
+  const lineas = Array.isArray(contenido) ? contenido : String(contenido || '').split(/\r\n|\n|\r/);
+  const muestra = lineas.filter(l => l.trim() !== '').slice(0, lineasAMuestrear);
+
+  let comas = 0;
+  let puntosYComa = 0;
+
+  for (const linea of muestra) {
+    let inQuotes = false;
+    for (let i = 0; i < linea.length; i++) {
+      const char = linea[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (!inQuotes) {
+        if (char === ',') comas++;
+        else if (char === ';') puntosYComa++;
+      }
+    }
+  }
+
+  return puntosYComa > comas ? ';' : ',';
+}
+
+/**
  * Un analizador de CSV robusto que maneja comillas internas, saltos de línea y detecta separadores (coma o punto y coma).
  * @param {string} csvText El contenido del archivo CSV como texto.
  * @param {string} [separator=null] Separador opcional (si no se indica, autodetecta por la primera línea).
@@ -7,8 +46,7 @@
 function parseCsvRobust(csvText, separator = null) {
   if (!csvText) return [];
   const lines = csvText.split(/\r\n|\n|\r/);
-  const firstLine = lines.find(l => l.trim() !== '') || '';
-  const sep = separator || (firstLine.includes(';') ? ';' : ',');
+  const sep = separator || detectarSeparadorCsv(lines);
 
   const result = [];
   for (const line of lines) {

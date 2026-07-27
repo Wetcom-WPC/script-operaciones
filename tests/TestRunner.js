@@ -83,6 +83,30 @@ function runAllTests() {
     assertEqual(parsed[1][1], "Val,2", "parseCsvRobust: respeta comas internas");
   } catch(e) { Logger.log("Error en Test parseCsvRobust: " + e.message); }
 
+  // Test: detectarSeparadorCsv — cubre el incidente del 27/07/2026, donde un separador
+  // mal detectado partía el CSV en 1 sola columna y TODAS las operaciones fallaban con
+  // "Columna X no encontrada".
+  try {
+    assertEqual(detectarSeparadorCsv('Name,Cluster,Estado'), ",", "detectarSeparadorCsv: CSV por comas");
+    assertEqual(detectarSeparadorCsv('Name;Cluster;Estado'), ";", "detectarSeparadorCsv: CSV por punto y coma");
+    // Un ';' suelto dentro de un valor no debe ganarle a las comas reales.
+    assertEqual(detectarSeparadorCsv('Name,Cluster; Sitio,Estado'), ",", "detectarSeparadorCsv: ';' suelto no confunde");
+    // Separadores entre comillas se ignoran.
+    assertEqual(detectarSeparadorCsv('Name,Cluster,"PROD; DRP"'), ",", "detectarSeparadorCsv: ignora separadores entre comillas");
+    // Primera línea vacía o de preámbulo: no debe decidir por sí sola.
+    assertEqual(detectarSeparadorCsv('\nName;Cluster;Estado\n"a";"b";"c"'), ";", "detectarSeparadorCsv: tolera primera línea vacía");
+    assertEqual(detectarSeparadorCsv('Reporte vSphere\nName;Cluster;Estado'), ";", "detectarSeparadorCsv: tolera preámbulo de título");
+
+    // Regresión end-to-end: el encabezado debe quedar partido en varias columnas.
+    const csvConPreambulo = '\nName;Partition Usage (%);Cluster\n"SRV-01";"92";"PROD"';
+    const filas = parseCsvRobust(csvConPreambulo);
+    const encabezado = filas.find(r => r.length > 1) || [];
+    assertEqual(encabezado.length, 3, "parseCsvRobust: encabezado se parte en 3 columnas (no en 1)");
+    const headersNorm = encabezado.map(h => normalizarEncabezado(h.replace(/^"|"$/g, '')));
+    assertTrue(headersNorm.indexOf(normalizarEncabezado("Partition Usage (%)")) !== -1,
+               "parseCsvRobust + normalizarEncabezado: se encuentra 'Partition Usage (%)'");
+  } catch(e) { Logger.log("Error en Test detectarSeparadorCsv: " + e.message); }
+
   // Test: isRowExcepted
   try {
     const headers = ["vm name", "status"]; // Ya normalizados
