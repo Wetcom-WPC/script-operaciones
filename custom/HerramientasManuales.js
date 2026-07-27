@@ -94,12 +94,16 @@ function manual_diagnosticarEncabezados() {
  * ("VMs protegidas", "Replicas protegidas", "Hosts y VMs con contencion de CPU",
  * "Capacity Planning", "VM Daily Protection Status", "Inventario de VMs"): esos se
  * cierran solos al correr esa función, que sí verifica que el archivo haya llegado.
+ *
+ * También queda afuera "Backup por tag": no se dispara con un correo entrante sino
+ * que ENVÍA un mail con archivos de Drive (enviarMailBackupPorTagDiarios), así que
+ * nunca puede tener evidencia de "reporte procesado" y la validación la marcaría
+ * como faltante para siempre.
  */
 const TAREAS_QUE_CIERRA_LA_AUTOMATIZACION = [
   "Affinity Rules",
   "Alertas de vROps",
   "Alertas de vSphere",
-  "Backup por tag",
   "Capacidad de particiones",
   "Cluster DRS",
   "Componentes de View",
