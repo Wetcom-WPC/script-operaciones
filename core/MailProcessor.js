@@ -225,17 +225,29 @@ class MailProcessor {
     }
 
     if (existingTicketKey) {
-      const attachmentResult = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
+      // Idempotencia: un HTTP 500 de Jira al adjuntar deja el thread pendiente y el
+      // próximo ciclo reprocesa el mismo correo. Sin esta verificación se subía el
+      // adjunto de nuevo, duplicándolo en el ticket cuando el 500 era espurio (el
+      // archivo sí había llegado). Mismo criterio que ya usa createTicketAndNotify().
+      const yaEstabaAdjunto = buscarAdjuntoEnTicket(existingTicketKey, newFileName);
+      const attachmentResult = yaEstabaAdjunto
+        ? { status: 'SUCCESS' }
+        : addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
+
       if (attachmentResult.status === 'SUCCESS') {
         const commentText = `🚨 **El problema persiste.** Se adjunta el reporte actualizado con **${alertCount}** objetos afectados.`;
         addCommentToJiraTicket(existingTicketKey, commentText);
-        
-        const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName); 
+
+        const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName);
         if (accountIdAsignado) ticketInformativo(existingTicketKey, accountIdAsignado, summaryReport.timeGuard);
-        
+
         summaryReport.exitos.push({ mensaje: `Anomalía Persiste. Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
       } else {
-        summaryReport.errores.push(attachmentResult.detail || { error: "Fallo al adjuntar." });
+        summaryReport.errores.push(attachmentResult.detail || {
+          error: "Fallo al adjuntar el reporte",
+          cliente: clientConfig.clientName,
+          ticket: existingTicketKey
+        });
       }
     } else {
       const description = `Se encontraron ${alertCount} alertas. Se adjunta el reporte completo para su revisión.`;

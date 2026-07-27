@@ -128,6 +128,23 @@ function runAllTests() {
     assertEqual(conSeparadorInterno[1][1], "PROD, DRP", "parseCsvDeReporte: valor con coma interna intacto");
   } catch(e) { Logger.log("Error en Test parseCsvDeReporte: " + e.message); }
 
+  // Test: alias Particion/Partition. Los reportes en español traen "Particion" pero las
+  // reglas del Excel de excepciones dicen "Partition": sin alias esas reglas no aplicaban.
+  try {
+    assertEqual(normalizarEncabezado("Particion"), "partition", "normalizarEncabezado: 'Particion' -> 'partition'");
+    assertEqual(normalizarEncabezado("Partición"), "partition", "normalizarEncabezado: 'Partición' (con acento) -> 'partition'");
+    // No debe pisarse con la columna del porcentaje de uso, que es otra cosa.
+    assertEqual(normalizarEncabezado("Porcentaje de uso (%)"), "partition usage (%)",
+                "normalizarEncabezado: '% de uso' sigue mapeando a 'partition usage (%)'");
+
+    const headersEsp = ["name", "datacenter", "particion", "porcentaje de uso (%)"];
+    const reglaPartition = { r: [{ column: "Partition", matchType: "Exacta", values: ["c:"] }] };
+    assertTrue(isRowExcepted(["srv-01", "DC1", "C:", "91"], headersEsp, reglaPartition),
+               "isRowExcepted: regla 'Partition' aplica sobre reporte con columna 'particion'");
+    assertFalse(isRowExcepted(["srv-01", "DC1", "D:", "91"], headersEsp, reglaPartition),
+                "isRowExcepted: otra partición no queda exceptuada");
+  } catch(e) { Logger.log("Error en Test alias Particion: " + e.message); }
+
   // Test: isRowExcepted
   try {
     const headers = ["vm name", "status"]; // Ya normalizados
