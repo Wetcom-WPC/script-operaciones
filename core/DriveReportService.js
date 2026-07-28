@@ -108,6 +108,18 @@ const DriveClientIndexSingleton = (function () {
       const indice = this.get();
       return indice.entradas.find(function (e) { return email.indexOf(e.remitente) !== -1; }) || null;
     },
+    /**
+     * Entrada del cliente de pruebas, usada en TESTING sin mirar el remitente.
+     * @returns {Object|null} Entrada del índice, o null si el cliente de testing no está cargado.
+     */
+    resolverEntradaDeTesting: function () {
+      const indice = this.get();
+      const entrada = indice.entradas.find(function (e) { return e.nombreCliente === TESTING_SAFETY_CLIENT_NAME; });
+      if (!entrada) {
+        Logger.log(`[Drive] ERROR: el entorno es TESTING pero "${TESTING_SAFETY_CLIENT_NAME}" no figura en el Índice Maestro, así que no hay carpeta segura donde archivar.`);
+      }
+      return entrada || null;
+    },
     emailDeFrom: extraerEmailDeFrom
   };
 })();
@@ -139,13 +151,23 @@ function subirAdjuntosDeMensajeADrive(mensaje, nombreOperacion) {
     return resultado;
   }
 
-  const entrada = DriveClientIndexSingleton.resolverPorRemitente(mensaje.getFrom());
+  // En TESTING el remitente no decide nada: todo va a la carpeta del cliente de pruebas.
+  const enTesting = esEntornoTesting();
+  const entrada = enTesting
+    ? DriveClientIndexSingleton.resolverEntradaDeTesting()
+    : DriveClientIndexSingleton.resolverPorRemitente(mensaje.getFrom());
+
   if (!entrada) {
     resultado.ok = false;
-    const motivo = `Remitente "${DriveClientIndexSingleton.emailDeFrom(mensaje.getFrom())}" no está en el Índice Maestro (ni Sheet1 ni Adjuntos), así que no se sabe en qué carpeta archivar "${mensaje.getSubject()}".`;
+    const motivo = enTesting
+      ? `El entorno es TESTING pero "${TESTING_SAFETY_CLIENT_NAME}" no está cargado en el Índice Maestro, así que no hay carpeta segura donde archivar "${mensaje.getSubject()}".`
+      : `Remitente "${DriveClientIndexSingleton.emailDeFrom(mensaje.getFrom())}" no está en el Índice Maestro (ni Sheet1 ni Adjuntos), así que no se sabe en qué carpeta archivar "${mensaje.getSubject()}".`;
     resultado.errores.push(motivo);
     Logger.log(`[Drive] ${etiquetaOp}ERROR: ${motivo}`);
     return resultado;
+  }
+  if (enTesting) {
+    Logger.log(`[Drive] ${etiquetaOp}[SAFEGUARD TESTING] Se ignora el remitente "${DriveClientIndexSingleton.emailDeFrom(mensaje.getFrom())}": todo se archiva bajo "${entrada.nombreCliente}".`);
   }
 
   resultado.cliente = entrada.nombreCliente;
@@ -170,7 +192,10 @@ function subirAdjuntosDeMensajeADrive(mensaje, nombreOperacion) {
     let carpetaDestino = carpetaCliente;
 
     // --- LÓGICA DRP: un reporte cuyo nombre menciona a otro cliente se archiva en la carpeta de ese cliente ---
-    if (nombreArchivo.toLowerCase().includes('drp')) {
+    // En TESTING se saltea: compara el nombre del archivo contra TODOS los clientes reales del
+    // Índice Maestro, así que un archivo de prueba que por casualidad mencione a uno terminaría
+    // en la carpeta de Drive de ese cliente real.
+    if (!enTesting && nombreArchivo.toLowerCase().includes('drp')) {
       for (const nombreOtroCliente in indice.clientesNormales) {
         if (nombreArchivo.toLowerCase().includes(nombreOtroCliente.toLowerCase())) {
           try {

@@ -125,7 +125,18 @@ class MailProcessor {
 
       const attachment = this.findAttachment(message);
       if (!attachment) {
+        // El correo llegó de un remitente conocido y con el asunto correcto, pero ningún
+        // adjunto matchea "attachmentMatch". El hilo se marca [OPS-PROCESADO] igual (reintentar
+        // no va a cambiar el nombre del archivo), así que sin esta advertencia el reporte
+        // desaparecía en silencio: nada en Slack, nada en la planilla, y la tarea programada
+        // quedaba abierta sin que nadie supiera por qué.
         Logger.log(`[DEBUG MAIL] NO_OP: No se encontró ningún adjunto válido que coincida con la palabra clave "${this.attachmentMatch}".`);
+        const nombresAdjuntos = attachments.map(att => att.getName()).join(", ") || "(ninguno)";
+        summaryReport.advertencias.push({
+          cliente: clientName,
+          problema: `El correo "${message.getSubject()}" no trae ningún adjunto que coincida con "${this.attachmentMatch}". Adjuntos encontrados: ${nombresAdjuntos}.`,
+          accion: `No se creó ticket ni se cerró la tarea programada${this.scheduledTaskName ? ` "${this.scheduledTaskName}"` : ""}. Revisar el nombre del archivo que genera el reporte o el valor de attachmentMatch.`
+        });
         return { status: 'NO_OP' };
       }
 
@@ -141,9 +152,39 @@ class MailProcessor {
       clientName = clientConfig.clientName;
 
       const parsedData = this.parseAttachment(attachment, summaryReport);
-      if (!parsedData || this.isDataEmpty(parsedData)) {
+
+      // El parseo falló (parseAttachment devolvió null y ya dejó el error en summaryReport).
+      // NO es un reporte limpio: no se sabe qué traía. Antes compartía el `return SUCCESS`
+      // con el caso vacío, así que el hilo quedaba [OPS-PROCESADO] con el reporte sin
+      // procesar y sin posibilidad de reintento. Se devuelve FAILURE para que se reintente.
+      if (!parsedData) {
         enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
-        return { status: 'SUCCESS' };
+        return { status: 'FAILURE' };
+      }
+
+      // Reporte SIN filas (solo encabezados, o archivo vacío) = reporte limpio. Es el estado
+      // NORMAL de varias operaciones ("VMs inaccesibles", "VMs en datastores locales", etc.).
+      //
+      // Antes se devolvía SUCCESS acá mismo, salteándose el cierre de la tarea programada y
+      // el paso de Drive, y dejando el summaryReport completamente vacío. Con el resumen
+      // vacío, enviarResumenSlack() corta sin mandar nada y _registrarEnLog() descarta la
+      // fila por ser resultado "OK": el correo quedaba [OPS-PROCESADO], la TP abierta y NADA
+      // dejaba rastro. Fue exactamente lo que pasó el 28/07/2026 con 5 reportes de vROps.
+      //
+      // Un reporte vacío es el mismo caso de negocio que uno con filas donde todas quedaron
+      // exceptuadas, así que se enruta por el mismo camino (handleNoAlerts + Drive), que ya
+      // cierra la tarea y reporta. Ver AGENTS.md §7: un paso que no ocurrió no puede ser
+      // indistinguible de uno exitoso.
+      if (this.isDataEmpty(parsedData)) {
+        summaryReport.exitos.push({
+          mensaje: `📄 Reporte de ${clientName} recibido sin filas (solo encabezados): no hay anomalías que reportar.`
+        });
+
+        let resultadoVacio = this.handleNoAlerts(this.findExistingTicket(clientConfig), clientConfig, summaryReport);
+        resultadoVacio = this.ejecutarPasoDrive(message, clientName, summaryReport, resultadoVacio);
+
+        enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+        return this.aplicarFallosRegistrados(resultadoVacio, message, clientName, summaryReport);
       }
 
       const processed = this.processData(parsedData, clientConfig, summaryReport);
@@ -357,14 +398,29 @@ class MailProcessor {
       return { status: 'FAILURE' };
     }
 
+    if (estado === 'DUPLICADO') {
+      // El reporte del día ya se había procesado y su tarea está cerrada. El correo se da por
+      // COMPLETO (el trabajo está hecho, y los adjuntos nuevos que trajera ya se archivaron en
+      // Drive): se avisa, pero no se aparta a [OPS-ERROR] como si faltara algo por corregir.
+      summaryReport.advertencias.push({
+        cliente: clientConfig.clientName,
+        problema: `El reporte "${this.scheduledTaskName}" llegó más de una vez hoy: la tarea ${resultado.taskKey} ya estaba en estado "${resultado.estadoTarea}".`,
+        accion: "No se reabrió la tarea y se dejó un comentario en ella. Los adjuntos nuevos, si los había, igual se archivaron en Drive. Revisar si el origen está enviando el reporte duplicado."
+      });
+      Logger.log(`[${this.operationName}] Reporte duplicado de ${clientConfig.clientName}: la tarea ${resultado.taskKey} ya estaba cerrada. El correo se da por procesado.`);
+      return { status: 'SUCCESS' };
+    }
+
     if (estado === 'NOT_FOUND') {
       // NOT_FOUND cuenta como NO procesado, pero es un fallo TERMINAL: reintentar no hace
       // aparecer una tarea que no existe. buscarYCerrarTareaProgramada ya lo registró como
       // terminal, así que el correo termina apartado con [OPS-ERROR] en vez de acumularse.
+      // Llegar acá significa que NO hay ninguna tarea con ese nombre creada hoy, en ningún
+      // estado: el caso "ya la cerró un correo anterior" se resuelve antes, como DUPLICADO.
       summaryReport.advertencias.push({
         cliente: clientConfig.clientName,
-        problema: `No se encontró la tarea programada "${this.scheduledTaskName}" abierta en el proyecto ${clientConfig.jiraProjectKey}.`,
-        accion: `El correo se aparta con ${OPS_LABEL_ERROR}. Verificar que la tarea exista y que el nombre coincida exactamente.`
+        problema: `No existe ninguna tarea programada "${this.scheduledTaskName}" creada hoy en el proyecto ${clientConfig.jiraProjectKey} (en ningún estado).`,
+        accion: `El correo se aparta con ${OPS_LABEL_ERROR}. Verificar que la tarea se haya creado y que el nombre coincida exactamente.`
       });
       return { status: 'ERROR_TERMINAL' };
     }
