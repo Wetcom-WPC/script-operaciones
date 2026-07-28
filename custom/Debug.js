@@ -468,3 +468,13 @@ function detenerTodosLosActivadores() {
   PropertiesService.getScriptProperties().deleteProperty('INDICE_SIGUIENTE_TAREA');
   Logger.log("✅ Ciclo detenido y reseteado con éxito.");
 }
+
+function arreglarVariableDeDrive() {
+  const scriptProps = PropertiesService.getScriptProperties();
+  
+  // Reemplaza "ACA_VA_EL_ID" por el ID real de la carpeta de Google Drive
+  scriptProps.setProperty("DRIVE_RVTOOLS_ZOMB_FOLDER_ID", "1OBjILy44I8DaYhRmYL3Sl-XHvrp9GAGB");
+  
+  Logger.log("✅ Variable configurada con éxito.");
+  Logger.log("Valor actual: " + scriptProps.getProperty("DRIVE_RVTOOLS_ZOMB_FOLDER_ID"));
+}

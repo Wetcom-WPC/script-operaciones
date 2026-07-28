@@ -297,7 +297,7 @@ function manual_auditarTareasProgramadas() {
 const MANUAL_CIERRE_NOMBRE_TAREA = "";
 
 // Seguridad: en true solo simula. Poné false recién después de revisar la simulación.
-const MANUAL_CIERRE_SIMULACION = true;
+const MANUAL_CIERRE_SIMULACION = false;
 
 /**
  * Cierra Tareas Programadas cuyo reporte se procesó efectivamente hoy.

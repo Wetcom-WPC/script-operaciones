@@ -211,6 +211,79 @@ function runAllTests() {
     assertFalse(porDefecto.requierePaso('inexistente'), "pasos: un paso no declarado no se ejecuta");
   } catch(e) { Logger.log("Error en Test pasos declarados: " + e.message); }
 
+  // --- TESTS: caminos silenciosos de processSingleMessage (incidente del 28/07/2026) ---
+  // Un reporte que llegaba SIN filas (solo encabezados) se marcaba [OPS-PROCESADO] pero se
+  // salteaba el cierre de la tarea programada y el archivado en Drive, y dejaba el resumen
+  // vacío: no llegaba nada a Slack ni a la planilla. Quedaban 5 TPs abiertas sin explicación.
+  Logger.log("--- Test: MailProcessor / reporte vacío y sin adjunto ---");
+  try {
+    const configFalsa = { clientName: "Cliente Test", jiraProjectKey: "TEST" };
+
+    // Correo falso: no toca Gmail, solo expone lo que usa processSingleMessage.
+    const mensajeFalso = function (nombresAdjuntos) {
+      return {
+        getSubject: function () { return "Reporte de prueba"; },
+        getFrom: function () { return "reportes@dominio-inexistente.test"; },
+        getAttachments: function () {
+          return nombresAdjuntos.map(function (n) {
+            return { getName: function () { return n; }, getContentType: function () { return "text/csv"; } };
+          });
+        }
+      };
+    };
+
+    // Stub que corta TODA llamada externa (Jira, Drive) y solo anota qué pasos se ejecutaron.
+    class _ProcessorDePrueba extends MailProcessor {
+      constructor(parsed) {
+        super({ operationName: "test-vacio", emailSubject: "Reporte de prueba", attachmentMatch: "reporte" });
+        this._parsed = parsed;
+        this.llamadas = { noAlerts: 0, alerts: 0, drive: 0 };
+      }
+      resolveClientConfig() { return configFalsa; }
+      parseAttachment() { return this._parsed; }
+      processData(parsed) {
+        return { headers: parsed[0], finalAlerts: parsed.slice(1), rowsForExport: parsed.slice(1), reasonsText: "" };
+      }
+      findExistingTicket() { return null; }
+      handleNoAlerts() { this.llamadas.noAlerts++; return { status: 'SUCCESS' }; }
+      handleAlerts() { this.llamadas.alerts++; return { status: 'SUCCESS' }; }
+      ejecutarPasoDrive(message, clientName, summaryReport, resultado) { this.llamadas.drive++; return resultado; }
+    }
+
+    const correr = function (processor, mensaje) {
+      const summary = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
+      return { resultado: processor.processSingleMessage(mensaje, summary), summary: summary };
+    };
+
+    // 1) CSV con solo encabezados: es un reporte limpio, no un correo a ignorar.
+    const pVacio = new _ProcessorDePrueba([["Name", "Estado"]]);
+    const rVacio = correr(pVacio, mensajeFalso(["reporte-hoy.csv"]));
+    assertEqual(rVacio.resultado.status, 'SUCCESS', "reporte vacío: el correo se da por procesado");
+    assertEqual(pVacio.llamadas.noAlerts, 1, "reporte vacío: pasa por handleNoAlerts (que cierra la tarea programada)");
+    assertEqual(pVacio.llamadas.drive, 1, "reporte vacío: igual se archiva en Drive");
+    assertTrue(rVacio.summary.exitos.length > 0, "reporte vacío: deja rastro en el resumen (llega a Slack y a la planilla)");
+    assertEqual(pVacio.llamadas.alerts, 0, "reporte vacío: no intenta crear tickets");
+
+    // 2) Parseo fallido: no se sabe qué traía el reporte, así que NO se puede dar por procesado.
+    const pRoto = new _ProcessorDePrueba(null);
+    const rRoto = correr(pRoto, mensajeFalso(["reporte-hoy.csv"]));
+    assertEqual(rRoto.resultado.status, 'FAILURE', "parseo fallido: el correo queda pendiente para reintento");
+    assertEqual(pRoto.llamadas.noAlerts, 0, "parseo fallido: NO se cierra la tarea programada");
+
+    // 3) Reporte con filas: el camino normal no cambió.
+    const pConFilas = new _ProcessorDePrueba([["Name", "Estado"], ["SRV-01", "Inaccesible"]]);
+    const rConFilas = correr(pConFilas, mensajeFalso(["reporte-hoy.csv"]));
+    assertEqual(rConFilas.resultado.status, 'SUCCESS', "reporte con filas: sigue procesándose igual que antes");
+    assertEqual(pConFilas.llamadas.alerts, 1, "reporte con filas: pasa por handleAlerts");
+    assertEqual(pConFilas.llamadas.noAlerts, 0, "reporte con filas: no pasa por handleNoAlerts");
+
+    // 4) Adjunto que no matchea: sigue siendo NO_OP, pero ahora avisa en vez de desaparecer.
+    const pSinAdjunto = new _ProcessorDePrueba([["Name"]]);
+    const rSinAdjunto = correr(pSinAdjunto, mensajeFalso(["otra-cosa.csv"]));
+    assertEqual(rSinAdjunto.resultado.status, 'NO_OP', "sin adjunto que matchee: sigue siendo NO_OP");
+    assertTrue(rSinAdjunto.summary.advertencias.length > 0, "sin adjunto que matchee: deja una advertencia visible");
+  } catch(e) { Logger.log("Error en Test caminos silenciosos: " + e.message); }
+
   // --- TESTS: resolución de remitente para Drive ---
   Logger.log("--- Test: DriveClientIndexSingleton / parseo de From ---");
   try {
