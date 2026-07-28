@@ -83,9 +83,34 @@ function obtenerAsuntosConProcessor() {
 const HORA_INICIO = 7;  // 7 AM arranca
 const HORA_FIN = 15    // 12 AM termina definitivamente -- hasta las 15 PM
 
+/**
+ * Punto de entrada del día. Lo dispara el activador diario (ver manual_configurarActivadorDiario).
+ *
+ * Los activadores diarios de Google NO se ejecutan a una hora exacta: se disparan en algún
+ * momento de una franja de UNA HORA. Por eso el activador se configura una hora ANTES de
+ * HORA_INICIO y es esta función la que decide el arranque real.
+ *
+ * Antes esto agendaba el ciclo 5 minutos más tarde, siempre. Sumado a la franja difusa, el
+ * primer procesamiento del día podía llegar casi una hora tarde: el 28/07/2026 el activador
+ * de las 7 disparó cerca de las 7:55 y el primer aviso a Slack salió recién 8:00.
+ */
 function iniciarDiaOperativo() {
-  Logger.log("Iniciando el ciclo diario de operaciones...");
-  crearNuevoActivador('ejecutarCicloDeOperaciones', 5); 
+  const ahora = new Date();
+  const horaActual = ahora.getHours();
+
+  if (horaActual >= HORA_INICIO) {
+    // Ya estamos en ventana: arranca YA, sin esperar.
+    Logger.log(`Iniciando el ciclo diario de operaciones AHORA (${horaActual}hs, ventana ${HORA_INICIO}-${HORA_FIN}hs).`);
+    ejecutarCicloDeOperaciones();
+    return;
+  }
+
+  // El activador cayó temprano dentro de su franja: en vez de procesar antes de tiempo, se
+  // agenda el arranque a la hora exacta. Un activador .at() sí respeta el horario pedido.
+  const arranque = new Date(ahora);
+  arranque.setHours(HORA_INICIO, 0, 0, 0);
+  ScriptApp.newTrigger('ejecutarCicloDeOperaciones').timeBased().at(arranque).create();
+  Logger.log(`Son las ${horaActual}hs: el ciclo queda agendado para las ${HORA_INICIO}:00 en punto.`);
 }
 
 /**
@@ -150,9 +175,13 @@ function ejecutarCicloDeOperaciones() {
 
     // 5. Gestión del siguiente paso
     if (indiceActual < registro.length) {
-      // Quedan tareas: guardar índice y re-programar en 5 min
+      // Quedan tareas del MISMO ciclo: se retoma en 1 minuto, no en 5. Acá el trabajo está a
+      // medio hacer y cada minuto de espera se suma al tiempo total del día; los 5 minutos
+      // originales eran tiempo muerto puro. El intervalo de 5 se mantiene abajo, para volver a
+      // barrer la bandeja cuando el ciclo ya terminó completo (ahí sí es un sondeo, no una
+      // continuación).
       scriptProperties.setProperty('INDICE_SIGUIENTE_TAREA', indiceActual);
-      crearNuevoActivador('ejecutarCicloDeOperaciones', 5);
+      crearNuevoActivador('ejecutarCicloDeOperaciones', 1);
     } else {
       // Ciclo completado
       Logger.log("--- ¡CICLO COMPLETO DE TAREAS FINALIZADO! ---");

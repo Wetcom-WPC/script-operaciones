@@ -170,8 +170,26 @@ function extractDRPClientName(emailSubject, baseSubject = "") {
   return null;
 }
 
-function getClientConfigByName(clientName, operationName) {
+/**
+ * Resuelve la configuración de un cliente por su NOMBRE (columna B del Índice Maestro).
+ *
+ * Es el único resolutor por nombre del proyecto, así que la red de seguridad de TESTING vive
+ * acá y no solo en getClientConfig(): varios processors llaman a esta función directamente con
+ * un nombre de cliente real ya resuelto (las rutas DRP de Affinity Rules y Alertas de vSphere,
+ * y VMsConSnapshots, que hardcodea dos clientes). Si la guarda estuviera únicamente en
+ * getClientConfig, esas rutas seguirían creando tickets en proyectos de clientes reales.
+ *
+ * @param {string} clientName Nombre del cliente en el Índice Maestro.
+ * @param {string} operationName Nombre de la operación (= pestaña de excepciones).
+ * @param {boolean} [soporte=false] Devuelve la configuración de Soporte (columnas N-Q) en vez de la normal.
+ */
+function getClientConfigByName(clientName, operationName, soporte = false) {
   try {
+    if (esEntornoTesting() && String(clientName).trim() !== TESTING_SAFETY_CLIENT_NAME) {
+      Logger.log(`[SAFEGUARD TESTING] Se pidió la configuración de "${clientName}" pero el entorno es TESTING: se redirige a "${TESTING_SAFETY_CLIENT_NAME}".`);
+      clientName = TESTING_SAFETY_CLIENT_NAME;
+    }
+
     if (!clientName) {
       Logger.log(`[ClientConfigService] clientName es nulo o indefinido en getClientConfigByName para la operación "${operationName || 'sin especificar'}".`);
       return null;
@@ -193,7 +211,11 @@ function getClientConfigByName(clientName, operationName) {
           serviceDeskId = clientRow[4],
           requestTypeName = clientRow[5],
           tecnologiaValue = clientRow[6],
-          origenValue = clientRow[7] || null;
+          origenValue = clientRow[7] || null,
+          jiraProjectKeySop = clientRow[13],
+          serviceDeskIdSop = clientRow[14],
+          clientNameSop = clientRow[15] != null ? String(clientRow[15]) : "",
+          requestTypeNameSop = clientRow[16];
 
     if (!clientNameFound || !jiraProjectKey || !serviceDeskId || !requestTypeName || !tecnologiaValue) {
       Logger.log(`ERROR: La configuración para "${clientNameFound}" (encontrado por nombre) está incompleta.`);
@@ -203,14 +225,32 @@ function getClientConfigByName(clientName, operationName) {
     const requestTypeId = getRequestTypeIdForServiceDesk(serviceDeskId, requestTypeName);
     if (!requestTypeId) return null;
 
+    if (soporte && (!serviceDeskIdSop || !requestTypeNameSop)) {
+      Logger.log(`ADVERTENCIA: se pidió la configuración de Soporte de "${clientNameFound}" pero el Índice Maestro no tiene cargadas sus columnas de Soporte (N-Q). Se devuelve la configuración igual, pero sin requestTypeIdSop: la creación de tickets de soporte va a fallar.`);
+    }
+
+    const requestTypeIdSop = (soporte && serviceDeskIdSop && requestTypeNameSop)
+      ? getRequestTypeIdForServiceDesk(serviceDeskIdSop, requestTypeNameSop)
+      : null;
+
     const { exceptionSheet, exceptionData: rawExceptionData } = MasterSheetSingleton.getExceptionData(exceptionFileId, operationName);
-    
+
     if (!exceptionSheet) {
       Logger.log(`ADVERTENCIA: No se encontró la PESTAÑA de excepciones "${operationName}" en el archivo del cliente ${clientNameFound}. Se continuará sin excepciones.`);
+      if (soporte) {
+        return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue };
+      }
       return { exceptions: {}, clientName: clientNameFound.trim(), jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue };
     }
 
     const groupedExceptions = procesarReglasExcepciones(rawExceptionData, exceptionSheet);
+
+    if (soporte) {
+      return {
+        exceptions: groupedExceptions, clientNameSop, jiraProjectKeySop, serviceDeskIdSop,
+        requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue
+      };
+    }
 
     return {
       exceptions: groupedExceptions, clientName: clientNameFound.trim(), jiraProjectKey: jiraProjectKey,
@@ -232,6 +272,14 @@ function getClientConfigByName(clientName, operationName) {
  */
 function getClientConfig(senderEmail, operationName, soporte = false) {
   try {
+    // Red de seguridad de TESTING: se ignora por completo el remitente. Un correo de prueba
+    // puede llegar de cualquier casilla, y sin esto terminaría creando tickets en el proyecto
+    // de Jira del cliente real dueño de ese dominio. Ver TESTING_SAFETY_CLIENT_NAME.
+    if (esEntornoTesting()) {
+      Logger.log(`[SAFEGUARD TESTING] Entorno TESTING: se ignora el remitente "${senderEmail}" y se usa la configuración de "${TESTING_SAFETY_CLIENT_NAME}".`);
+      return getClientConfigByName(TESTING_SAFETY_CLIENT_NAME, operationName, soporte);
+    }
+
     if (!senderEmail || typeof senderEmail !== 'string') {
       Logger.log(`[ClientConfigService] senderEmail es inválido o nulo en getClientConfig para operación "${operationName}": "${senderEmail}"`);
       return null;

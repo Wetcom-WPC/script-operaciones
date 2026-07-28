@@ -79,9 +79,7 @@ function sendEmail({ to, subject, body, htmlBody, cc, bcc, attachments, name, fr
   // --- SAFEGUARD TERMINANTE PARA ENTORNO DE TESTING (PLAYGROUND) ---
   // Queda terminantemente prohibido enviar correos a PODs y clientes reales en testing.
   // Todo envío se redirige de forma forzosa y exclusiva a ian.lucero@wetcom.com si estamos en TESTING.
-  const isTestingEnv = PropertiesService.getScriptProperties().getProperty("ENVIRONMENT") === "TESTING";
-  
-  if (isTestingEnv) {
+  if (esEntornoTesting()) {
     const originalTo = to;
     to = "ian.lucero@wetcom.com";
     cc = "";

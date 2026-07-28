@@ -37,6 +37,72 @@ function manual_runAllTests() {
 }
 
 /**
+ * AUDITORÍA (solo lectura): lista los activadores del proyecto y a qué hora arranca el día.
+ *
+ * Los activadores NO viven en el código sino en la configuración del proyecto de Apps Script,
+ * así que esta es la única forma de responder "¿a qué hora empieza a procesar?" sin abrir el
+ * panel de Activadores a mano.
+ */
+function manual_auditarActivadores() {
+  const triggers = ScriptApp.getProjectTriggers();
+  Logger.log(`=== ACTIVADORES DEL PROYECTO (${triggers.length}) ===`);
+
+  triggers.forEach(function (t) {
+    Logger.log(`   ${t.getHandlerFunction()}  |  tipo: ${t.getEventType()}  |  id: ${t.getUniqueId()}`);
+  });
+
+  const diarios = triggers.filter(function (t) { return t.getHandlerFunction() === 'iniciarDiaOperativo'; });
+  Logger.log(`\n--- Arranque del día ---`);
+  if (diarios.length === 0) {
+    Logger.log(`   🚨 NO hay ningún activador para iniciarDiaOperativo: el ciclo diario NO arranca solo.`);
+    Logger.log(`      Ejecutá manual_configurarActivadorDiario() para crearlo.`);
+  } else if (diarios.length > 1) {
+    Logger.log(`   ⚠️ Hay ${diarios.length} activadores de iniciarDiaOperativo: se pisan entre sí. Ejecutá manual_configurarActivadorDiario() para dejar uno solo.`);
+  } else {
+    Logger.log(`   ✅ Hay 1 activador de iniciarDiaOperativo.`);
+  }
+  Logger.log(`   La API no expone la hora configurada de un activador: verificala en el panel`);
+  Logger.log(`   "Activadores" del editor. Debe estar en las ${HORA_INICIO - 1}hs — la franja de una hora de`);
+  Logger.log(`   Google termina así antes de HORA_INICIO (${HORA_INICIO}hs), y iniciarDiaOperativo agenda`);
+  Logger.log(`   el arranque exacto a las ${HORA_INICIO}:00.`);
+
+  return { total: triggers.length, diarios: diarios.length };
+}
+
+/**
+ * Deja UN solo activador diario para iniciarDiaOperativo, en la franja previa a HORA_INICIO.
+ *
+ * ⚠️ Modifica los activadores del proyecto. Correr una sola vez (o cuando haya que reparar la
+ * configuración), no en cada despliegue.
+ *
+ * Se configura una hora ANTES de HORA_INICIO a propósito: los activadores diarios de Google se
+ * disparan en algún momento de una franja de una hora, así que uno puesto a las 7 puede caer
+ * 7:55. Poniéndolo a las 6, la franja 6-7 termina siempre antes de la hora deseada y es
+ * iniciarDiaOperativo() quien agenda el arranque exacto a las 7:00 (ver core/Main.js).
+ */
+function manual_configurarActivadorDiario() {
+  const horaActivador = HORA_INICIO - 1;
+
+  let borrados = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'iniciarDiaOperativo') {
+      ScriptApp.deleteTrigger(t);
+      borrados++;
+    }
+  });
+  if (borrados > 0) Logger.log(`Se eliminaron ${borrados} activador(es) previo(s) de iniciarDiaOperativo.`);
+
+  ScriptApp.newTrigger('iniciarDiaOperativo')
+    .timeBased()
+    .everyDays(1)
+    .atHour(horaActivador)
+    .create();
+
+  Logger.log(`✅ Activador diario creado: iniciarDiaOperativo en la franja de las ${horaActivador}hs.`);
+  Logger.log(`   El procesamiento real arranca a las ${HORA_INICIO}:00 en punto.`);
+}
+
+/**
  * Muestra si estamos dentro de la ventana operativa (05-15hs AR) y la hora detectada.
  * Útil para validar la guarda horaria de los triggers 24/7 (BUG-03).
  */
@@ -297,7 +363,7 @@ function manual_auditarTareasProgramadas() {
 const MANUAL_CIERRE_NOMBRE_TAREA = "";
 
 // Seguridad: en true solo simula. Poné false recién después de revisar la simulación.
-const MANUAL_CIERRE_SIMULACION = false;
+const MANUAL_CIERRE_SIMULACION = true;
 
 /**
  * Cierra Tareas Programadas cuyo reporte se procesó efectivamente hoy.

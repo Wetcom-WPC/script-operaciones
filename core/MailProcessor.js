@@ -398,14 +398,29 @@ class MailProcessor {
       return { status: 'FAILURE' };
     }
 
+    if (estado === 'DUPLICADO') {
+      // El reporte del día ya se había procesado y su tarea está cerrada. El correo se da por
+      // COMPLETO (el trabajo está hecho, y los adjuntos nuevos que trajera ya se archivaron en
+      // Drive): se avisa, pero no se aparta a [OPS-ERROR] como si faltara algo por corregir.
+      summaryReport.advertencias.push({
+        cliente: clientConfig.clientName,
+        problema: `El reporte "${this.scheduledTaskName}" llegó más de una vez hoy: la tarea ${resultado.taskKey} ya estaba en estado "${resultado.estadoTarea}".`,
+        accion: "No se reabrió la tarea y se dejó un comentario en ella. Los adjuntos nuevos, si los había, igual se archivaron en Drive. Revisar si el origen está enviando el reporte duplicado."
+      });
+      Logger.log(`[${this.operationName}] Reporte duplicado de ${clientConfig.clientName}: la tarea ${resultado.taskKey} ya estaba cerrada. El correo se da por procesado.`);
+      return { status: 'SUCCESS' };
+    }
+
     if (estado === 'NOT_FOUND') {
       // NOT_FOUND cuenta como NO procesado, pero es un fallo TERMINAL: reintentar no hace
       // aparecer una tarea que no existe. buscarYCerrarTareaProgramada ya lo registró como
       // terminal, así que el correo termina apartado con [OPS-ERROR] en vez de acumularse.
+      // Llegar acá significa que NO hay ninguna tarea con ese nombre creada hoy, en ningún
+      // estado: el caso "ya la cerró un correo anterior" se resuelve antes, como DUPLICADO.
       summaryReport.advertencias.push({
         cliente: clientConfig.clientName,
-        problema: `No se encontró la tarea programada "${this.scheduledTaskName}" abierta en el proyecto ${clientConfig.jiraProjectKey}.`,
-        accion: `El correo se aparta con ${OPS_LABEL_ERROR}. Verificar que la tarea exista y que el nombre coincida exactamente.`
+        problema: `No existe ninguna tarea programada "${this.scheduledTaskName}" creada hoy en el proyecto ${clientConfig.jiraProjectKey} (en ningún estado).`,
+        accion: `El correo se aparta con ${OPS_LABEL_ERROR}. Verificar que la tarea se haya creado y que el nombre coincida exactamente.`
       });
       return { status: 'ERROR_TERMINAL' };
     }
