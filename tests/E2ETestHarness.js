@@ -240,7 +240,8 @@ function _e2eAsegurarTareasProgramadas(plan) {
       resultado.reutilizadas++;
       return;
     }
-    const key = _e2eCrearTareaProgramada(nombreTarea, projectKey);
+    const descripcion = `Tarea Programada generada por el harness E2E ${E2E_PREFIJO_MARCADOR(PropertiesService.getScriptProperties().getProperty(E2E_PROPIEDAD_RUN_ID))}]. Se cierra con manual_e2e_limpiar().`;
+    const key = _e2eCrearTareaProgramada(nombreTarea, projectKey, descripcion);
     if (key) {
       Logger.log(`[E2E] Tarea Programada "${nombreTarea}" creada: ${key}`);
       resultado.creadas++;
@@ -255,14 +256,19 @@ function _e2eAsegurarTareasProgramadas(plan) {
  * Crea una Tarea Programada de prueba en el proyecto de testing.
  * Reemplaza a crearTareaProgramadaDePrueba() de custom/Debug.js, que apuntaba a un projectKey
  * hardcodeado y no dejaba rastro del runId.
+ *
+ * La descripción se recibe por parámetro (en vez de armarse acá adentro) para que otros tests
+ * E2E puedan reusar esta función con su propio runId/marcador — ver
+ * tests/E2EReintentoErrorTest.js, que no comparte E2E_PROPIEDAD_RUN_ID con este harness.
+ *
  * @returns {string|null} Clave del ticket creado.
  */
-function _e2eCrearTareaProgramada(summary, projectKey) {
+function _e2eCrearTareaProgramada(summary, projectKey, descripcion) {
   const payload = {
     "fields": {
       "project": { "key": projectKey },
       "summary": summary,
-      "description": `Tarea Programada generada por el harness E2E ${E2E_PREFIJO_MARCADOR(PropertiesService.getScriptProperties().getProperty(E2E_PROPIEDAD_RUN_ID))}]. Se cierra con manual_e2e_limpiar().`,
+      "description": descripcion,
       "issuetype": { "name": "Tarea Programada" },
       "customfield_12316": { "value": "VMware vSphere" }
     }

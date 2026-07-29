@@ -13,6 +13,48 @@ const OPS_LABEL_PROCESADO = "[OPS-PROCESADO]";
 // LIMITE_HILOS_PENDIENTES. Acá quedan apartados y fáciles de encontrar en Gmail.
 const OPS_LABEL_ERROR = "[OPS-ERROR]";
 
+// Tope de reintentos en [OPS-PENDIENTE] antes de apartar el correo a [OPS-ERROR] por
+// agotamiento de reintentos (distinto de ERROR_TERMINAL: acá el error SÍ ameritaba
+// reintentar, pero ya lo hizo demasiadas veces sin éxito). Sin este tope, un fallo
+// transitorio que en realidad nunca se resuelve (ej. un 500 persistente de Jira) reintentaría
+// para siempre, ocupando lugar en LIMITE_HILOS_PENDIENTES sin que nadie se entere.
+//
+// Configurable en caliente vía Script Property "OPS_MAX_REINTENTOS_PENDIENTE" (Configuración
+// del proyecto > Propiedades del script), sin tocar código ni repushear. Si no está seteada,
+// o tiene un valor inválido, se usa este default.
+const OPS_MAX_REINTENTOS_PENDIENTE_DEFAULT = 10;
+
+/** @returns {number} Tope de reintentos vigente (Script Property, o el default si no está seteada). */
+function obtenerMaxReintentosPendiente() {
+  const valor = PropertiesService.getScriptProperties().getProperty("OPS_MAX_REINTENTOS_PENDIENTE");
+  const parsed = parseInt(valor, 10);
+  return (valor !== null && !isNaN(parsed) && parsed > 0) ? parsed : OPS_MAX_REINTENTOS_PENDIENTE_DEFAULT;
+}
+
+// Prefijo de la Script Property que cuenta los reintentos de cada thread. Se guarda por
+// thread (no en un único blob JSON) para no tener que leer/escribir todo el contador de
+// golpe en cada correo procesado.
+const _PROP_PREFIX_REINTENTOS = "OPS_REINTENTOS_";
+
+/** @returns {number} Reintentos ya contabilizados para este thread. */
+function _obtenerReintentos(threadId) {
+  return Number(PropertiesService.getScriptProperties().getProperty(_PROP_PREFIX_REINTENTOS + threadId)) || 0;
+}
+
+/** Suma un reintento y devuelve el nuevo total. */
+function _incrementarReintentos(threadId) {
+  const props = PropertiesService.getScriptProperties();
+  const key = _PROP_PREFIX_REINTENTOS + threadId;
+  const nuevo = (Number(props.getProperty(key)) || 0) + 1;
+  props.setProperty(key, String(nuevo));
+  return nuevo;
+}
+
+/** Se llama al resolver un thread (PROCESADO o ERROR): ya no hace falta seguir contando. */
+function _limpiarReintentos(threadId) {
+  PropertiesService.getScriptProperties().deleteProperty(_PROP_PREFIX_REINTENTOS + threadId);
+}
+
 /**
  * Obtiene o crea una etiqueta en Gmail de forma segura.
  * @param {string} labelName Nombre de la etiqueta.
@@ -34,38 +76,69 @@ function getOrCreateOpsLabel(labelName) {
 
 /**
  * Aplica las transiciones de etiquetas en un thread de Gmail y gestiona su estado de lectura.
+ *
+ * Un thread nunca debería tener [OPS-ERROR] junto con [OPS-PENDIENTE] o [OPS-PROCESADO]: por
+ * eso cada rama saca las otras dos etiquetas antes de poner la que corresponde. Esto importa
+ * en particular para el reintento manual (ver manual_reintentarCorreosConError en
+ * custom/HerramientasManuales.js), que llama a esta función sobre threads que YA tienen
+ * [OPS-ERROR] puesto: si no se sacara acá, el thread quedaría con las dos etiquetas y
+ * fetchAndFilterGlobalThreads (que excluye `-label:${OPS_LABEL_ERROR}`) nunca lo volvería
+ * a recoger aunque esté en [OPS-PENDIENTE].
+ *
  * @param {GoogleAppsScript.Gmail.GmailThread} thread Hilo procesado.
- * @param {string} status Estado final del procesamiento ('SUCCESS', 'NO_OP', 'ERROR', 'FAILURE', 'HTTP_500').
+ * @param {string} status Estado final del procesamiento ('SUCCESS', 'NO_OP', 'ERROR', 'FAILURE', 'HTTP_500', 'ERROR_TERMINAL').
+ * @returns {{label: string, intentos?: number, motivo?: string}} Etiqueta final aplicada
+ *   ('PROCESADO' | 'ERROR' | 'PENDIENTE') y, para PENDIENTE/ERROR por agotamiento, cuántos
+ *   reintentos lleva. Los callers existentes ignoran el retorno; lo usa el reintento manual
+ *   para loguear en vivo qué pasó con cada correo.
  */
 function etiquetarYMarcarProcesado(thread, status) {
   try {
     const labelPendiente = getOrCreateOpsLabel(OPS_LABEL_PENDIENTE);
     const labelProcesado = getOrCreateOpsLabel(OPS_LABEL_PROCESADO);
+    const labelError = getOrCreateOpsLabel(OPS_LABEL_ERROR);
 
     if (status === 'SUCCESS' || status === 'NO_OP') {
       if (labelPendiente) thread.removeLabel(labelPendiente);
+      if (labelError) thread.removeLabel(labelError);
       if (labelProcesado) thread.addLabel(labelProcesado);
       thread.markRead();
+      _limpiarReintentos(thread.getId());
       Logger.log(`[MailUtils] Thread marcado como PROCESADO (${status}) -> ${OPS_LABEL_PROCESADO}`);
-      return;
+      return { label: 'PROCESADO' };
     }
 
     if (status === 'ERROR_TERMINAL') {
       // Reintentar no lo va a arreglar: se aparta para revisión manual y se saca de la cola
       // de pendientes (también se marca leído, porque la búsqueda incluye `is:unread`).
-      const labelError = getOrCreateOpsLabel(OPS_LABEL_ERROR);
       if (labelPendiente) thread.removeLabel(labelPendiente);
       if (labelError) thread.addLabel(labelError);
       thread.markRead();
+      _limpiarReintentos(thread.getId());
       Logger.log(`[MailUtils] Thread apartado para revisión manual -> ${OPS_LABEL_ERROR}. No se reintenta hasta que se corrija la configuración.`);
-      return;
+      return { label: 'ERROR', motivo: 'ERROR_TERMINAL' };
     }
 
-    // Fallo transitorio (ERROR, FAILURE, HTTP_500): se reintenta en el próximo ciclo.
+    // Fallo transitorio (ERROR, FAILURE, HTTP_500): se reintenta, salvo que ya se haya
+    // agotado el tope de reintentos.
+    const maxReintentos = obtenerMaxReintentosPendiente();
+    const intentos = _incrementarReintentos(thread.getId());
+    if (intentos > maxReintentos) {
+      if (labelPendiente) thread.removeLabel(labelPendiente);
+      if (labelError) thread.addLabel(labelError);
+      thread.markRead();
+      _limpiarReintentos(thread.getId());
+      Logger.log(`[MailUtils] Thread agotó ${maxReintentos} reintentos (último estado: ${status}) -> se aparta a ${OPS_LABEL_ERROR} para revisión manual.`);
+      return { label: 'ERROR', intentos, motivo: 'TOPE_REINTENTOS' };
+    }
+
+    if (labelError) thread.removeLabel(labelError);
     if (labelPendiente) thread.addLabel(labelPendiente);
-    Logger.log(`[MailUtils] Thread marcado para reintento -> ${OPS_LABEL_PENDIENTE} (${status})`);
+    Logger.log(`[MailUtils] Thread marcado para reintento -> ${OPS_LABEL_PENDIENTE} (${status}), intento ${intentos}/${maxReintentos}`);
+    return { label: 'PENDIENTE', intentos };
   } catch (e) {
     Logger.log(`[MailUtils] Error al gestionar etiquetas del thread: ${e.message}`);
+    return { label: 'ERROR', motivo: 'EXCEPCION' };
   }
 }
 

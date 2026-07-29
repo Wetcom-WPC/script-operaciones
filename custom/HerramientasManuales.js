@@ -147,6 +147,149 @@ function manual_diagnosticarEncabezados() {
 }
 
 // =================================================================
+// REINTENTO DE CORREOS [OPS-ERROR]
+// =================================================================
+
+// Acota el reintento a los correos cuyo asunto contenga este texto (no distingue
+// mayúsculas). Vacío = todos los correos en [OPS-ERROR]. Útil para debuggear un reporte
+// puntual sin disparar de nuevo el resto de los correos apartados.
+//
+// Es `let` y no `const` a propósito: tests/E2EReintentoErrorTest.js lo pisa temporalmente
+// para acotar manual_reintentarCorreosConError() a un único correo de prueba (por runId) sin
+// tocar ningún otro correo real que pueda estar en [OPS-ERROR], y lo restaura al terminar. El
+// uso manual de siempre (editar este valor a mano antes de correr) sigue funcionando igual.
+let MANUAL_REINTENTO_ERROR_FILTRO_ASUNTO = "";
+
+/**
+ * Encuentra, entre los processors registrados en obtenerRegistroDeProcesadores() (Main.js),
+ * el que reclama este asunto — mismo criterio que fetchAndFilterGlobalThreads: el asunto del
+ * correo CONTIENE el emailSubject del processor. Se excluye el catch-all
+ * (ReportesSinProcessor, emailSubject "") porque un correo que llegó a [OPS-ERROR] ya fue
+ * reclamado por su processor real; enrutarlo al catch-all sería reprocesarlo con la lógica
+ * equivocada.
+ * @param {string} asunto Asunto del correo (tal cual, sin normalizar).
+ * @returns {MailProcessor|null}
+ */
+function _resolverProcessorDelAsunto(asunto) {
+  const asuntoLower = asunto.toLowerCase();
+  for (const entrada of obtenerRegistroDeProcesadores()) {
+    let instancia;
+    try {
+      instancia = entrada.crear();
+    } catch (e) {
+      continue;
+    }
+    if (instancia.emailSubject && asuntoLower.includes(instancia.emailSubject.toLowerCase())) {
+      return instancia;
+    }
+  }
+  return null;
+}
+
+/**
+ * Reprocesa YA MISMO, en esta misma ejecución, los correos apartados en [OPS-ERROR]:
+ * identifica el processor que reclama cada uno (por asunto) y le corre processSingleMessage()
+ * de nuevo sobre el thread real. Pensada para debuggear en el momento, después de corregir la
+ * causa del error (config de Jira, nombre de tarea programada, etc.) — el Log de esta corrida
+ * muestra el resultado real de cada intento, igual que vería el ciclo automático.
+ *
+ * El destino final de cada correo lo decide etiquetarYMarcarProcesado() (core/MailUtils.js),
+ * la MISMA función que usa el ciclo automático, para que el comportamiento sea idéntico:
+ * - SUCCESS o NO_OP -> [OPS-PROCESADO].
+ * - Un fallo que amerita reintentar (ERROR, FAILURE, HTTP_500) -> vuelve a [OPS-PENDIENTE],
+ *   así el ciclo automático lo retoma solo. Cuenta como un reintento más: si ya venía
+ *   acumulando intentos de antes (del ciclo automático, previo a caer en [OPS-ERROR]) y
+ *   supera el tope de obtenerMaxReintentosPendiente() (configurable vía la Script Property
+ *   "OPS_MAX_REINTENTOS_PENDIENTE"), se apartará de nuevo a [OPS-ERROR] en vez de quedar
+ *   reintentando para siempre.
+ * - Un fallo terminal (config incorrecta, tarea programada inexistente, etc.) -> se mantiene
+ *   en [OPS-ERROR].
+ *
+ * ⚠️ Ejecuta el pipeline real: puede crear/actualizar tickets de Jira, mandar avisos a Slack
+ * y archivar en Drive (esos avisos salen en el momento, desde dentro de processSingleMessage,
+ * no al final). Correr solo después de haber corregido el problema, o para confirmar en el
+ * momento que la corrección funcionó.
+ */
+function manual_reintentarCorreosConError() {
+  const filtro = MANUAL_REINTENTO_ERROR_FILTRO_ASUNTO.trim().toLowerCase();
+  Logger.log(`=== REPROCESAMIENTO EN VIVO DE ${OPS_LABEL_ERROR} ===`);
+  if (filtro) Logger.log(`Filtro de asunto: "${MANUAL_REINTENTO_ERROR_FILTRO_ASUNTO}"`);
+
+  const hilos = GmailApp.search(`label:${OPS_LABEL_ERROR}`, 0, 500);
+  Logger.log(`${hilos.length} hilo(s) encontrados en ${OPS_LABEL_ERROR}.`);
+  if (hilos.length >= 500) {
+    Logger.log(`⚠️ Se alcanzó el tope de 500 hilos: puede haber más en ${OPS_LABEL_ERROR} que esta corrida no vio.`);
+  }
+
+  const timeGuard = new TimeGuard({ operationName: "Reintento manual OPS-ERROR" });
+  const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, timeGuard: timeGuard };
+
+  let procesados = 0, resueltos = 0, vuelvenAPendiente = 0, siguenEnError = 0, sinProcessor = 0;
+  const omitidosPorFiltro = [];
+
+  for (const hilo of hilos) {
+    if (hilo.getMessageCount() === 0) continue;
+    const message = hilo.getMessages()[hilo.getMessageCount() - 1];
+    const asunto = message.getSubject();
+
+    if (filtro && asunto.toLowerCase().indexOf(filtro) === -1) {
+      omitidosPorFiltro.push(asunto);
+      continue;
+    }
+
+    if (!timeGuard.check(`Reintento OPS-ERROR: ${hilo.getId()}`)) {
+      Logger.log(`⏸️ Límite de tiempo alcanzado. El resto de los correos en ${OPS_LABEL_ERROR} queda para la próxima corrida.`);
+      break;
+    }
+
+    const processor = _resolverProcessorDelAsunto(asunto);
+    if (!processor) {
+      Logger.log(`   ⚠️ Ningún processor registrado reclama el asunto "${asunto}". Se deja en ${OPS_LABEL_ERROR}.`);
+      sinProcessor++;
+      continue;
+    }
+
+    Logger.log(`   ▶ Reprocesando "${asunto}" con ${processor.constructor.name}...`);
+    procesados++;
+
+    let resultado;
+    try {
+      resultado = processor.processSingleMessage(message, summaryReport);
+    } catch (e) {
+      Logger.log(`   ❌ Error crítico reprocesando "${asunto}": ${e.message} | Stack: ${e.stack}`);
+      resultado = { status: 'ERROR' };
+    }
+
+    const status = resultado ? resultado.status : 'ERROR';
+    const aplicado = etiquetarYMarcarProcesado(hilo, status);
+
+    if (aplicado.label === 'PROCESADO') {
+      Logger.log(`   ✅ "${asunto}" resuelto (${status}) -> pasa a ${OPS_LABEL_PROCESADO}.`);
+      resueltos++;
+    } else if (aplicado.label === 'PENDIENTE') {
+      Logger.log(`   🔁 "${asunto}" falló con un error reintentable (${status}) -> vuelve a ${OPS_LABEL_PENDIENTE} (intento ${aplicado.intentos}/${obtenerMaxReintentosPendiente()}). Lo retoma el ciclo automático.`);
+      vuelvenAPendiente++;
+    } else {
+      const motivo = aplicado.motivo === 'TOPE_REINTENTOS'
+        ? `agotó ${obtenerMaxReintentosPendiente()} reintentos`
+        : `fallo terminal (${status})`;
+      Logger.log(`   ❌ "${asunto}" se mantiene en ${OPS_LABEL_ERROR}: ${motivo}.`);
+      siguenEnError++;
+    }
+  }
+
+  if (typeof flushLogs === "function") flushLogs();
+
+  Logger.log(`\n=== RESULTADO: ${procesados} reprocesado(s) — ${resueltos} -> ${OPS_LABEL_PROCESADO}, ${vuelvenAPendiente} -> ${OPS_LABEL_PENDIENTE} (los retoma el ciclo automático), ${siguenEnError} siguen en ${OPS_LABEL_ERROR}, ${sinProcessor} sin processor identificado, ${omitidosPorFiltro.length} omitidos por filtro ===`);
+  if (summaryReport.errores.length > 0) {
+    Logger.log(`\n--- Detalle de errores/advertencias de esta corrida ---`);
+    summaryReport.errores.forEach(e => Logger.log(`   ${e.cliente || ""} | ${e.error} | ${e.detalle || ""}`));
+  }
+
+  return { procesados, resueltos, vuelvenAPendiente, siguenEnError, sinProcessor, omitidosPorFiltro };
+}
+
+// =================================================================
 // AUDITORÍA Y CIERRE DE TAREAS PROGRAMADAS
 // =================================================================
 
