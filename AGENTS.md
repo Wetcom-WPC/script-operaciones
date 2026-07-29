@@ -52,7 +52,7 @@ cuando corresponda — no hay automatización todavía).
   hacia `main` o `refactor-operaciones`** sin antes limpiar el historial —
   arrastrarían los secretos.
 
-## 3. Las dos reglas que no se negocian
+## 3. Las tres reglas que no se negocian
 
 ### Regla 1 — Nunca `clasp push` a producción sin aprobación humana explícita
 
@@ -69,6 +69,32 @@ El equipo edita seguido directo desde el editor de Apps Script en el
 navegador. Si no se hace `clasp pull` antes de tocar código, se corre el
 riesgo de pisar un cambio hecho ahí. Esto vale para **las cuatro carpetas**,
 no solo para Operativo.
+
+### Regla 3 — Todo push a Apps Script tiene que crear una versión
+
+`clasp push` escribe **solo sobre el borrador** (el *head*) y no deja ninguna
+marca en el Project History del editor. El 29/07/2026 se descubrió que una
+jornada entera de cambios en producción figuraba únicamente como
+"Current version": sin saber qué se había desplegado, ni cuándo, ni a qué punto
+volver. Las versiones son inmutables y son el único rollback real que existe.
+
+Por eso **no usar `clasp push` a secas**. Usar el script del proyecto:
+
+```bash
+./deploy.sh "Nicolas - Gire sin tickets de alerta + multi-mensaje por hilo"
+```
+
+Hace, en este orden: exige descripción → muestra el `scriptId` y pide
+confirmación escrita si es producción (Regla 1) → `node --check` de todos los
+`.js` → chequeo de declaraciones duplicadas (§4) → `clasp push` →
+`clasp create-version`. Si algo falla antes del push, no sube nada.
+
+La descripción arranca con el nombre de quien despliega: es la convención que ya
+venía usando el equipo (`clasp list-versions`). Nunca dejarla vacía — quedan como
+"No description" y no sirven para rastrear nada (ya hay varias así en producción).
+
+Ojo: `clasp` v3 sacó `clasp version`; ahora el comando es `clasp create-version`
+(con `version` como alias).
 
 ## 4. La trampa que ya rompió producción una vez — scope global de Apps Script
 
@@ -198,13 +224,17 @@ actuar, no asumir que todo lo pendiente hay que resolverlo.
    - Verificar sintaxis (`node --check archivo.js` sirve como chequeo rápido
      aunque el runtime real sea Apps Script V8) y ausencia de declaraciones
      duplicadas (sección 4).
-   - `clasp push` — **solo con confirmación explícita del usuario**.
+   - Desplegar con `./deploy.sh "Nombre - qué se despliega"` (ver Regla 3),
+     **solo con confirmación explícita del usuario**.
    - `clasp pull` de vuelta a una carpeta de verificación aparte y comparar
      contra lo que se pusheó, para confirmar que llegó como se esperaba.
 4. Commitear y pushear a `main`/`refactor-operaciones` en GitHub para dejar
    registro. Mensajes de commit multilínea: usar heredoc de bash
    (`git commit -m "$(cat <<'EOF' ... EOF)"`), nunca sintaxis de PowerShell
    (`@'...'@`) en un entorno bash — genera un commit con basura literal.
+
+El historial de Apps Script y el de GitHub tienen que contar la misma historia:
+por cada versión creada con `deploy.sh` debería haber un commit equivalente.
 
 ## 11. Herramientas manuales
 
