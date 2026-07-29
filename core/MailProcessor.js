@@ -151,6 +151,22 @@ class MailProcessor {
 
       clientName = clientConfig.clientName;
 
+      // Cliente marcado "Sin Tickets" en el Índice Maestro (columna Z de Sheet1, ver
+      // getClientConfig en core/ClientConfigService.js): sus reportes se archivan en Drive y
+      // cierran su Tarea Programada igual que cualquier otro cliente, pero NUNCA generan ni
+      // actualizan tickets de alerta. Es el caso de Gire (ver custom/CasoGire.js: un proceso
+      // aparte relee estos mismos archivos de Drive para armar un resumen filtrado por correo).
+      // Se resuelve acá, después de conocer el cliente real, para que aplique a CUALQUIER
+      // processor sin tener que duplicar cada uno con una variante "solo Drive" por cliente.
+      if (clientConfig.sinTickets) {
+        let resultadoSinTickets = this.ejecutarPasoDrive(message, clientName, summaryReport, { status: 'SUCCESS' });
+        if (this.scheduledTaskName && resultadoSinTickets.status === 'SUCCESS') {
+          resultadoSinTickets = this.cerrarTareaProgramadaSiCorresponde(clientConfig, summaryReport);
+        }
+        enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+        return this.aplicarFallosRegistrados(resultadoSinTickets, message, clientName, summaryReport);
+      }
+
       const parsedData = this.parseAttachment(attachment, summaryReport);
 
       // El parseo falló (parseAttachment devolvió null y ya dejó el error en summaryReport).

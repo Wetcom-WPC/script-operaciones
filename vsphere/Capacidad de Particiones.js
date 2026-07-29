@@ -43,6 +43,17 @@ class PartitionProcessor extends MailProcessor {
       return { status: 'ERROR' };
     }
 
+    // Cliente "Sin Tickets" (ver COL_SIN_TICKETS en core/ClientConfigService.js, ej. Gire):
+    // este processor sobrescribe processSingleMessage() por completo y nunca pasa por el guard
+    // equivalente de la clase base (core/MailProcessor.js), así que hay que repetirlo acá. Solo
+    // cierra la Tarea Programada, nunca crea ticket de alerta. No llama a ejecutarPasoDrive()
+    // porque este processor no archiva en Drive para NINGÚN cliente (ver E2E_TAREAS_SIN_PASO_DRIVE
+    // en tests/E2ETestHarness.js) — comportamiento previo, no relacionado con Gire.
+    if (clientConfig.sinTickets) {
+      if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+      return { status: 'SUCCESS' };
+    }
+
     let finalStatus = 'SUCCESS';
 
     attachments.forEach((attachment) => {
