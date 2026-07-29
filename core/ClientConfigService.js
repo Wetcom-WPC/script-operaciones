@@ -151,18 +151,6 @@ function procesarReglasExcepciones(rawExceptionData, exceptionSheet) {
   return groupedExceptions;
 }
 
-// Columna Z (índice 25) de Sheet1: "Sin Tickets de Alerta". Marca clientes cuyos reportes se
-// archivan en Drive y cierran su Tarea Programada como cualquier otro, pero JAMÁS generan ni
-// actualizan un ticket de alerta (ver el guard en MailProcessor.processSingleMessage, y el caso
-// real: Gire — custom/CasoGire.js relee esos mismos archivos de Drive para armar su propio
-// resumen filtrado por correo, así que no necesita tickets de Jira para eso).
-const COL_SIN_TICKETS = 25;
-
-/** @returns {boolean} true si la fila del Índice Maestro tiene marcado "Sin Tickets de Alerta". */
-function _esSinTickets(clientRow) {
-  return String(clientRow[COL_SIN_TICKETS] || "").trim().toUpperCase() === 'TRUE';
-}
-
 /**
  * Extrae y mapea el nombre del cliente DRP desde el asunto del correo.
  * @param {string} emailSubject Asunto del correo electrónico.
@@ -227,8 +215,7 @@ function getClientConfigByName(clientName, operationName, soporte = false) {
           jiraProjectKeySop = clientRow[13],
           serviceDeskIdSop = clientRow[14],
           clientNameSop = clientRow[15] != null ? String(clientRow[15]) : "",
-          requestTypeNameSop = clientRow[16],
-          sinTickets = _esSinTickets(clientRow);
+          requestTypeNameSop = clientRow[16];
 
     if (!clientNameFound || !jiraProjectKey || !serviceDeskId || !requestTypeName || !tecnologiaValue) {
       Logger.log(`ERROR: La configuración para "${clientNameFound}" (encontrado por nombre) está incompleta.`);
@@ -253,7 +240,7 @@ function getClientConfigByName(clientName, operationName, soporte = false) {
       if (soporte) {
         return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue };
       }
-      return { exceptions: {}, clientName: clientNameFound.trim(), jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue, sinTickets };
+      return { exceptions: {}, clientName: clientNameFound.trim(), jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue };
     }
 
     const groupedExceptions = procesarReglasExcepciones(rawExceptionData, exceptionSheet);
@@ -268,7 +255,7 @@ function getClientConfigByName(clientName, operationName, soporte = false) {
     return {
       exceptions: groupedExceptions, clientName: clientNameFound.trim(), jiraProjectKey: jiraProjectKey,
       serviceDeskId: serviceDeskId, requestTypeId: requestTypeId,
-      tecnologia: tecnologiaValue, origen: origenValue, sinTickets
+      tecnologia: tecnologiaValue, origen: origenValue
     };
   } catch (e) {
     Logger.log(`ERROR CRÍTICO DENTRO DE getClientConfigByName: ${e.message}`);
@@ -335,8 +322,7 @@ function getClientConfig(senderEmail, operationName, soporte = false) {
           jiraProjectKeySop = clientRow[13],
           serviceDeskIdSop = clientRow[14],
           requestTypeNameSop = clientRow[16],
-          clientNameSop = clientRow[15] != null ? String(clientRow[15]) : "",
-          sinTickets = _esSinTickets(clientRow);
+          clientNameSop = clientRow[15] != null ? String(clientRow[15]) : "";
 
     if (!clientName || !jiraProjectKey || !serviceDeskId || !requestTypeName || !tecnologiaValue) {
       Logger.log(`ERROR: La configuración para "${clientName}" (dominio ${domain}) está incompleta en el Índice Maestro.`);
@@ -358,7 +344,7 @@ function getClientConfig(senderEmail, operationName, soporte = false) {
     
     if (!exceptionSheet && !soporte) {
       Logger.log(`ADVERTENCIA: No se encontró la PESTAÑA de excepciones "${operationName}" en el archivo del cliente ${clientName}. Se continuará sin excepciones.`);
-      return { exceptions: {}, clientName, jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue, sinTickets };
+      return { exceptions: {}, clientName, jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue };
     } else if (!exceptionSheet && soporte) {
       Logger.log(`ADVERTENCIA: No se encontró la PESTAÑA de excepciones "${operationName}" en el archivo del cliente ${clientName}. Se continuará sin excepciones.`);
       return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue };
@@ -372,8 +358,8 @@ function getClientConfig(senderEmail, operationName, soporte = false) {
       };
     }
     return {
-      exceptions: groupedExceptions, clientName, jiraProjectKey, serviceDeskId,
-      requestTypeId, tecnologia: tecnologiaValue, origen: origenValue, sinTickets
+      exceptions: groupedExceptions, clientName, jiraProjectKey, serviceDeskId, 
+      requestTypeId, tecnologia: tecnologiaValue, origen: origenValue
     };
   } catch (e) {
     Logger.log(`ERROR CRÍTICO DENTRO DE getClientConfig: ${e.message}`);
