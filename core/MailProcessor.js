@@ -42,7 +42,7 @@ class MailProcessor {
     
     if (threads.length > 0) {
       for (const thread of threads) {
-        // --- TIME GUARD ---
+        // --- TIME GUARD (por hilo) ---
         if (!timeGuard.check(`Thread ${thread.getId()}`)) {
           summaryReport.advertencias.push({
             ticketKey: "N/A",
@@ -52,18 +52,49 @@ class MailProcessor {
           break; // Sale del loop limpiamente
         }
 
-        const message = thread.getMessages()[thread.getMessageCount() - 1];
-        try {
-          const result = this.processSingleMessage(message, summaryReport);
-          const status = result ? result.status : 'ERROR';
-          etiquetarYMarcarProcesado(thread, status);
-        } catch (e) {
-          summaryReport.errores.push({ 
-            error: `Error Crítico en Script: ${e.message}`, 
-            detalle: `Correo: "${message.getSubject()}" | Stack: ${e.stack}` 
-          });
-          etiquetarYMarcarProcesado(thread, 'ERROR');
+        // Procesamos TODOS los mensajes del hilo, no solo el último.
+        // Gmail puede agrupar en un mismo thread dos correos distintos con el mismo asunto
+        // (ej. un PDF y un XLSX de Veeam ONE enviados casi al mismo tiempo). Si solo tomábamos
+        // el último mensaje con getMessages()[getMessageCount()-1], los adjuntos del primero
+        // nunca llegaban a Drive aunque el hilo quedara marcado [OPS-PROCESADO].
+        const mensajesDelHilo = thread.getMessages();
+        let estadoFinalHilo = 'SUCCESS';
+
+        for (const message of mensajesDelHilo) {
+          // TimeGuard por mensaje: un hilo con muchos mensajes no debe agotar el tiempo.
+          if (!timeGuard.check(`Mensaje en hilo ${thread.getId()}`)) {
+            summaryReport.advertencias.push({
+              ticketKey: "N/A",
+              problema: "Límite de tiempo de ejecución alcanzado o margen <30s (TimeGuard).",
+              accion: "Se pausó la ejecución por seguridad. Los mensajes restantes de este hilo se procesarán en la próxima ejecución."
+            });
+            estadoFinalHilo = 'FAILURE'; // El hilo no está completo: no marcarlo como PROCESADO.
+            break;
+          }
+
+          try {
+            const result = this.processSingleMessage(message, summaryReport);
+            const status = result ? result.status : 'ERROR';
+            // El estado del hilo queda en el peor resultado de todos sus mensajes:
+            // ERROR_TERMINAL > ERROR > FAILURE/HTTP_500 > SUCCESS
+            if (status === 'ERROR_TERMINAL') {
+              estadoFinalHilo = 'ERROR_TERMINAL';
+            } else if (status === 'ERROR' && estadoFinalHilo !== 'ERROR_TERMINAL') {
+              estadoFinalHilo = 'ERROR';
+            } else if ((status === 'FAILURE' || status === 'HTTP_500') && estadoFinalHilo === 'SUCCESS') {
+              estadoFinalHilo = status;
+            }
+            // SUCCESS y NO_OP no degradan el estado acumulado.
+          } catch (e) {
+            summaryReport.errores.push({
+              error: `Error Crítico en Script: ${e.message}`,
+              detalle: `Correo: "${message.getSubject()}" | Stack: ${e.stack}`
+            });
+            if (estadoFinalHilo !== 'ERROR_TERMINAL') estadoFinalHilo = 'ERROR';
+          }
         }
+
+        etiquetarYMarcarProcesado(thread, estadoFinalHilo);
       }
     }
     

@@ -299,7 +299,50 @@ function doesJiraTicketExist(ticketKey) {
   } catch (e) { return false; }
 }
 
+/**
+ * HOTFIX (29/07/2026) — Clientes cuyos reportes NUNCA generan tickets de alerta.
+ *
+ * Caso Gire: sus reportes se archivan en Drive y cierran su Tarea Programada como los de
+ * cualquier otro cliente, pero no abren ni actualizan tickets de anomalía. Un proceso aparte
+ * (custom/CasoGire.js) relee esos mismos archivos de Drive para armar el resumen filtrado que
+ * se le manda por correo, así que los tickets de Jira serían ruido puro.
+ *
+ * Está hardcodeado A PROPÓSITO y no leído del Índice Maestro: se desplegó sin ventana de
+ * pruebas y una lista en código es verificable de un vistazo, mientras que una columna nueva
+ * en la hoja puede quedar mal alineada y apagar los tickets del cliente equivocado en silencio
+ * (ver el intento previo con COL_SIN_TICKETS, que apuntaba a "Mail Tanzu Enviado"). Cuando haya
+ * tiempo de probarlo, moverlo al Índice Maestro con su propia columna y un test que la valide.
+ *
+ * El guard vive acá, en las TRES funciones que crean tickets, y no en los processors: los 30
+ * puntos del código que crean tickets pasan sí o sí por alguna de ellas, incluidos los 9
+ * processors que sobrescriben processSingleMessage() y que un guard en la clase base no
+ * alcanzaría.
+ */
+const CLIENTES_SIN_TICKETS_DE_ALERTA = ["operaciones gire"];
+
+/**
+ * @param {Object} clientConfig Configuración del cliente (normal o de soporte).
+ * @returns {boolean} true si a este cliente no se le deben crear tickets de alerta.
+ */
+function esClienteSinTicketsDeAlerta(clientConfig) {
+  if (!clientConfig) return false;
+  const nombre = String(clientConfig.clientName || clientConfig.clientNameSop || "").trim().toLowerCase();
+  if (!nombre) return false;
+  return CLIENTES_SIN_TICKETS_DE_ALERTA.indexOf(nombre) !== -1;
+}
+
+/** Respuesta uniforme del guard: se reporta como éxito para no ensuciar el hilo ni el resumen. */
+function _omitirTicketPorClienteSinTickets(summary, clientConfig) {
+  const nombre = (clientConfig && (clientConfig.clientName || clientConfig.clientNameSop)) || "?";
+  Logger.log(`[Jira] Cliente "${nombre}" está marcado sin tickets de alerta: NO se crea ni actualiza ticket para "${summary}". El reporte igual se archiva en Drive y su Tarea Programada se cierra normalmente.`);
+  return { status: 'SUCCESS', detail: { mensaje: `Cliente "${nombre}": ticket de alerta omitido a propósito (sin tickets de alerta).` } };
+}
+
 function createTicketAndNotify(summary, description, attachmentBlob, clientConfig, operationName) {
+  if (esClienteSinTicketsDeAlerta(clientConfig)) {
+    return _omitirTicketPorClienteSinTickets(summary, clientConfig);
+  }
+
   // --- NUEVO: evita crear tickets duplicados en reintentos (ej. tras un HTTP 500 al adjuntar) ---
   const existingTicketKey = findExistingJiraTicket(summary, clientConfig.jiraProjectKey);
   if (existingTicketKey) {
@@ -369,6 +412,10 @@ function createTicketAndNotify(summary, description, attachmentBlob, clientConfi
 }
 
 function createTicketCOMAFI(summary, description, attachmentBlob, clientConfig) {
+  if (esClienteSinTicketsDeAlerta(clientConfig)) {
+    return _omitirTicketPorClienteSinTickets(summary, clientConfig);
+  }
+
   const issue = createJiraTicketForCOM(summary, description, clientConfig);
   if (issue && issue.issueKey) {
     if (attachmentBlob) {
@@ -433,6 +480,10 @@ function createJiraTicketForCOM(summary, description, clientConfig) {
 }
 
 function createTicketAndNotifySoporte(summary, description, attachmentBlob, clientConfig) {
+  if (esClienteSinTicketsDeAlerta(clientConfig)) {
+    return _omitirTicketPorClienteSinTickets(summary, clientConfig);
+  }
+
   const issue = createJiraTicketForSoporte(summary, description, clientConfig);
   if (issue && issue.issueKey) {
     if (attachmentBlob) {
