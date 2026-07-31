@@ -223,14 +223,18 @@ function runAllTests() {
   try {
     const configFalsa = { clientName: "Cliente Test", jiraProjectKey: "TEST" };
 
-    // Correo falso: no toca Gmail, solo expone lo que usa processSingleMessage.
     const mensajeFalso = function (nombresAdjuntos) {
       return {
         getSubject: function () { return "Reporte de prueba"; },
         getFrom: function () { return "reportes@dominio-inexistente.test"; },
         getAttachments: function () {
           return nombresAdjuntos.map(function (n) {
-            return { getName: function () { return n; }, getContentType: function () { return "text/csv"; } };
+            const attMock = { 
+              getName: function () { return n; }, 
+              getContentType: function () { return "text/csv"; } 
+            };
+            attMock.copyBlob = function() { return attMock; }; // Mock para MailProcessor.findAttachment
+            return attMock;
           });
         }
       };
