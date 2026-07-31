@@ -337,13 +337,33 @@ class MailProcessor {
   // ==========================================
 
   findAttachment(message) {
-    return message.getAttachments().find(att => {
+    let filesToEvaluate = [];
+
+    // Primero extraemos los blobs de los adjuntos, descomprimiendo si es necesario.
+    message.getAttachments().forEach(att => {
+      const attNameLower = att.getName().toLowerCase();
+      if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
+        try {
+          const unzippedBlobs = Utilities.unzip(att.copyBlob());
+          filesToEvaluate = filesToEvaluate.concat(unzippedBlobs);
+        } catch(e) { 
+          Logger.log(`Error descomprimiendo ${att.getName()}: ${e.message}`);
+        }
+      } else {
+        filesToEvaluate.push(att.copyBlob());
+      }
+    });
+
+    // Luego buscamos el archivo que coincida entre todos los extraídos/originales
+    return filesToEvaluate.find(att => {
       const nameLower = att.getName().toLowerCase().replace(/-/g, ' ');
       const matchLower = this.attachmentMatch ? this.attachmentMatch.toLowerCase().replace(/-/g, ' ') : '';
       const nameMatch = this.attachmentMatch ? nameLower.includes(matchLower) : true;
       
       // Robustez para tipos de archivo CSV, Excel (.xlsx, .xls), JSON y TXT
-      const contentType = att.getContentType().toLowerCase();
+      // Nota: Los blobs extraídos de un ZIP pueden tener contentTypes genéricos, 
+      // por lo que las comprobaciones de extensión son fundamentales.
+      const contentType = (att.getContentType && typeof att.getContentType === 'function') ? att.getContentType().toLowerCase() : "";
       const typeMatch = contentType.includes("csv") || 
                         contentType.includes("excel") || 
                         contentType.includes("spreadsheet") || 
