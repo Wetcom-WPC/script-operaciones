@@ -61,6 +61,13 @@ class MailProcessor {
         let estadoFinalHilo = 'SUCCESS';
 
         for (const message of mensajesDelHilo) {
+          // HOTFIX: Procesar solo los correos nuevos que acaban de llegar (marcados como no leídos).
+          // Evita reprocesar todo el historial de un hilo enorme cada vez que llega uno nuevo, lo que
+          // causaba el crash (Server error) por agotar la memoria al abrir docenas de archivos Excel.
+          if (!message.isUnread()) {
+            continue;
+          }
+
           // TimeGuard por mensaje: un hilo con muchos mensajes no debe agotar el tiempo.
           if (!timeGuard.check(`Mensaje en hilo ${thread.getId()}`)) {
             summaryReport.advertencias.push({
