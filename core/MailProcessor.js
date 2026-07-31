@@ -61,9 +61,8 @@ class MailProcessor {
         let estadoFinalHilo = 'SUCCESS';
 
         for (const message of mensajesDelHilo) {
-          // HOTFIX: Procesar solo los correos nuevos que acaban de llegar (marcados como no leídos).
-          // Evita reprocesar todo el historial de un hilo enorme cada vez que llega uno nuevo, lo que
-          // causaba el crash (Server error) por agotar la memoria al abrir docenas de archivos Excel.
+          // Procesamos solo los correos nuevos que acaban de llegar (marcados como no leídos).
+          // Evita reprocesar todo el historial de un hilo enorme cada vez que llega uno nuevo.
           if (!message.isUnread()) {
             continue;
           }
@@ -93,9 +92,9 @@ class MailProcessor {
             }
             // SUCCESS y NO_OP no degradan el estado acumulado.
           } catch (e) {
-            summaryReport.errores.push({
-              error: `Error Crítico en Script: ${e.message}`,
-              detalle: `Correo: "${message.getSubject()}" | Stack: ${e.stack}`
+            summaryReport.errores.push({ 
+              error: `Error Crítico en Script: ${e.message}`, 
+              detalle: `Correo: "${message.getSubject()}" | Stack: ${e.stack}` 
             });
             if (estadoFinalHilo !== 'ERROR_TERMINAL') estadoFinalHilo = 'ERROR';
           }
@@ -316,7 +315,8 @@ class MailProcessor {
   ejecutarPasoDrive(message, clientName, summaryReport, resultadoTickets) {
     if (!this.requierePaso('drive')) return resultadoTickets;
 
-    const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName);
+    const blobsToUpload = this.extractedBlobs || null;
+    const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName, blobsToUpload);
 
     if (resultadoDrive.ok) {
       if (resultadoDrive.subidos.length > 0) {
@@ -344,13 +344,34 @@ class MailProcessor {
   // ==========================================
 
   findAttachment(message) {
-    return message.getAttachments().find(att => {
+    this.extractedBlobs = [];
+
+    // Primero extraemos los blobs de los adjuntos, descomprimiendo si es necesario.
+    message.getAttachments().forEach(att => {
+      const attNameLower = att.getName().toLowerCase();
+      if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
+        try {
+          const unzippedBlobs = Utilities.unzip(att.copyBlob());
+          this.extractedBlobs = this.extractedBlobs.concat(unzippedBlobs);
+        } catch(e) { 
+          Logger.log(`Error descomprimiendo ${att.getName()}: ${e.message}`);
+          this.extractedBlobs.push(att.copyBlob()); // Fallback si falla unzip
+        }
+      } else {
+        this.extractedBlobs.push(att.copyBlob());
+      }
+    });
+
+    // Luego buscamos el archivo que coincida entre todos los extraídos/originales
+    return this.extractedBlobs.find(att => {
       const nameLower = att.getName().toLowerCase().replace(/-/g, ' ');
       const matchLower = this.attachmentMatch ? this.attachmentMatch.toLowerCase().replace(/-/g, ' ') : '';
       const nameMatch = this.attachmentMatch ? nameLower.includes(matchLower) : true;
       
       // Robustez para tipos de archivo CSV, Excel (.xlsx, .xls), JSON y TXT
-      const contentType = att.getContentType().toLowerCase();
+      // Nota: Los blobs extraídos de un ZIP pueden tener contentTypes genéricos, 
+      // por lo que las comprobaciones de extensión son fundamentales.
+      const contentType = (att.getContentType && typeof att.getContentType === 'function') ? att.getContentType().toLowerCase() : "";
       const typeMatch = contentType.includes("csv") || 
                         contentType.includes("excel") || 
                         contentType.includes("spreadsheet") || 
