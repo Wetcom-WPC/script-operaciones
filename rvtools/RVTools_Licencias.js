@@ -15,7 +15,17 @@ const LICENSE_TAB_NAME = "vLicense";
 const DIAS_UMBRAL_VENCIMIENTO = 90; // <---------------- ⚠️ Umbral para disparar el aviso.
 
 // Límite de seguridad de Google: 4.5 minutos (270,000 ms). Max permitido es 6 min.
-const MAX_TIEMPO_EJECUCION = 270000; 
+const MAX_TIEMPO_EJECUCION = 270000;
+
+// --- CONTROL DE CONCURRENCIA E IDEMPOTENCIA ---
+// Si dos triggers 'gatilloDiarioGuardián' conviven (uno por cada usuario que corrió
+// el instalador), ambos disparan el mismo día y duplican los mails. Estas marcas
+// garantizan un único ciclo por mes y un único mail por cliente por ciclo.
+const PROP_CICLO      = 'LICENCIAS_CICLO';     // "yyyy-MM" del ciclo ya iniciado
+const PROP_ENVIADOS   = 'LICENCIAS_ENVIADOS';  // clientes ya notificados en el ciclo
+const PROP_BOOKMARK   = 'LICENCIAS_BOOKMARK';
+const PROP_REPORTE    = 'LICENCIAS_REPORT';
+const LOCK_ESPERA_MS  = 5000;                  // no encolamos: si otro corre, abortamos
 
 /**
  * =================================================================
@@ -23,13 +33,10 @@ const MAX_TIEMPO_EJECUCION = 270000;
  * =================================================================
  */
 
-// 1. Ejecución Manual On-Demand (Ignora el calendario)
+// 1. Ejecución Manual On-Demand (Ignora el calendario y la marca de ciclo)
 function ejecutarManual() {
   console.log("🚀 Iniciando ejecución manual...");
-  limpiarTriggersContinuacion(); 
-  PropertiesService.getScriptProperties().deleteProperty('LICENCIAS_BOOKMARK');
-  PropertiesService.getScriptProperties().deleteProperty('LICENCIAS_REPORT');
-  procesarTodasLasLicencias();
+  procesarTodasLasLicencias({ nuevoCiclo: true, forzar: true });
 }
 
 // 2. Instalador del Trigger (Ahora es DIARIO)
@@ -40,16 +47,44 @@ function instalarTriggerMensual() {
   });
   ScriptApp.newTrigger('gatilloDiarioGuardián').timeBased().everyDays(1).atHour(7).create();
   console.log("✅ Trigger Diario (Guardián) instalado a las 7 AM.");
+  console.warn("⚠️ getProjectTriggers() sólo ve los triggers de TU usuario. Si otra persona " +
+               "instaló el suyo, sigue vivo y va a duplicar la corrida. Revisá Activadores > " +
+               "columna 'Propiedad de'; el dueño tiene que borrarlo desde su cuenta.");
+}
+
+/**
+ * Diagnóstico: cuántos 'gatilloDiarioGuardián' veo con mi usuario.
+ * Sirve para chequear el estado sin tocar nada.
+ */
+function auditarTriggersLicencias() {
+  const mios = ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'gatilloDiarioGuardián');
+  console.log(`🔎 Triggers 'gatilloDiarioGuardián' visibles con MI usuario: ${mios.length}`);
+  console.log("⚠️ Los de otros usuarios NO aparecen acá. Verificalos en la UI (Activadores).");
+
+  const props = PropertiesService.getScriptProperties();
+  console.log(`📌 Ciclo registrado: ${props.getProperty(PROP_CICLO) || "(ninguno)"}`);
+  console.log(`📌 Marcapáginas: ${props.getProperty(PROP_BOOKMARK) || "(ninguno)"}`);
+  const enviados = leerEnviados(props);
+  console.log(`📌 Clientes ya notificados en el ciclo: ${enviados.size}`);
+}
+
+/**
+ * Borra el estado del ciclo. Usar sólo si hay que rehacer una auditoría
+ * desde cero dentro del mismo mes.
+ */
+function resetearCicloLicencias() {
+  const props = PropertiesService.getScriptProperties();
+  [PROP_CICLO, PROP_BOOKMARK, PROP_REPORTE, PROP_ENVIADOS].forEach(p => props.deleteProperty(p));
+  limpiarTriggersContinuacion();
+  console.log("🧹 Estado del ciclo reseteado. La próxima corrida arranca de cero.");
 }
 
 // 3. El Guardián (Se ejecuta todos los días pero solo avanza el último día hábil)
 function gatilloDiarioGuardián() {
   if (esUltimoDiaHabilMes()) {
     console.log("📅 HOY ES EL ÚLTIMO DÍA HÁBIL DEL MES. Iniciando auditoría global...");
-    limpiarTriggersContinuacion();
-    PropertiesService.getScriptProperties().deleteProperty('LICENCIAS_BOOKMARK');
-    PropertiesService.getScriptProperties().deleteProperty('LICENCIAS_REPORT');
-    procesarTodasLasLicencias();
+    procesarTodasLasLicencias({ nuevoCiclo: true });
   } else {
     console.log("💤 Hoy no es el último día hábil del mes. Abortando ejecución.");
   }
@@ -58,8 +93,7 @@ function gatilloDiarioGuardián() {
 // 4. El Resucitador (Usado cuando el script se corta por Time-Out)
 function continuarProcesamiento() {
   console.log("🔄 Reanudando procesamiento desde el marcapáginas...");
-  limpiarTriggersContinuacion(); 
-  procesarTodasLasLicencias();
+  procesarTodasLasLicencias({ nuevoCiclo: false });
 }
 
 // 5. Puente Front-End (BotonCheckbox)
@@ -82,71 +116,154 @@ function procesarLicenciasManualLibreria(cliente, destinatario, folderId, pod) {
  * =================================================================
  */
 
-function procesarTodasLasLicencias() {
+/**
+ * Motor. Protegido por candado de script: nunca corren dos instancias a la vez.
+ * @param {{nuevoCiclo:boolean, forzar:boolean}} opciones
+ *   nuevoCiclo: arranca el lote desde cero (lo usa el gatillo diario y el manual).
+ *   forzar: ignora la marca de "este mes ya se corrió" (sólo ejecución manual).
+ */
+function procesarTodasLasLicencias(opciones) {
+  const opts = opciones || { nuevoCiclo: false, forzar: false };
   const tiempoInicio = Date.now();
   const props = PropertiesService.getScriptProperties();
-  
-  let ss;
-  try {
-    ss = SpreadsheetApp.openById(ID_HOJA_CONFIGURACION);
-  } catch (e) {
-    console.error("❌ Error: No se pudo abrir el Índice General.");
+
+  // ── CANDADO ──────────────────────────────────────────────────────────────
+  // Sin esto, dos triggers que disparan con minutos de diferencia se pisan:
+  // el segundo borra el marcapáginas del primero y reenvía todo desde la fila 1.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(LOCK_ESPERA_MS)) {
+    console.warn("🔒 Ya hay otra ejecución del motor de licencias en curso. " +
+                 "Esta se aborta para no duplicar mails.");
     return;
   }
-  const hoja = ss.getSheetByName(NOMBRE_PESTANA_CONFIG);
-  if (!hoja) return;
-  const datos = hoja.getDataRange().getValues();
-  
-  let indexInicial = parseInt(props.getProperty('LICENCIAS_BOOKMARK')) || 1;
-  let summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
-  
-  const reporteGuardado = props.getProperty('LICENCIAS_REPORT');
-  if (reporteGuardado) {
-    summaryReport = JSON.parse(reporteGuardado);
-  }
 
-  const clientesValidos = datos.slice(1).filter(row => row[0] && row[2] && row[3]);
-  const totalClientes = clientesValidos.length;
-  
-  if (indexInicial === 1) {
-    console.log(`📋 Iniciando lote nuevo: ${totalClientes} clientes configurados.`);
-  }
+  try {
+    const ciclo = cicloActual();
 
-  let clientesProcesadosEsteLote = 0;
-
-  for (let i = indexInicial; i < datos.length; i++) {
-    if (Date.now() - tiempoInicio > MAX_TIEMPO_EJECUCION) {
-      console.warn(`⏳ TIEMPO LÍMITE ALCANZADO (Fila ${i}). Guardando marcapáginas y reiniciando en 1 minuto...`);
-      props.setProperty('LICENCIAS_BOOKMARK', i.toString());
-      props.setProperty('LICENCIAS_REPORT', JSON.stringify(summaryReport));
-      
-      ScriptApp.newTrigger('continuarProcesamiento')
-        .timeBased()
-        .after(60 * 1000) 
-        .create();
-      
-      return; 
+    // ── GUARD DE CICLO ─────────────────────────────────────────────────────
+    // Si hay más de un 'gatilloDiarioGuardián' instalado (uno por usuario),
+    // el segundo entra acá y se va sin mandar nada.
+    if (opts.nuevoCiclo) {
+      if (!opts.forzar && props.getProperty(PROP_CICLO) === ciclo) {
+        console.warn(`🛑 El ciclo ${ciclo} ya fue iniciado por otra ejecución ` +
+                     `(trigger duplicado). Abortando para no reenviar mails.`);
+        return;
+      }
+      console.log(`🆕 Arrancando ciclo ${ciclo}.`);
+      limpiarTriggersContinuacion();
+      props.setProperty(PROP_CICLO, ciclo);
+      props.deleteProperty(PROP_BOOKMARK);
+      props.deleteProperty(PROP_REPORTE);
+      props.deleteProperty(PROP_ENVIADOS);
     }
 
-    const emailDestino = datos[i][0]; 
-    const pod = datos[i][1];
-    const cliente = datos[i][2];      
-    const folderId = datos[i][3];     
-    
-    if (!cliente || !emailDestino || !folderId) continue;
-    
-    clientesProcesadosEsteLote++;
-    console.log(`\n🔎 Procesando fila ${i} - Cliente: ${cliente} (POD: ${pod})...`);
-    procesarInfraestructuraCliente(cliente, emailDestino, folderId, pod, summaryReport);
+    let ss;
+    try {
+      ss = SpreadsheetApp.openById(ID_HOJA_CONFIGURACION);
+    } catch (e) {
+      console.error("❌ Error: No se pudo abrir el Índice General.");
+      return;
+    }
+    const hoja = ss.getSheetByName(NOMBRE_PESTANA_CONFIG);
+    if (!hoja) return;
+    const datos = hoja.getDataRange().getValues();
+
+    let indexInicial = parseInt(props.getProperty(PROP_BOOKMARK)) || 1;
+    let summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
+
+    const reporteGuardado = props.getProperty(PROP_REPORTE);
+    if (reporteGuardado) {
+      summaryReport = JSON.parse(reporteGuardado);
+    }
+
+    const enviados = leerEnviados(props);
+
+    const clientesValidos = datos.slice(1).filter(row => row[0] && row[2] && row[3]);
+    const totalClientes = clientesValidos.length;
+
+    if (indexInicial === 1) {
+      console.log(`📋 Iniciando lote nuevo: ${totalClientes} clientes configurados.`);
+    } else {
+      console.log(`📋 Reanudando en la fila ${indexInicial} (${enviados.size} clientes ya notificados).`);
+    }
+
+    for (let i = indexInicial; i < datos.length; i++) {
+      if (Date.now() - tiempoInicio > MAX_TIEMPO_EJECUCION) {
+        console.warn(`⏳ TIEMPO LÍMITE ALCANZADO (Fila ${i}). Guardando marcapáginas y reiniciando en 1 minuto...`);
+        props.setProperty(PROP_BOOKMARK, i.toString());
+        props.setProperty(PROP_REPORTE, JSON.stringify(summaryReport));
+
+        ScriptApp.newTrigger('continuarProcesamiento')
+          .timeBased()
+          .after(60 * 1000)
+          .create();
+
+        return;
+      }
+
+      const emailDestino = datos[i][0];
+      const pod = datos[i][1];
+      const cliente = datos[i][2];
+      const folderId = datos[i][3];
+
+      if (!cliente || !emailDestino || !folderId) continue;
+
+      // ── IDEMPOTENCIA ─────────────────────────────────────────────────────
+      // Red de seguridad: aunque algo reprocese este rango, no se reenvía.
+      const marca = `${i}|${cliente}`;
+      if (enviados.has(marca)) {
+        console.log(`↩️ Fila ${i} - ${cliente}: ya notificado en este ciclo. Se omite.`);
+        continue;
+      }
+
+      console.log(`\n🔎 Procesando fila ${i} - Cliente: ${cliente} (POD: ${pod})...`);
+      const erroresAntes = summaryReport.errores.length;
+      procesarInfraestructuraCliente(cliente, emailDestino, folderId, pod, summaryReport);
+
+      // Sólo marcamos como enviado si no hubo error: un cliente fallido puede reintentarse.
+      if (summaryReport.errores.length === erroresAntes) {
+        enviados.add(marca);
+        guardarEnviados(props, enviados);
+      }
+
+      // Avanzamos el marcapáginas DESPUÉS de cada cliente. Antes sólo se escribía
+      // en el corte blando, así que un corte duro de Google reprocesaba el lote entero.
+      props.setProperty(PROP_BOOKMARK, (i + 1).toString());
+      props.setProperty(PROP_REPORTE, JSON.stringify(summaryReport));
+    }
+
+    console.log("\n🏁 CICLO DE AUDITORÍA TOTALMENTE FINALIZADO.");
+    props.deleteProperty(PROP_BOOKMARK);
+    props.deleteProperty(PROP_REPORTE);
+    props.deleteProperty(PROP_ENVIADOS);
+    // PROP_CICLO se conserva: es la marca de que este mes ya se auditó.
+
+    if (typeof enviarResumenSlack === "function" && (summaryReport.errores.length > 0 || summaryReport.exitos.length > 0)) {
+      enviarResumenSlack(LICENCIAS_OPERATION_NAME, summaryReport);
+    }
+  } finally {
+    lock.releaseLock();
   }
-  
-  console.log("\n🏁 CICLO DE AUDITORÍA TOTALMENTE FINALIZADO.");
-  props.deleteProperty('LICENCIAS_BOOKMARK');
-  props.deleteProperty('LICENCIAS_REPORT');
-  
-  if (typeof enviarResumenSlack === "function" && (summaryReport.errores.length > 0 || summaryReport.exitos.length > 0)) {
-    enviarResumenSlack(LICENCIAS_OPERATION_NAME, summaryReport);
+}
+
+/** Identificador del ciclo mensual, "yyyy-MM" en la zona horaria del script. */
+function cicloActual() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM");
+}
+
+/** Set de marcas "fila|cliente" ya notificadas en el ciclo en curso. */
+function leerEnviados(props) {
+  try {
+    const raw = props.getProperty(PROP_ENVIADOS);
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch (e) {
+    console.warn("⚠️ No se pudo leer la marca de enviados, se asume vacía: " + e.message);
+    return new Set();
   }
+}
+
+function guardarEnviados(props, set) {
+  props.setProperty(PROP_ENVIADOS, JSON.stringify(Array.from(set)));
 }
 
 function procesarInfraestructuraCliente(cliente, emailDestino, rootFolderId, pod, summaryReport) {
@@ -231,7 +348,7 @@ function procesarInfraestructuraCliente(cliente, emailDestino, rootFolderId, pod
     let licenciasUnicas = [];
     let setDuplicados = new Set();
     todasLasLicenciasCliente.forEach(lic => {
-      let key = `${lic.sitio}|${lic.nombre}|${lic.vencimiento}|${lic.usadas}`;
+      let key = `${lic.sitio}|${lic.clave}|${lic.nombre}|${lic.vencimiento}|${lic.usadas}`;
       if (!setDuplicados.has(key)) {
         setDuplicados.add(key);
         licenciasUnicas.push(lic);
@@ -360,6 +477,13 @@ function obtenerSitio(spreadsheet) {
 
 function interpretarFecha(val) {
   if (!val) return null;
+
+  // El valor crudo de una celda de fecha ya llega como Date, así que no hay que
+  // adivinar si "05/06/2028" es 5 de junio o 6 de mayo.
+  if (Object.prototype.toString.call(val) === "[object Date]") {
+    return isNaN(val.getTime()) ? null : { obj: new Date(val.getTime()) };
+  }
+
   let str = String(val).trim();
   let dateOnly = str.split(" ")[0]; 
   let parts = dateOnly.split(/[\/\-]/);
@@ -379,12 +503,37 @@ function interpretarFecha(val) {
   return null;
 }
 
+/**
+ * Devuelve el número real de una celda.
+ * Prioriza el valor crudo: getDisplayValues() aplica separador de miles
+ * ("1.272") y parseInt lo truncaría a 1.
+ */
+function normalizarNumero(valorCrudo, valorMostrado) {
+  if (typeof valorCrudo === "number" && !isNaN(valorCrudo)) return valorCrudo;
+  const s = (valorMostrado === null || valorMostrado === undefined) ? "" : valorMostrado.toString().trim();
+  if (s === "" || !/\d/.test(s)) return 0; // "Unlimited", "N/A", vacío...
+  const n = parseInt(s.replace(/[^\d-]/g, ""), 10);
+  return isNaN(n) ? 0 : n;
+}
+
+/**
+ * Formatea el consumo para el reporte con separador de miles.
+ */
+function formatearNumero(n) {
+  if (typeof n !== "number" || isNaN(n)) return String(n);
+  const partes = n.toString().split(".");
+  partes[0] = partes[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return partes.length > 1 ? `${partes[0]},${partes[1]}` : partes[0];
+}
+
 function analizarPestanaLicencias(spreadsheet) {
   const sitioEncontrado = obtenerSitio(spreadsheet); 
   const sheet = spreadsheet.getSheetByName(LICENSE_TAB_NAME);
   if (!sheet) return [];
   
-  const data = sheet.getDataRange().getDisplayValues();
+  const rango = sheet.getDataRange();
+  const data = rango.getDisplayValues(); // texto ya formateado (nombres, fechas legibles)
+  const crudo = rango.getValues();       // valores reales: números sin separador de miles, fechas como Date
   if (data.length < 2) return [];
   
   const headers = data[0].map(h => h.toString().toLowerCase().trim());
@@ -393,6 +542,7 @@ function analizarPestanaLicencias(spreadsheet) {
   const idxUsed = headers.findIndex(h => h === "used" || h.includes("used licenses") || h === "count");
   const idxTotal = headers.findIndex(h => h === "total" || h.includes("capacity"));
   const idxCostUnit = headers.findIndex(h => h.includes("cost unit"));
+  const idxKey = headers.findIndex(h => h === "key" || h.includes("license key"));
 
   if (idxName === -1 || idxExpiration === -1 || idxUsed === -1) return [];
   
@@ -400,9 +550,14 @@ function analizarPestanaLicencias(spreadsheet) {
   hoy.setHours(0,0,0,0);
   const todasLasLicencias = [];
   
-  data.slice(1).forEach(row => {
-    let rawUsed = row[idxUsed] ? row[idxUsed].toString().trim() : "0";
-    const used = parseInt(rawUsed, 10) || 0;
+  data.slice(1).forEach((row, i) => {
+    const filaCruda = crudo[i + 1];
+
+    // RVTools deja celdas sueltas debajo de la tabla; sin nombre no es una licencia real.
+    const nombreLic = (row[idxName] || "").toString().trim();
+    if (!nombreLic) return;
+
+    const used = normalizarNumero(filaCruda[idxUsed], row[idxUsed]);
     
     let rawExp = row[idxExpiration] ? row[idxExpiration].toString().trim() : "";
     let valStr = rawExp.toLowerCase();
@@ -413,7 +568,7 @@ function analizarPestanaLicencias(spreadsheet) {
       if (valStr.includes("expir") || valStr.includes("vencid")) {
         diasRestantes = -1; 
       } else {
-        let expDate = interpretarFecha(rawExp); 
+        let expDate = interpretarFecha(filaCruda[idxExpiration] || rawExp); 
         if (expDate) {
           expDate.obj.setHours(0, 0, 0, 0); 
           diasRestantes = Math.ceil((expDate.obj.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
@@ -423,7 +578,8 @@ function analizarPestanaLicencias(spreadsheet) {
 
     todasLasLicencias.push({
       sitio: sitioEncontrado,
-      nombre: row[idxName] || "Desconocido",
+      clave: idxKey !== -1 ? (row[idxKey] || "") : "",
+      nombre: nombreLic,
       vencimiento: rawExp, 
       diasRestantes: diasRestantes,
       usadas: used,
@@ -517,7 +673,7 @@ function enviarAlertaLicencias(cliente, destinatarioRaw, todasLasLicencias) {
         <td style="padding: 10px; border: 1px solid #ddd;">${a.nombre}</td>
         <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #d9534f;"><b>${a.vencimiento}</b></td>
         <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #d9534f;"><b>VENCIDA</b></td>
-        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${a.usadas} de ${a.total} (${a.metrica})</td>
+        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${formatearNumero(a.usadas)} de ${a.total} (${a.metrica})</td>
       </tr>`;
     });
     cuerpoHtml += `</table></div>`;
@@ -544,7 +700,7 @@ function enviarAlertaLicencias(cliente, destinatarioRaw, todasLasLicencias) {
         <td style="padding: 10px; border: 1px solid #ddd;">${a.nombre}</td>
         <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${a.vencimiento}</td>
         <td style="padding: 10px; border: 1px solid #ddd; text-align: center; color: #d9534f;"><b>${a.diasRestantes}</b></td>
-        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${a.usadas} de ${a.total} (${a.metrica})</td>
+        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${formatearNumero(a.usadas)} de ${a.total} (${a.metrica})</td>
       </tr>`;
     });
     cuerpoHtml += `</table></div>`;
@@ -578,7 +734,7 @@ function enviarAlertaLicencias(cliente, destinatarioRaw, todasLasLicencias) {
         <td style="padding: 10px; border: 1px solid #ddd;">${a.nombre}</td>
         <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${a.vencimiento}</td>
         <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${diasDisplay}</td>
-        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${a.usadas} de ${a.total} (${a.metrica})</td>
+        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${formatearNumero(a.usadas)} de ${a.total} (${a.metrica})</td>
       </tr>`;
     });
 
@@ -589,7 +745,7 @@ function enviarAlertaLicencias(cliente, destinatarioRaw, todasLasLicencias) {
         <td style="padding: 10px; border: 1px solid #ddd;">${a.nombre}</td>
         <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${a.vencimiento}</td>
         <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${diasDisplay}</td>
-        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${a.usadas} de ${a.total} (${a.metrica})</td>
+        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${formatearNumero(a.usadas)} de ${a.total} (${a.metrica})</td>
       </tr>`;
     });
     cuerpoHtml += `</table></div>`;
