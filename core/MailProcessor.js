@@ -309,7 +309,8 @@ class MailProcessor {
   ejecutarPasoDrive(message, clientName, summaryReport, resultadoTickets) {
     if (!this.requierePaso('drive')) return resultadoTickets;
 
-    const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName);
+    const blobsToUpload = this.extractedBlobs || null;
+    const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName, blobsToUpload);
 
     if (resultadoDrive.ok) {
       if (resultadoDrive.subidos.length > 0) {
@@ -337,7 +338,7 @@ class MailProcessor {
   // ==========================================
 
   findAttachment(message) {
-    let filesToEvaluate = [];
+    this.extractedBlobs = [];
 
     // Primero extraemos los blobs de los adjuntos, descomprimiendo si es necesario.
     message.getAttachments().forEach(att => {
@@ -345,17 +346,18 @@ class MailProcessor {
       if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
         try {
           const unzippedBlobs = Utilities.unzip(att.copyBlob());
-          filesToEvaluate = filesToEvaluate.concat(unzippedBlobs);
+          this.extractedBlobs = this.extractedBlobs.concat(unzippedBlobs);
         } catch(e) { 
           Logger.log(`Error descomprimiendo ${att.getName()}: ${e.message}`);
+          this.extractedBlobs.push(att.copyBlob()); // Fallback si falla unzip
         }
       } else {
-        filesToEvaluate.push(att.copyBlob());
+        this.extractedBlobs.push(att.copyBlob());
       }
     });
 
     // Luego buscamos el archivo que coincida entre todos los extraídos/originales
-    return filesToEvaluate.find(att => {
+    return this.extractedBlobs.find(att => {
       const nameLower = att.getName().toLowerCase().replace(/-/g, ' ');
       const matchLower = this.attachmentMatch ? this.attachmentMatch.toLowerCase().replace(/-/g, ' ') : '';
       const nameMatch = this.attachmentMatch ? nameLower.includes(matchLower) : true;

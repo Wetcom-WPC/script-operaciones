@@ -29,28 +29,30 @@ class VMsEnMasDeUnJobProcessor extends MailProcessor {
 
   findAttachment(message) {
     let attachmentToUse = null;
-    let filesToEvaluate = [];
+    this.extractedBlobs = [];
 
     message.getAttachments().forEach(att => {
       const attNameLower = att.getName().toLowerCase();
       if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
         try {
           const unzippedBlobs = Utilities.unzip(att.copyBlob());
-          filesToEvaluate = filesToEvaluate.concat(unzippedBlobs);
-        } catch(e) { }
+          this.extractedBlobs = this.extractedBlobs.concat(unzippedBlobs);
+        } catch(e) {
+          this.extractedBlobs.push(att.copyBlob());
+        }
       } else {
-        filesToEvaluate.push(att.copyBlob());
+        this.extractedBlobs.push(att.copyBlob());
       }
     });
 
     const searchString = this.attachmentMatch.toLowerCase().trim();
 
-    const attachmentExcel = filesToEvaluate.find(blob => {
+    const attachmentExcel = this.extractedBlobs.find(blob => {
       const name = blob.getName().toLowerCase();
       return name.includes(searchString) && name.endsWith(".xlsx");
     });
 
-    const attachmentCsv = filesToEvaluate.find(blob => {
+    const attachmentCsv = this.extractedBlobs.find(blob => {
       const name = blob.getName().toLowerCase();
       return name.includes("details") && name.endsWith(".csv");
     });
