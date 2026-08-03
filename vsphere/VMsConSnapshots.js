@@ -108,34 +108,101 @@ class VMsConSnapshotsProcessor extends MailProcessor {
            findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfig.jiraProjectKey);
   }
 
+  hasCriticalAlerts(headers, finalAlerts, clientConfig) {
+    let criticalAge = AGE_MAX * 2;
+    let criticalSize = SIZE_MAX * 2;
+    let criticalCount = CANTIDAD_MAX * 2;
+
+    if (clientConfig && clientConfig.exceptions && clientConfig.exceptions["UMBRALES_CRITICOS"]) {
+      const configRules = clientConfig.exceptions["UMBRALES_CRITICOS"];
+      configRules.forEach(rule => {
+        if (rule.column === "CONFIG") {
+          rule.values.forEach(val => {
+            const parts = val.split(':');
+            if (parts.length === 2) {
+              const k = parts[0].trim().toLowerCase();
+              const v = parseFloat(parts[1].trim());
+              if (!isNaN(v)) {
+                if (k === "age") criticalAge = v;
+                if (k === "size") criticalSize = v;
+                if (k === "qty") criticalCount = v;
+              }
+            }
+          });
+        }
+      });
+    }
+
+    const findCol = (namePart) => headers.findIndex(h => h.toLowerCase().includes(namePart.toLowerCase()));
+    let idxAge = findCol("Number_Days_Old") !== -1 ? findCol("Number_Days_Old") : findCol("Age");  
+    let idxSpace = findCol("Snapshot_Space") !== -1 ? findCol("Snapshot_Space") : findCol("Space");
+    let idxCount = findCol("Number_Snapshots") !== -1 ? findCol("Number_Snapshots") : findCol("Cantidad");
+
+    if (idxAge === -1 || idxSpace === -1 || idxCount === -1) return false;
+
+    const parseSeguro = (val) => {
+      if (!val) return 0;
+      let clean = val.toString().trim();
+      if (clean.includes('.') && clean.includes(',')) clean = clean.replace(/\./g, '');
+      clean = clean.replace(',', '.');
+      return parseFloat(clean) || 0;
+    };
+
+    for (const row of finalAlerts) {
+      const age = parseSeguro(row[idxAge]);
+      const space = parseSeguro(row[idxSpace]);
+      const count = parseSeguro(row[idxCount]);
+      
+      if (age >= criticalAge || space >= criticalSize || count >= criticalCount) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
     const alertCount = finalAlerts.length;
 
-    if (existingTicketKey) {
-      if (haSidoActualizadoHoy(existingTicketKey, "ALERTA-SNAPSHOTS")) return { status: 'SUCCESS' };
+    const isCritical = this.hasCriticalAlerts(headers, finalAlerts, clientConfig);
+    let targetTicketKey = existingTicketKey;
+    let targetConfig = clientConfig;
+
+    if (isCritical) {
+      Logger.log(`[Snapshots] Gravedad CRÍTICA detectada para ${clientConfig.clientName}. Escalando a Soporte.`);
+      const soporteConfig = getClientConfigByName(clientConfig.clientName, this.operationName, true);
+      if (soporteConfig) {
+        targetConfig = soporteConfig;
+        targetTicketKey = this.findExistingTicket(soporteConfig);
+      } else {
+        Logger.log(`[Snapshots] No se pudo obtener la config de Soporte para ${clientConfig.clientName}. Se usará Operaciones como fallback.`);
+      }
+    }
+
+    if (targetTicketKey) {
+      if (haSidoActualizadoHoy(targetTicketKey, "ALERTA-SNAPSHOTS")) return { status: 'SUCCESS' };
       
       let commentText = `🚨 **El problema persiste.** [HU-ALERTA-SNAPSHOTS]\n\nSe detectaron ${alertCount} VMs fuera de norma:\n${reasonsText}\n\n`;
       
       if (alertCount <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
         commentText += `|| ${headers.join(" || ")} ||\n`;
         finalAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
-        addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Ticket ${existingTicketKey} actualizado con tabla.` });
+        addCommentToJiraTicket(targetTicketKey, commentText);
+        summaryReport.exitos.push({ mensaje: `Ticket ${targetTicketKey} actualizado con tabla.` });
       } else {
         // El nombre DEBE incluir la fecha del reporte: addAttachmentToJiraTicket omite adjuntos
         // que ya existen en el ticket, y con un nombre fijo la actualización del día siguiente
         // se descartaría por error. Se usa la misma convención que MailProcessor.handleAlerts.
         const nombreReporte = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...rowsForExport], nombreReporte);
-        const attStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
+        const attStatus = addAttachmentToJiraTicket(targetTicketKey, xlsxBlob);
         
         if (attStatus.status === 'SUCCESS') {
             commentText += "Se adjunta reporte detallado.";
-            addCommentToJiraTicket(existingTicketKey, commentText);
-            summaryReport.exitos.push({ mensaje: `Ticket ${existingTicketKey} actualizado con adjunto.` });
+            addCommentToJiraTicket(targetTicketKey, commentText);
+            summaryReport.exitos.push({ mensaje: `Ticket ${targetTicketKey} actualizado con adjunto.` });
 
-            const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName);
-            if (accountIdAsignado) ticketInformativo(existingTicketKey, accountIdAsignado);
+            const accountIdAsignado = chequearSiEsInformativa(targetConfig.clientName, this.operationName);
+            if (accountIdAsignado) ticketInformativo(targetTicketKey, accountIdAsignado);
         } else {
             // No cerrar la tarea programada acá: el reporte todavía no se adjuntó. Si un 500
             // transitorio de Jira cierra la tarea de todos modos, el próximo reintento la
@@ -166,7 +233,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
         xlsxBlob = convertDataToXlsxBlob([headers, ...rowsForExport], newFileName);
       }
      
-      const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, this.operationName);
+      const creationResult = createTicketAndNotify(summary, description, xlsxBlob, targetConfig, this.operationName);
       const estadoCreacion = (creationResult && creationResult.status) ? creationResult.status : 'ERROR';
 
       if (estadoCreacion === 'SUCCESS') {
