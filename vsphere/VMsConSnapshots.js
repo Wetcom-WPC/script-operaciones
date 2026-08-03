@@ -109,9 +109,10 @@ class VMsConSnapshotsProcessor extends MailProcessor {
   }
 
   hasCriticalAlerts(headers, finalAlerts, clientConfig) {
-    let criticalAge = AGE_MAX * 2;
-    let criticalSize = SIZE_MAX * 2;
-    let criticalCount = CANTIDAD_MAX * 2;
+    let criticalAge = Infinity;
+    let criticalSize = Infinity;
+    let criticalCount = Infinity;
+    let hasCustomCriticalConfig = false;
 
     if (clientConfig && clientConfig.exceptions && clientConfig.exceptions["UMBRALES_CRITICOS"]) {
       const configRules = clientConfig.exceptions["UMBRALES_CRITICOS"];
@@ -126,12 +127,16 @@ class VMsConSnapshotsProcessor extends MailProcessor {
                 if (k === "age") criticalAge = v;
                 if (k === "size") criticalSize = v;
                 if (k === "qty") criticalCount = v;
+                hasCustomCriticalConfig = true;
               }
             }
           });
         }
       });
     }
+
+    // Si el cliente no tiene configurados umbrales críticos, nunca se escala a Soporte
+    if (!hasCustomCriticalConfig) return false;
 
     const findCol = (namePart) => headers.findIndex(h => h.toLowerCase().includes(namePart.toLowerCase()));
     let idxAge = findCol("Number_Days_Old") !== -1 ? findCol("Number_Days_Old") : findCol("Age");  
