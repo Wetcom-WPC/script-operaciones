@@ -44,14 +44,9 @@ class VMsConSnapshotsProcessor extends MailProcessor {
   }
 
   processData(parsedData, clientConfig, summaryReport) {
-    let summaryRow = [];
-    if (parsedData.length > 1) {
-      summaryRow = parsedData.pop(); // Sacamos la última fila (Total)
-    }
-
     const headers = parsedData[0].map(h => h.trim());
     const reportRows = parsedData.slice(1);
-    
+
     if (clientConfig && !clientConfig.exceptions) clientConfig.exceptions = [];
 
     const findCol = (namePart) => headers.findIndex(h => h.toLowerCase().includes(namePart.toLowerCase()));
@@ -60,6 +55,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     let idxAge = findCol("Number_Days_Old") !== -1 ? findCol("Number_Days_Old") : findCol("Age");  
     let idxSpace = findCol("Snapshot_Space") !== -1 ? findCol("Snapshot_Space") : findCol("Space");
     let idxCount = findCol("Number_Snapshots") !== -1 ? findCol("Number_Snapshots") : findCol("Cantidad");
+    let idxSnapName = findCol("Snapshot_Name");
 
     if (idxName === -1 || idxAge === -1 || idxSpace === -1 || idxCount === -1) {
       summaryReport.errores.push({ error: "Faltan columnas clave." });
@@ -67,7 +63,18 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     }
     
     headers[idxName] = "Name";
-    
+
+    // El reporte no siempre trae fila de "Total": en el de vSphere World la última línea es un
+    // registro común. Popearla a ciegas la sacaba del análisis y encima la reinyectaba sin filtrar
+    // en rowsForExport, así que el adjunto quedaba con una fila de más respecto del conteo del
+    // ticket. Sólo se separa cuando de verdad parece un total.
+    let summaryRow = [];
+    if (reportRows.length > 0) {
+      const ultima = reportRows[reportRows.length - 1];
+      const claveUltima = (ultima[idxName] || "").toString().trim().toLowerCase();
+      if (claveUltima === "" || claveUltima.startsWith("total")) summaryRow = reportRows.pop();
+    }
+
     const parseSeguro = (val) => {
       if (!val) return 0;
       let clean = val.toString().trim();
@@ -76,27 +83,58 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       return parseFloat(clean) || 0;
     };
 
-    const detectedReasons = new Set();
-    const finalAlerts = reportRows.filter(row => {
-      if (row.length < idxAge || row.join('').trim() === '') return false;
-      
-      const vmName = (row[idxName] || "").trim();
-      if (vmName.toLowerCase().includes("replica")) return false;
-      
+    // Un "Restore Point" es un punto de recuperación de un job de réplica de Veeam, no una
+    // snapshot de vSphere. La cantidad que tiene es la retención configurada del job, así que la
+    // regla de CANTIDAD no aplica: 3 restore points es la réplica funcionando bien, y pedir que
+    // se borren rompe la cadena. Sí queda sujeto a ANTIGÜEDAD, para que una cadena trabada con
+    // restore points viejos siga alertando.
+    const esRestorePoint = (row) => idxSnapName !== -1 &&
+      (row[idxSnapName] || "").toString().trim().toLowerCase().startsWith("restore point");
+
+    // Devuelve las reglas que rompe la fila. Se usa dos veces (filtrado y desglose) para que el
+    // conteo por criterio salga sólo de las filas que quedaron como alerta: contarlas dentro del
+    // filter incluía filas que después descartaba isRowExcepted.
+    const reglasQueRompe = (row) => {
       const age = parseSeguro(row[idxAge]);
       const space = parseSeguro(row[idxSpace]);
       const count = parseSeguro(row[idxCount]);
-      
-      let rowBreaksRule = false;
-      if (age >= AGE_MAX) { detectedReasons.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
-      if (space >= SIZE_MAX) { detectedReasons.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
-      if (count >= CANTIDAD_MAX) { detectedReasons.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
-      
-      return rowBreaksRule && !isRowExcepted(row, headers, clientConfig.exceptions);
+
+      const razones = [];
+      if (age >= AGE_MAX) razones.push(`Antigüedad >= ${AGE_MAX} días`);
+      if (space >= SIZE_MAX) razones.push(`Tamaño >= ${SIZE_MAX} GB`);
+      if (count >= CANTIDAD_MAX && !esRestorePoint(row)) razones.push(`Cantidad >= ${CANTIDAD_MAX}`);
+      return razones;
+    };
+
+    const finalAlerts = reportRows.filter(row => {
+      if (row.length < idxAge || row.join('').trim() === '') return false;
+
+      const vmName = (row[idxName] || "").trim();
+      if (vmName.toLowerCase().includes("replica")) return false;
+
+      // Number_Days_Old = -1 no es una antigüedad: es la marca del reporte origen para snapshots
+      // que ya no existen en vSphere (arrastra el histórico de las borradas). Verificado sobre el
+      // reporte completo: en las 111 VMs no-réplica, la cantidad de filas con edad real coincide
+      // exacto con Number_Snapshots. Sobre esas filas no hay nada que accionar, y como
+      // Number_Snapshots viene estampado por VM en todas sus filas, disparaban la regla de
+      // cantidad una vez por cada fila fantasma.
+      if (parseSeguro(row[idxAge]) < 0) return false;
+
+      return reglasQueRompe(row).length > 0 && !isRowExcepted(row, headers, clientConfig.exceptions);
     });
 
-    const reasonsText = Array.from(detectedReasons).map(r => `* ${r}`).join('\n');
-    
+    // Desglose por criterio: sin esto la descripción listaba "Antigüedad >= 7 días" y
+    // "Cantidad >= 3" sin decir cuántos registros caían en cada uno, y se leía como si el total
+    // entero fuera por antigüedad. Una fila puede romper más de una regla, así que la suma de los
+    // parciales puede superar el total.
+    const conteoPorRazon = {};
+    finalAlerts.forEach(row => {
+      reglasQueRompe(row).forEach(r => { conteoPorRazon[r] = (conteoPorRazon[r] || 0) + 1; });
+    });
+    const reasonsText = Object.keys(conteoPorRazon)
+      .map(r => `* ${r}: ${conteoPorRazon[r]} registro${conteoPorRazon[r] === 1 ? '' : 's'}`)
+      .join('\n');
+
     const rowsForExport = [...finalAlerts];
     if (summaryRow.length > 0) rowsForExport.push(summaryRow);
 
