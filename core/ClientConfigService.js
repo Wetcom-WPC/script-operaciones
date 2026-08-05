@@ -238,9 +238,9 @@ function getClientConfigByName(clientName, operationName, soporte = false) {
     if (!exceptionSheet) {
       Logger.log(`ADVERTENCIA: No se encontró la PESTAÑA de excepciones "${operationName}" en el archivo del cliente ${clientNameFound}. Se continuará sin excepciones.`);
       if (soporte) {
-        return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue };
+        return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue, exceptionFileId };
       }
-      return { exceptions: {}, clientName: clientNameFound.trim(), jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue };
+      return { exceptions: {}, clientName: clientNameFound.trim(), jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId };
     }
 
     const groupedExceptions = procesarReglasExcepciones(rawExceptionData, exceptionSheet);
@@ -248,14 +248,14 @@ function getClientConfigByName(clientName, operationName, soporte = false) {
     if (soporte) {
       return {
         exceptions: groupedExceptions, clientNameSop, jiraProjectKeySop, serviceDeskIdSop,
-        requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue
+        requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue, exceptionFileId
       };
     }
 
     return {
       exceptions: groupedExceptions, clientName: clientNameFound.trim(), jiraProjectKey: jiraProjectKey,
       serviceDeskId: serviceDeskId, requestTypeId: requestTypeId,
-      tecnologia: tecnologiaValue, origen: origenValue
+      tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId
     };
   } catch (e) {
     Logger.log(`ERROR CRÍTICO DENTRO DE getClientConfigByName: ${e.message}`);
@@ -344,22 +344,22 @@ function getClientConfig(senderEmail, operationName, soporte = false) {
     
     if (!exceptionSheet && !soporte) {
       Logger.log(`ADVERTENCIA: No se encontró la PESTAÑA de excepciones "${operationName}" en el archivo del cliente ${clientName}. Se continuará sin excepciones.`);
-      return { exceptions: {}, clientName, jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue };
+      return { exceptions: {}, clientName, jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId };
     } else if (!exceptionSheet && soporte) {
       Logger.log(`ADVERTENCIA: No se encontró la PESTAÑA de excepciones "${operationName}" en el archivo del cliente ${clientName}. Se continuará sin excepciones.`);
-      return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue };
+      return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue, exceptionFileId };
     }
 
     const groupedExceptions = procesarReglasExcepciones(rawExceptionData, exceptionSheet);
     if (soporte){
       return {
       exceptions: groupedExceptions, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, 
-      requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue
+      requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue, exceptionFileId
       };
     }
     return {
       exceptions: groupedExceptions, clientName, jiraProjectKey, serviceDeskId, 
-      requestTypeId, tecnologia: tecnologiaValue, origen: origenValue
+      requestTypeId, tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId
     };
   } catch (e) {
     Logger.log(`ERROR CRÍTICO DENTRO DE getClientConfig: ${e.message}`);

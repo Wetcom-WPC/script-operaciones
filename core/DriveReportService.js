@@ -134,11 +134,11 @@ const DriveClientIndexSingleton = (function () {
  * @param {string} [nombreOperacion] Nombre de la operación, solo para enriquecer los logs.
  * @returns {{ok: boolean, subidos: Array<string>, omitidos: Array<string>, errores: Array<string>, cliente: string}}
  */
-function subirAdjuntosDeMensajeADrive(mensaje, nombreOperacion) {
+function subirAdjuntosDeMensajeADrive(mensaje, nombreOperacion, blobsAlternativos = null) {
   const etiquetaOp = nombreOperacion ? `[${nombreOperacion}] ` : '';
   const resultado = { ok: true, subidos: [], omitidos: [], errores: [], cliente: "_Desconocido_" };
 
-  const adjuntos = mensaje.getAttachments();
+  const adjuntos = blobsAlternativos || mensaje.getAttachments();
   if (adjuntos.length === 0) {
     Logger.log(`[Drive] ${etiquetaOp}El correo "${mensaje.getSubject()}" no tiene adjuntos: nada que archivar.`);
     return resultado;

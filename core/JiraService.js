@@ -484,13 +484,31 @@ function createTicketAndNotifySoporte(summary, description, attachmentBlob, clie
     return _omitirTicketPorClienteSinTickets(summary, clientConfig);
   }
 
+  // --- NUEVO: evita crear tickets duplicados en reintentos ---
+  const existingTicketKey = findExistingJiraTicket(summary, clientConfig.jiraProjectKeySop);
+  if (existingTicketKey) {
+    addCommentToJiraTicket(existingTicketKey, "La anomalía persiste.");
+    if (attachmentBlob) {
+      const attachmentResult = addAttachmentToJiraTicket(existingTicketKey, attachmentBlob);
+      if (attachmentResult.status !== 'SUCCESS') {
+        if (!buscarAdjuntoEnTicket(existingTicketKey, attachmentBlob.getName())) {
+          return attachmentResult;
+        }
+      }
+    }
+    return { status: 'SUCCESS', detail: { mensaje: `Se actualizó el ticket ya existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>.` } };
+  }
+  // --- FIN NUEVO ---
+
   const issue = createJiraTicketForSoporte(summary, description, clientConfig);
   if (issue && issue.issueKey) {
     if (attachmentBlob) {
       const attachmentResult = addAttachmentToJiraTicket(issue.issueKey, attachmentBlob);
       if (attachmentResult.status !== 'SUCCESS') {
-        addCommentToJiraTicket(issue.issueKey, `🚨 **¡Atención!** Se creó este ticket pero **falló la subida del reporte adjunto**. El sistema reintentará adjuntarlo automáticamente.`);
-        return attachmentResult;
+        if (!buscarAdjuntoEnTicket(issue.issueKey, attachmentBlob.getName())) {
+          addCommentToJiraTicket(issue.issueKey, `🚨 **¡Atención!** Se creó este ticket pero **falló la subida del reporte adjunto**. El sistema reintentará adjuntarlo automáticamente.`);
+          return attachmentResult;
+        }
       }
     }
     return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.` } };
