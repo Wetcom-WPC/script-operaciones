@@ -1,19 +1,13 @@
 /**
  * =================================================================
- * CONTROLADOR DE EVENTOS (TRIGGER ON EDIT) - V12
- * Cambios vs V11:
- *  - CASO 3 (enviarMailUnitario) eliminado — deprecado.
- *    El envío de mails vSphere/Veeam/Nutanix es manejado
- *    exclusivamente por procesarEnviosPorLote (trigger de tiempo).
- *  - El reset de checkbox a FALSE ya NO se aplica a las columnas
- *    R, S, T (18, 19, 20): esas deben quedar en TRUE para que
- *    procesarEnviosPorLote las detecte dentro de los siguientes 5 min.
- *  - Todas las demás columnas siguen reseteando normalmente.
+ * CONTROLADOR DE EVENTOS (TRIGGER ON EDIT) - V13
+ * Cambios vs V12:
+ *  - CASO 1 (ejecución maestra vía B4) eliminado — deprecado.
+ *  - CASO 2 (Consumo CPU/Memoria) eliminado — deprecado.
  * =================================================================
  */
 
 // --- CONFIGURACIÓN DE COLUMNAS (Sheet1) ---
-const COL_CHECK_CONSUMO = 9;  // Col I (Botón para Consumo CPU/Memoria)
 const COL_CHECK_VSPHERE = 18; // Col R — manejado por procesarEnviosPorLote
 const COL_CHECK_VEEAM   = 19; // Col S — manejado por procesarEnviosPorLote
 const COL_CHECK_NUTANIX = 20; // Col T — manejado por procesarEnviosPorLote
@@ -30,7 +24,6 @@ const COL_LOG_DATOS     = 6; // Col F
 
 const HOJA_OBJETIVO  = "Sheet1";
 const HOJA_LICENCIAS = "Licencias";
-const CELDA_MAESTRA  = "B4";
 
 function vigilarCheckbox(e) {
   Logger.log("=== TRIGGER DISPARADO ===");
@@ -102,38 +95,6 @@ function vigilarCheckbox(e) {
   // ======================================================
   if (sheetName !== HOJA_OBJETIVO) return;
 
-  // ======================================================
-  // CASO 1: EJECUCIÓN MAESTRA
-  // ======================================================
-  if (range.getA1Notation() === CELDA_MAESTRA) {
-    try {
-      SpreadsheetApp.getActive().toast("🚀 Iniciando motor completo...", "Estado", -1);
-      AutomatizarOperaciones.ejecutarCicloDeOperaciones();
-      SpreadsheetApp.getActive().toast("✅ Ciclo finalizado.", "Éxito");
-    } catch (error) {
-      SpreadsheetApp.getUi().alert("❌ Error: " + error.toString());
-    }
-    return;
-  }
-
-  // ======================================================
-  // CASO 2: EJECUCIÓN MANUAL REPORTE CONSUMO CPU/MEMORIA
-  // ======================================================
-  if (row > 1 && col === COL_CHECK_CONSUMO) {
-    SpreadsheetApp.getActive().toast(`⏳ Extrayendo datos de consumo...`, "Reporte Consumo", -1);
-    try {
-      const reporteAlertas = AutomatizarOperaciones.generarReporteConsumoVsphere();
-
-      if (reporteAlertas && reporteAlertas.length > 0) {
-        SpreadsheetApp.getActive().toast(`✅ Datos extraídos. Listos para los correos.`, "Éxito", 10);
-      } else {
-        SpreadsheetApp.getActive().toast(`ℹ️ Sin alertas de consumo en las últimas 12h.`, "Aviso", 10);
-      }
-    } catch (err) {
-      SpreadsheetApp.getUi().alert(`❌ Error al extraer el reporte de consumo:\n${err.toString()}`);
-    }
-    return;
-  }
 
   // ── CASO 3 y CASO 4 ELIMINADOS ────────────────────────────────────────────
   // El envío de mails (R/S/T) y el procesamiento de RVTools (U) ahora lo

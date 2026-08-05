@@ -9,8 +9,6 @@
  * false = envía el mail real.
  */
 
-const MODO_TEST_MAIL = false;
-
 const JIRA_FILTER_VSPHERE = "24647";
 const JIRA_FILTER_VEEAM   = "27659";
 const JIRA_FILTER_NUTANIX = "28945";
@@ -347,8 +345,11 @@ function enviarMailUnitario(tecnologia, opsKey, nombreOps, soporteKey, nombreSop
 </div>`;
 
   // 7. LOGS DE CONTROL
+  const env = PropertiesService.getScriptProperties().getProperty("ENVIRONMENT");
+  const isTesting = (env === "testing");
+
   Logger.log("========== RESUMEN DEL MAIL ==========");
-  Logger.log("Modo test: " + MODO_TEST_MAIL);
+  Logger.log("Modo test: " + isTesting);
   Logger.log("Destino: " + emailReal);
   Logger.log("CC: " + EMAIL_CC_GLOBAL);
   Logger.log("Asunto: " + asunto);
@@ -357,11 +358,13 @@ function enviarMailUnitario(tecnologia, opsKey, nombreOps, soporteKey, nombreSop
   Logger.log("POD: " + podDestino);
 
   // 8. ENVÍO O TEST
-  if (MODO_TEST_MAIL) {
+  if (isTesting) {
     Logger.log("========== TEST MAIL ==========");
-    Logger.log("El mail NO fue enviado porque MODO_TEST_MAIL está en true.");
+    Logger.log("El mail NO fue enviado porque ENVIRONMENT está en testing.");
   } else {
-    GmailApp.sendEmail(emailReal, asunto, "", {
+    AutomatizarOperaciones.sendEmail({
+      to: emailReal,
+      subject: asunto,
       htmlBody: htmlBody,
       cc: EMAIL_CC_GLOBAL,
       name: "Wetcom Proactive Center"
@@ -371,7 +374,7 @@ function enviarMailUnitario(tecnologia, opsKey, nombreOps, soporteKey, nombreSop
   
   // LOGGING en Registro Operacional
   AutomatizarOperaciones.registrarEnvioMail(
-    tecnologia, nombreEmpresa, podDestino, misTickets, itemsErrores, itemsAdvertencias, asunto, MODO_TEST_MAIL
+    tecnologia, nombreEmpresa, podDestino, misTickets, itemsErrores, itemsAdvertencias, asunto, isTesting
   );
  
   // CIERRE DE TAREA PROGRAMADA EN JIRA

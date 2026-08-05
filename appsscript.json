@@ -9,8 +9,8 @@
     "libraries": [{
       "userSymbol": "AutomatizarOperaciones",
       "libraryId": "1RE2zq7VFy0TcUVm0z7NTxRP6HVgSfAvWfNhYdSwb0xLaoFBqtKDMQEuk",
-      "version": "0",
-      "developmentMode": true
+      "version": "1",
+      "developmentMode": false
     }]
   },
   "webapp": {
