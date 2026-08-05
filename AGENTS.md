@@ -25,7 +25,7 @@ carpeta local con su propio `.clasp.json` (su propio scriptId):
 | Carpeta local | Rama de git | Entorno |
 |---|---|---|
 | `Ops Operativo/` | `main` | 🔴 **PRODUCCIÓN** |
-| `Ops Playground/` | `refactor-operaciones` | Staging |
+| `Ops Playground/` | `ops-playground` | Staging |
 | `Indice Operativo/` | `indice-operativo` | 🔴 **PRODUCCIÓN** |
 | `Indice Playground/` | `indice-playground` | Staging |
 
@@ -41,18 +41,30 @@ son carpetas de trabajo normal para `clasp`, con un backup versionado en las
 ramas `indice-operativo` / `indice-playground` (actualizar ese backup a mano
 cuando corresponda — no hay automatización todavía).
 
+### Sobre el nombre de la rama de Playground
+
+Hasta el 05/08/2026 esta rama se llamó `refactor-operaciones`. Fue decisión de
+equipo renombrarla a `ops-playground` (más claro, sin implicar que es un
+refactor temporal). `refactor-operaciones` **ya no existe como rama remota**:
+se eliminó a propósito. Si aparece referenciada en un commit viejo, un enlace
+o una conversación anterior, es la misma rama — usar `ops-playground` de acá
+en adelante. El estado completo de `refactor-operaciones` al momento del
+rename (incluida una feature que todavía no se había traído del todo,
+"Detector de Gravedad en Snapshots") quedó preservado en la rama
+`backup-refactor-operaciones` y ya fue reintegrado a `ops-playground`.
+
 ### Ramas que NO se deben tocar
 
-- `backup-real-prod`: snapshot de un estado anterior de producción, para
-  rollback. No es para trabajar ahí.
+- `backup-real-prod`, `backup-refactor-operaciones`: snapshots de un estado
+  anterior, para rollback. No son para trabajar ahí.
 - `refactor`, `backup-prod-20260723`: ramas históricas **con secretos reales
   sin censurar en su historial de commits** (tokens de Atlassian, webhooks de
   Slack). GitHub bloqueó el push la primera vez que se intentó por push
   protection. **Nunca hacer merge, rebase ni cherry-pick desde estas ramas
-  hacia `main` o `refactor-operaciones`** sin antes limpiar el historial —
+  hacia `main` o `ops-playground`** sin antes limpiar el historial —
   arrastrarían los secretos.
 
-## 3. Las tres reglas que no se negocian
+## 3. Las cuatro reglas que no se negocian
 
 ### Regla 1 — Nunca `clasp push` a producción sin aprobación humana explícita
 
@@ -95,6 +107,31 @@ venía usando el equipo (`clasp list-versions`). Nunca dejarla vacía — quedan
 
 Ojo: `clasp` v3 sacó `clasp version`; ahora el comando es `clasp create-version`
 (con `version` como alias).
+
+### Regla 4 — Antes de pushear a Ops Operativo, respaldar el código productivo vigente
+
+El código que está corriendo en producción en Apps Script **puede no coincidir
+con lo último commiteado en `main`** — el equipo edita seguido directo desde
+el navegador (Regla 2), y esas ediciones no siempre se bajan a git antes del
+próximo despliegue. Sin un respaldo del estado REAL justo antes de pushear, un
+despliegue que rompe algo no tiene forma confiable de deshacerse: "volver
+atrás" significaría adivinar qué había antes.
+
+Por eso, **siempre, sin excepción**, antes de cualquier `clasp push` o
+`deploy.sh` hacia `Ops Operativo/` o `Indice Operativo/`:
+
+1. `clasp pull` en esa carpeta a una copia limpia (no asumir que el working
+   tree local ya refleja lo que hay en el editor — puede estar desactualizado).
+2. Commitear ese estado, tal cual vino, en una rama de respaldo con fecha:
+   `backup-prod-YYYYMMDD` (mismo patrón que `backup-prod-20260723` /
+   `backup-real-prod`). Una rama nueva por respaldo, no reescribir una
+   existente: así se acumula un historial de puntos de rollback reales.
+3. Pushear esa rama de respaldo a GitHub **antes** de tocar el código nuevo.
+
+Recién después de esto, seguir con el flujo normal de despliegue (sección 10).
+Sin este respaldo, no se hace `clasp push` a producción — ni con aprobación
+explícita del usuario (Regla 1): son dos chequeos independientes, uno no
+reemplaza al otro.
 
 ## 4. La trampa que ya rompió producción una vez — scope global de Apps Script
 
@@ -212,14 +249,16 @@ actuar, no asumir que todo lo pendiente hay que resolverlo.
 
 ## 10. Flujo de trabajo y despliegue
 
-1. Trabajar en `Ops Playground/` (rama `refactor-operaciones`). `clasp pull`
+1. Trabajar en `Ops Playground/` (rama `ops-playground`). `clasp pull`
    antes de editar.
 2. Validar: correr `manual_runAllTests()` desde el editor de Apps Script
    (suite en `tests/TestRunner.js`). Todo fix de bug debería sumar un test de
    regresión ahí, no solo la corrección.
 3. Con la aprobación del usuario, promover a producción:
-   - `clasp pull` en `Ops Operativo/` primero (por si hubo cambios desde el
-     navegador).
+   - Respaldar el código productivo vigente (Regla 4) — **antes** de tocar
+     nada de lo que sigue.
+   - `clasp pull` en `Ops Operativo/` (por si hubo cambios desde el
+     navegador desde el respaldo del paso anterior).
    - Copiar solo los archivos que cambiaron (no todo el árbol a ciegas).
    - Verificar sintaxis (`node --check archivo.js` sirve como chequeo rápido
      aunque el runtime real sea Apps Script V8) y ausencia de declaraciones
@@ -228,7 +267,7 @@ actuar, no asumir que todo lo pendiente hay que resolverlo.
      **solo con confirmación explícita del usuario**.
    - `clasp pull` de vuelta a una carpeta de verificación aparte y comparar
      contra lo que se pusheó, para confirmar que llegó como se esperaba.
-4. Commitear y pushear a `main`/`refactor-operaciones` en GitHub para dejar
+4. Commitear y pushear a `main`/`ops-playground` en GitHub para dejar
    registro. Mensajes de commit multilínea: usar heredoc de bash
    (`git commit -m "$(cat <<'EOF' ... EOF)"`), nunca sintaxis de PowerShell
    (`@'...'@`) en un entorno bash — genera un commit con basura literal.
