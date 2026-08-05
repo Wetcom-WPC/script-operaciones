@@ -6,6 +6,55 @@
 const OPS_LABEL_PENDIENTE = "[OPS-PENDIENTE]";
 const OPS_LABEL_PROCESADO = "[OPS-PROCESADO]";
 
+// Correos que NO se pueden completar reintentando: el problema es de configuración y
+// necesita que una persona lo corrija (ej. la tarea programada no existe en Jira, o el
+// nombre no coincide). Sin esta etiqueta se quedaban en [OPS-PENDIENTE] reintentando en
+// cada ciclo para siempre, acumulándose hasta tapar reportes nuevos por el tope de
+// LIMITE_HILOS_PENDIENTES. Acá quedan apartados y fáciles de encontrar en Gmail.
+const OPS_LABEL_ERROR = "[OPS-ERROR]";
+
+// Tope de reintentos en [OPS-PENDIENTE] antes de apartar el correo a [OPS-ERROR] por
+// agotamiento de reintentos (distinto de ERROR_TERMINAL: acá el error SÍ ameritaba
+// reintentar, pero ya lo hizo demasiadas veces sin éxito). Sin este tope, un fallo
+// transitorio que en realidad nunca se resuelve (ej. un 500 persistente de Jira) reintentaría
+// para siempre, ocupando lugar en LIMITE_HILOS_PENDIENTES sin que nadie se entere.
+//
+// Configurable en caliente vía Script Property "OPS_MAX_REINTENTOS_PENDIENTE" (Configuración
+// del proyecto > Propiedades del script), sin tocar código ni repushear. Si no está seteada,
+// o tiene un valor inválido, se usa este default.
+const OPS_MAX_REINTENTOS_PENDIENTE_DEFAULT = 10;
+
+/** @returns {number} Tope de reintentos vigente (Script Property, o el default si no está seteada). */
+function obtenerMaxReintentosPendiente() {
+  const valor = PropertiesService.getScriptProperties().getProperty("OPS_MAX_REINTENTOS_PENDIENTE");
+  const parsed = parseInt(valor, 10);
+  return (valor !== null && !isNaN(parsed) && parsed > 0) ? parsed : OPS_MAX_REINTENTOS_PENDIENTE_DEFAULT;
+}
+
+// Prefijo de la Script Property que cuenta los reintentos de cada thread. Se guarda por
+// thread (no en un único blob JSON) para no tener que leer/escribir todo el contador de
+// golpe en cada correo procesado.
+const _PROP_PREFIX_REINTENTOS = "OPS_REINTENTOS_";
+
+/** @returns {number} Reintentos ya contabilizados para este thread. */
+function _obtenerReintentos(threadId) {
+  return Number(PropertiesService.getScriptProperties().getProperty(_PROP_PREFIX_REINTENTOS + threadId)) || 0;
+}
+
+/** Suma un reintento y devuelve el nuevo total. */
+function _incrementarReintentos(threadId) {
+  const props = PropertiesService.getScriptProperties();
+  const key = _PROP_PREFIX_REINTENTOS + threadId;
+  const nuevo = (Number(props.getProperty(key)) || 0) + 1;
+  props.setProperty(key, String(nuevo));
+  return nuevo;
+}
+
+/** Se llama al resolver un thread (PROCESADO o ERROR): ya no hace falta seguir contando. */
+function _limpiarReintentos(threadId) {
+  PropertiesService.getScriptProperties().deleteProperty(_PROP_PREFIX_REINTENTOS + threadId);
+}
+
 /**
  * Obtiene o crea una etiqueta en Gmail de forma segura.
  * @param {string} labelName Nombre de la etiqueta.
@@ -27,26 +76,69 @@ function getOrCreateOpsLabel(labelName) {
 
 /**
  * Aplica las transiciones de etiquetas en un thread de Gmail y gestiona su estado de lectura.
+ *
+ * Un thread nunca debería tener [OPS-ERROR] junto con [OPS-PENDIENTE] o [OPS-PROCESADO]: por
+ * eso cada rama saca las otras dos etiquetas antes de poner la que corresponde. Esto importa
+ * en particular para el reintento manual (ver manual_reintentarCorreosConError en
+ * custom/HerramientasManuales.js), que llama a esta función sobre threads que YA tienen
+ * [OPS-ERROR] puesto: si no se sacara acá, el thread quedaría con las dos etiquetas y
+ * fetchAndFilterGlobalThreads (que excluye `-label:${OPS_LABEL_ERROR}`) nunca lo volvería
+ * a recoger aunque esté en [OPS-PENDIENTE].
+ *
  * @param {GoogleAppsScript.Gmail.GmailThread} thread Hilo procesado.
- * @param {string} status Estado final del procesamiento ('SUCCESS', 'NO_OP', 'ERROR', 'FAILURE', 'HTTP_500').
+ * @param {string} status Estado final del procesamiento ('SUCCESS', 'NO_OP', 'ERROR', 'FAILURE', 'HTTP_500', 'ERROR_TERMINAL').
+ * @returns {{label: string, intentos?: number, motivo?: string}} Etiqueta final aplicada
+ *   ('PROCESADO' | 'ERROR' | 'PENDIENTE') y, para PENDIENTE/ERROR por agotamiento, cuántos
+ *   reintentos lleva. Los callers existentes ignoran el retorno; lo usa el reintento manual
+ *   para loguear en vivo qué pasó con cada correo.
  */
 function etiquetarYMarcarProcesado(thread, status) {
   try {
     const labelPendiente = getOrCreateOpsLabel(OPS_LABEL_PENDIENTE);
     const labelProcesado = getOrCreateOpsLabel(OPS_LABEL_PROCESADO);
+    const labelError = getOrCreateOpsLabel(OPS_LABEL_ERROR);
 
     if (status === 'SUCCESS' || status === 'NO_OP') {
       if (labelPendiente) thread.removeLabel(labelPendiente);
+      if (labelError) thread.removeLabel(labelError);
       if (labelProcesado) thread.addLabel(labelProcesado);
       thread.markRead();
+      _limpiarReintentos(thread.getId());
       Logger.log(`[MailUtils] Thread marcado como PROCESADO (${status}) -> ${OPS_LABEL_PROCESADO}`);
-    } else {
-      // Si falló (ERROR, FAILURE, HTTP_500), aseguramos la etiqueta [OPS-PENDIENTE] y no agregamos PROCESADO
-      if (labelPendiente) thread.addLabel(labelPendiente);
-      Logger.log(`[MailUtils] Thread marcado para reintento -> ${OPS_LABEL_PENDIENTE} (${status})`);
+      return { label: 'PROCESADO' };
     }
+
+    if (status === 'ERROR_TERMINAL') {
+      // Reintentar no lo va a arreglar: se aparta para revisión manual y se saca de la cola
+      // de pendientes (también se marca leído, porque la búsqueda incluye `is:unread`).
+      if (labelPendiente) thread.removeLabel(labelPendiente);
+      if (labelError) thread.addLabel(labelError);
+      thread.markRead();
+      _limpiarReintentos(thread.getId());
+      Logger.log(`[MailUtils] Thread apartado para revisión manual -> ${OPS_LABEL_ERROR}. No se reintenta hasta que se corrija la configuración.`);
+      return { label: 'ERROR', motivo: 'ERROR_TERMINAL' };
+    }
+
+    // Fallo transitorio (ERROR, FAILURE, HTTP_500): se reintenta, salvo que ya se haya
+    // agotado el tope de reintentos.
+    const maxReintentos = obtenerMaxReintentosPendiente();
+    const intentos = _incrementarReintentos(thread.getId());
+    if (intentos > maxReintentos) {
+      if (labelPendiente) thread.removeLabel(labelPendiente);
+      if (labelError) thread.addLabel(labelError);
+      thread.markRead();
+      _limpiarReintentos(thread.getId());
+      Logger.log(`[MailUtils] Thread agotó ${maxReintentos} reintentos (último estado: ${status}) -> se aparta a ${OPS_LABEL_ERROR} para revisión manual.`);
+      return { label: 'ERROR', intentos, motivo: 'TOPE_REINTENTOS' };
+    }
+
+    if (labelError) thread.removeLabel(labelError);
+    if (labelPendiente) thread.addLabel(labelPendiente);
+    Logger.log(`[MailUtils] Thread marcado para reintento -> ${OPS_LABEL_PENDIENTE} (${status}), intento ${intentos}/${maxReintentos}`);
+    return { label: 'PENDIENTE', intentos };
   } catch (e) {
     Logger.log(`[MailUtils] Error al gestionar etiquetas del thread: ${e.message}`);
+    return { label: 'ERROR', motivo: 'EXCEPCION' };
   }
 }
 
@@ -67,8 +159,16 @@ let _validSendersCache = null;
 function fetchAndFilterGlobalThreads(emailSubject) {
   if (!_globalPendingThreads) {
     Logger.log("[MailUtils] Obteniendo todos los hilos [OPS-PENDIENTE] globales (caché de ejecución)...");
-    _globalPendingThreads = GmailApp.search(`has:attachment (label:${OPS_LABEL_PENDIENTE} OR is:unread) -label:${OPS_LABEL_PROCESADO}`, 0, LIMITE_HILOS_PENDIENTES);
-    Logger.log(`[MailUtils] Se obtuvieron ${_globalPendingThreads.length} hilos en total.`);
+    // Los reintentos (ya etiquetados [OPS-PENDIENTE], ej. por un fallo transitorio de Jira/Drive)
+    // NO llevan límite de fecha: un correo que falló ayer se tiene que poder seguir reintentando
+    // hoy. El límite de fecha aplica solo a los correos NUEVOS (is:unread, todavía sin etiqueta):
+    // así un backlog de días anteriores no inunda de golpe la corrida de hoy hasta cortar por
+    // TimeGuard, como pasó el 27/07/2026 con "Reportes sin processor" (barrió 24/07 en adelante).
+    // Se excluye [OPS-ERROR] además de [OPS-PROCESADO]: son correos apartados para revisión
+    // manual y volver a intentarlos solo consumiría cuota y taparía reportes nuevos.
+    const hoyStr = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, "yyyy/MM/dd");
+    _globalPendingThreads = GmailApp.search(`has:attachment (label:${OPS_LABEL_PENDIENTE} OR (is:unread after:${hoyStr})) -label:${OPS_LABEL_PROCESADO} -label:${OPS_LABEL_ERROR}`, 0, LIMITE_HILOS_PENDIENTES);
+    Logger.log(`[MailUtils] Se obtuvieron ${_globalPendingThreads.length} hilos en total (correos nuevos limitados a hoy ${hoyStr}; los ya etiquetados [OPS-PENDIENTE] se reintentan sin límite de fecha).`);
 
     // Si la búsqueda vuelve justo con el tope, Gmail truncó el resultado y hay reportes
     // que este ciclo NUNCA va a ver: quedan sin procesar sin que nada lo reporte.
@@ -100,7 +200,7 @@ function fetchAndFilterGlobalThreads(emailSubject) {
   }
 
   const subjectLower = emailSubject.toLowerCase();
-  
+
   return _globalPendingThreads.filter(thread => {
     if (thread.getMessageCount() === 0) return false;
     const msg = thread.getMessages()[thread.getMessageCount() - 1];
@@ -115,3 +215,35 @@ function fetchAndFilterGlobalThreads(emailSubject) {
 }
 
 
+
+/**
+ * Devuelve los correos pendientes de remitentes conocidos que NINGÚN processor reclama.
+ *
+ * Es la red de seguridad del pipeline: cuando se apagó el trigger `organizarReportesEnDrive`
+ * (que archivaba TODO lo que llegara de los remitentes del Índice Maestro), los reportes sin
+ * processor propio habrían dejado de archivarse en silencio. Estos correos igual se guardan
+ * en Drive, y si aparecen seguido en el log es la señal de que les falta su processor.
+ *
+ * @param {Array<string>} asuntosReclamados Asuntos que ya tienen processor.
+ * @returns {Array<GoogleAppsScript.Gmail.GmailThread>} Hilos sin dueño.
+ */
+function fetchThreadsSinProcessor(asuntosReclamados) {
+  // Reutiliza el mismo caché de hilos que el resto del ciclo: una sola búsqueda por ejecución.
+  fetchAndFilterGlobalThreads("");
+
+  if (!_globalPendingThreads || !_validSendersCache || _validSendersCache.length === 0) return [];
+
+  const reclamadosLower = (asuntosReclamados || []).map(a => String(a).toLowerCase());
+
+  return _globalPendingThreads.filter(thread => {
+    if (thread.getMessageCount() === 0) return false;
+    const msg = thread.getMessages()[thread.getMessageCount() - 1];
+
+    const fromLower = msg.getFrom().toLowerCase();
+    if (!_validSendersCache.some(sender => fromLower.includes(sender))) return false;
+
+    // Sin dueño = su asunto no coincide con el de ningún processor registrado.
+    const subjectLower = msg.getSubject().toLowerCase();
+    return !reclamadosLower.some(asunto => asunto && subjectLower.includes(asunto));
+  });
+}

@@ -211,3 +211,55 @@ function executeDriveWithBackoff(fn, maxRetries) {
   }
 }
 
+
+/**
+ * ==========================================================
+ * REGISTRO DE FALLOS DEL MENSAJE EN CURSO
+ * ==========================================================
+ *
+ * Un correo solo se marca [OPS-PROCESADO] si TODOS sus pasos salieron bien. El problema
+ * es que 21 processors sobrescriben handleAlerts() y varios devuelven { status: 'SUCCESS' }
+ * aunque una llamada a Jira haya fallado: el 27/07/2026 se vio un adjunto con HTTP 500 que
+ * igual terminó marcado como procesado, quedando el reporte sin subir y sin reintento.
+ *
+ * En vez de parchear los 21 archivos (y confiar en que el próximo processor se acuerde),
+ * el fallo se registra en el mismo lugar donde ocurre: las funciones de JiraService anotan
+ * acá cuando una operación de escritura no se concretó. MailProcessor limpia el registro al
+ * empezar cada correo y lo consulta al terminar. Es la única fuente de verdad sobre si un
+ * correo quedó completo (ver AGENTS.md §5 y §7).
+ *
+ * Solo se registran ESCRITURAS que no se concretaron (adjuntar, crear, comentar, transicionar).
+ * Las lecturas de verificación (buscarAdjuntoEnTicket, haSidoActualizadoHoy) no cuentan:
+ * que una verificación falle no significa que el trabajo no se haya hecho.
+ */
+
+let _fallosDelMensajeActual = [];
+
+/** Limpia el registro. Lo llama MailProcessor al empezar cada correo. */
+function iniciarSeguimientoDeFallos() {
+  _fallosDelMensajeActual = [];
+}
+
+/**
+ * Registra que un paso no se completó, para que el correo no se dé por procesado.
+ *
+ * @param {string} origen Función o paso donde ocurrió (ej. "addAttachmentToJiraTicket").
+ * @param {string} detalle Motivo concreto, con ticket/cliente si se conocen.
+ * @param {boolean} [esTerminal=false] true si reintentar NO lo va a arreglar (problema de
+ *        configuración, ej. la tarea programada no existe). Esos correos se apartan con la
+ *        etiqueta [OPS-ERROR] en vez de reintentarse en cada ciclo para siempre.
+ */
+function registrarFalloDePaso(origen, detalle, esTerminal) {
+  _fallosDelMensajeActual.push({ origen: origen, detalle: detalle, terminal: esTerminal === true });
+  Logger.log(`[Fallos]${esTerminal === true ? ' [TERMINAL]' : ''} ${origen}: ${detalle}`);
+}
+
+/** @returns {Array<{origen: string, detalle: string, terminal: boolean}>} Fallos del correo en curso. */
+function obtenerFallosDelMensaje() {
+  return _fallosDelMensajeActual.slice();
+}
+
+/** @returns {boolean} true si algún fallo requiere intervención humana (no sirve reintentar). */
+function hayFalloTerminal() {
+  return _fallosDelMensajeActual.some(function (f) { return f.terminal === true; });
+}

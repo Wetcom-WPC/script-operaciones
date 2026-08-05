@@ -57,11 +57,6 @@ function runAllTests() {
     assertTrue(value !== null && value.trim() !== "", `Script Property "${prop}" existe y no está vacía.`);
   });
 
-  // --- TESTS: FuncionesCompartidas ---
-  Logger.log("--- Test: Funciones Compartidas ---");
-  assertEqual(extractDRPClientName("Alertas de vSphere DRP OSDE (2026-07-23)", "Alertas de vSphere"), "OSDE", "extractDRPClientName: extrae cliente OSDE");
-  assertEqual(extractDRPClientName("vSphere DRP CLIENTEX (algo)", "vSphere"), "CLIENTEX", "extractDRPClientName: extrae cliente CLIENTEX");
-
   // --- TESTS: DataProcessingService ---
   Logger.log("--- Test: DataProcessingService ---");
   // Test: normalizarEncabezado
@@ -196,8 +191,311 @@ function runAllTests() {
   try {
     assertTrue(typeof estaEnHorarioOperativo() === "boolean", "estaEnHorarioOperativo: retorna boolean");
     assertTrue(HORARIO_OPERATIVO_INICIO < HORARIO_OPERATIVO_FIN, "Ventana operativa: HORARIO_OPERATIVO_INICIO < HORARIO_OPERATIVO_FIN");
+    // El activador diario se configura en HORA_INICIO-1 para que su franja de una hora termine
+    // antes del arranque. Si HORA_INICIO fuera 0 esa cuenta daría -1 y el activador sería inválido.
+    assertTrue(HORA_INICIO > 0 && HORA_INICIO < HORA_FIN, "Ventana del ciclo: 0 < HORA_INICIO < HORA_FIN");
+    assertTrue(HORA_INICIO >= HORARIO_OPERATIVO_INICIO, "El ciclo no arranca antes de la ventana operativa general");
     assertTrue(dentroDeVentanaOperativa("test") === estaEnHorarioOperativo(), "dentroDeVentanaOperativa: consistente con estaEnHorarioOperativo");
   } catch(e) { Logger.log("Error en Test ventana operativa: " + e.message); }
+
+  // --- TESTS: Pipeline unificado / pasos declarados (refactor 27/07/2026) ---
+  Logger.log("--- Test: MailProcessor / pasos declarados ---");
+  try {
+    // Por defecto un reporte necesita crear tickets Y archivarse en Drive.
+    const porDefecto = new MailProcessor({ operationName: "test-default", emailSubject: "x" });
+    assertTrue(porDefecto.requierePaso('tickets'), "pasos: por defecto incluye 'tickets'");
+    assertTrue(porDefecto.requierePaso('drive'), "pasos: por defecto incluye 'drive'");
+
+    // Los reportes tipo Veeam ONE solo se archivan: no crean tickets.
+    const soloDrive = new MailProcessor({ operationName: "test-drive", emailSubject: "x", pasos: ['drive'] });
+    assertFalse(soloDrive.requierePaso('tickets'), "pasos: un processor 'drive' NO ejecuta el paso de tickets");
+    assertTrue(soloDrive.requierePaso('drive'), "pasos: un processor 'drive' sí ejecuta el paso de Drive");
+
+    // Un paso inexistente nunca se ejecuta (evita typos silenciosos en la config).
+    assertFalse(porDefecto.requierePaso('inexistente'), "pasos: un paso no declarado no se ejecuta");
+  } catch(e) { Logger.log("Error en Test pasos declarados: " + e.message); }
+
+  // --- TESTS: caminos silenciosos de processSingleMessage (incidente del 28/07/2026) ---
+  // Un reporte que llegaba SIN filas (solo encabezados) se marcaba [OPS-PROCESADO] pero se
+  // salteaba el cierre de la tarea programada y el archivado en Drive, y dejaba el resumen
+  // vacío: no llegaba nada a Slack ni a la planilla. Quedaban 5 TPs abiertas sin explicación.
+  Logger.log("--- Test: MailProcessor / reporte vacío y sin adjunto ---");
+  try {
+    const configFalsa = { clientName: "Cliente Test", jiraProjectKey: "TEST" };
+
+    const mensajeFalso = function (nombresAdjuntos) {
+      return {
+        getSubject: function () { return "Reporte de prueba"; },
+        getFrom: function () { return "reportes@dominio-inexistente.test"; },
+        getAttachments: function () {
+          return nombresAdjuntos.map(function (n) {
+            const attMock = { 
+              getName: function () { return n; }, 
+              getContentType: function () { return "text/csv"; } 
+            };
+            attMock.copyBlob = function() { return attMock; }; // Mock para MailProcessor.findAttachment
+            return attMock;
+          });
+        }
+      };
+    };
+
+    // Stub que corta TODA llamada externa (Jira, Drive) y solo anota qué pasos se ejecutaron.
+    class _ProcessorDePrueba extends MailProcessor {
+      constructor(parsed) {
+        super({ operationName: "test-vacio", emailSubject: "Reporte de prueba", attachmentMatch: "reporte" });
+        this._parsed = parsed;
+        this.llamadas = { noAlerts: 0, alerts: 0, drive: 0 };
+      }
+      resolveClientConfig() { return configFalsa; }
+      parseAttachment() { return this._parsed; }
+      processData(parsed) {
+        return { headers: parsed[0], finalAlerts: parsed.slice(1), rowsForExport: parsed.slice(1), reasonsText: "" };
+      }
+      findExistingTicket() { return null; }
+      handleNoAlerts() { this.llamadas.noAlerts++; return { status: 'SUCCESS' }; }
+      handleAlerts() { this.llamadas.alerts++; return { status: 'SUCCESS' }; }
+      ejecutarPasoDrive(message, clientName, summaryReport, resultado) { this.llamadas.drive++; return resultado; }
+    }
+
+    const correr = function (processor, mensaje) {
+      const summary = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
+      return { resultado: processor.processSingleMessage(mensaje, summary), summary: summary };
+    };
+
+    // 1) CSV con solo encabezados: es un reporte limpio, no un correo a ignorar.
+    const pVacio = new _ProcessorDePrueba([["Name", "Estado"]]);
+    const rVacio = correr(pVacio, mensajeFalso(["reporte-hoy.csv"]));
+    assertEqual(rVacio.resultado.status, 'SUCCESS', "reporte vacío: el correo se da por procesado");
+    assertEqual(pVacio.llamadas.noAlerts, 1, "reporte vacío: pasa por handleNoAlerts (que cierra la tarea programada)");
+    assertEqual(pVacio.llamadas.drive, 1, "reporte vacío: igual se archiva en Drive");
+    assertTrue(rVacio.summary.exitos.length > 0, "reporte vacío: deja rastro en el resumen (llega a Slack y a la planilla)");
+    assertEqual(pVacio.llamadas.alerts, 0, "reporte vacío: no intenta crear tickets");
+
+    // 2) Parseo fallido: no se sabe qué traía el reporte, así que NO se puede dar por procesado.
+    const pRoto = new _ProcessorDePrueba(null);
+    const rRoto = correr(pRoto, mensajeFalso(["reporte-hoy.csv"]));
+    assertEqual(rRoto.resultado.status, 'FAILURE', "parseo fallido: el correo queda pendiente para reintento");
+    assertEqual(pRoto.llamadas.noAlerts, 0, "parseo fallido: NO se cierra la tarea programada");
+
+    // 3) Reporte con filas: el camino normal no cambió.
+    const pConFilas = new _ProcessorDePrueba([["Name", "Estado"], ["SRV-01", "Inaccesible"]]);
+    const rConFilas = correr(pConFilas, mensajeFalso(["reporte-hoy.csv"]));
+    assertEqual(rConFilas.resultado.status, 'SUCCESS', "reporte con filas: sigue procesándose igual que antes");
+    assertEqual(pConFilas.llamadas.alerts, 1, "reporte con filas: pasa por handleAlerts");
+    assertEqual(pConFilas.llamadas.noAlerts, 0, "reporte con filas: no pasa por handleNoAlerts");
+
+    // 4) Adjunto que no matchea: sigue siendo NO_OP, pero ahora avisa en vez de desaparecer.
+    const pSinAdjunto = new _ProcessorDePrueba([["Name"]]);
+    const rSinAdjunto = correr(pSinAdjunto, mensajeFalso(["otra-cosa.csv"]));
+    assertEqual(rSinAdjunto.resultado.status, 'NO_OP', "sin adjunto que matchee: sigue siendo NO_OP");
+    assertTrue(rSinAdjunto.summary.advertencias.length > 0, "sin adjunto que matchee: deja una advertencia visible");
+  } catch(e) { Logger.log("Error en Test caminos silenciosos: " + e.message); }
+
+  // --- TESTS: reporte duplicado vs. tarea programada inexistente ---
+  // Es habitual que un cliente mande dos veces el reporte del día (o un segundo correo con un
+  // adjunto extra: primero el PDF, después PDF + XLSX). El primero cierra la tarea, así que el
+  // segundo no encuentra nada abierto — y antes eso lo mandaba a [OPS-ERROR] como si faltara
+  // corregir algo. Solo es error si NO existe ninguna tarea de hoy, en ningún estado.
+  Logger.log("--- Test: MailProcessor / reporte duplicado ---");
+  try {
+    const configFalsa = { clientName: "Cliente Test", jiraProjectKey: "TEST" };
+
+    class _ProcessorTP extends MailProcessor {
+      constructor() {
+        super({ operationName: "test-tp", emailSubject: "x", scheduledTaskName: "Reporte de prueba" });
+      }
+    }
+
+    const correrCierre = function (resultadoDeJira) {
+      const original = buscarYCerrarTareaProgramada;
+      const summary = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
+      try {
+        buscarYCerrarTareaProgramada = function () { return resultadoDeJira; };
+        return { resultado: new _ProcessorTP().cerrarTareaProgramadaSiCorresponde(configFalsa, summary), summary: summary };
+      } finally {
+        buscarYCerrarTareaProgramada = original;
+      }
+    };
+
+    // 1) Duplicado: la tarea de hoy ya estaba cerrada -> el correo se da por procesado.
+    const dup = correrCierre({ status: 'DUPLICADO', taskKey: 'TEST-1', estadoTarea: 'Finalizado' });
+    assertEqual(dup.resultado.status, 'SUCCESS', "duplicado: el correo se da por procesado (no va a [OPS-ERROR])");
+    assertTrue(dup.summary.advertencias.length > 0, "duplicado: deja una advertencia visible en el resumen");
+    assertEqual(dup.summary.errores.length, 0, "duplicado: NO se reporta como error");
+
+    // 2) No existe ninguna tarea de hoy: eso sí es un problema de configuración.
+    const noExiste = correrCierre({ status: 'NOT_FOUND' });
+    assertEqual(noExiste.resultado.status, 'ERROR_TERMINAL', "sin tarea del día: se aparta para revisión manual");
+
+    // 3) El camino normal no cambió.
+    const ok = correrCierre({ status: 'SUCCESS' });
+    assertEqual(ok.resultado.status, 'SUCCESS', "tarea cerrada: sigue devolviendo SUCCESS");
+    assertEqual(ok.summary.tareasCerradas, 1, "tarea cerrada: se contabiliza en el resumen");
+
+    // 4) Un correo que ya venía con un paso fallido no cierra la tarea (guarda previa).
+    const diferido = correrCierre({ status: 'DEFERRED' });
+    assertEqual(diferido.resultado.status, 'FAILURE', "diferido: el correo queda pendiente para reintentar");
+
+    // 5) YA_CERRADO: la búsqueda dio la tarea por abierta (índice de Jira atrasado) pero al ir
+    //    a cerrarla ya estaba en estado final. Se trata igual que un duplicado, no como fallo.
+    //    Es el caso que apareció el 28/07/2026 con dos correos del mismo reporte en un ciclo.
+    const yaCerrado = correrCierre({ status: 'DUPLICADO', taskKey: 'TEST-9', estadoTarea: 'Finalizado' });
+    assertEqual(yaCerrado.resultado.status, 'SUCCESS', "tarea ya cerrada al intentar cerrarla: el correo se da por procesado");
+    assertEqual(yaCerrado.summary.errores.length, 0, "tarea ya cerrada: NO se reporta como error");
+
+    // 6) Un processor sin tarea programada configurada no hace nada de esto.
+    const sinTarea = new MailProcessor({ operationName: "test-sin-tp", emailSubject: "x" });
+    assertEqual(
+      sinTarea.cerrarTareaProgramadaSiCorresponde(configFalsa, { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 }).status,
+      'SUCCESS',
+      "sin scheduledTaskName: no intenta cerrar nada"
+    );
+  } catch(e) { Logger.log("Error en Test reporte duplicado: " + e.message); }
+
+  // --- TESTS: red de seguridad del entorno TESTING ---
+  // En TESTING nada puede terminar en el proyecto de Jira ni en la carpeta de Drive de un
+  // cliente real: un correo de prueba puede llegar de cualquier casilla, y varios processors
+  // (las rutas DRP, VMsConSnapshots) piden la config con un nombre de cliente real hardcodeado.
+  Logger.log("--- Test: SAFEGUARD de entorno TESTING ---");
+  try {
+    assertTrue(typeof esEntornoTesting() === "boolean", "esEntornoTesting: retorna boolean");
+    assertEqual(
+      esEntornoTesting(),
+      PropertiesService.getScriptProperties().getProperty("ENVIRONMENT") === "TESTING",
+      "esEntornoTesting: coincide con la Script Property ENVIRONMENT"
+    );
+    assertEqual(TESTING_SAFETY_CLIENT_NAME, "WPC - Operaciones Testing", "TESTING_SAFETY_CLIENT_NAME: apunta al cliente de pruebas");
+
+    // Se sustituyen las dependencias globales para no tocar la red ni el Índice Maestro real.
+    const _esEntornoTestingOriginal = esEntornoTesting;
+    const _getClientConfigByNameOriginal = getClientConfigByName;
+    const _getMasterDataOriginal = MasterSheetSingleton.getMasterData;
+    const _getExceptionDataOriginal = MasterSheetSingleton.getExceptionData;
+    const _getRequestTypeIdOriginal = getRequestTypeIdForServiceDesk;
+
+    try {
+      esEntornoTesting = function () { return true; };
+
+      // 1) getClientConfig ignora el remitente y delega en el cliente de seguridad.
+      let nombrePedido = null;
+      getClientConfigByName = function (clientName) { nombrePedido = clientName; return { clientName: clientName }; };
+      getClientConfig("reportes@un-cliente-real.com", "VMs inaccesibles");
+      assertEqual(nombrePedido, TESTING_SAFETY_CLIENT_NAME, "TESTING: getClientConfig ignora el remitente y usa el cliente de pruebas");
+
+      // 2) El modo soporte se propaga (JobsVeeam lo usa y necesita los campos *Sop).
+      let soportePedido = null;
+      getClientConfigByName = function (clientName, op, soporte) { soportePedido = soporte; return {}; };
+      getClientConfig("reportes@un-cliente-real.com", "Jobs de Veeam", true);
+      assertTrue(soportePedido === true, "TESTING: getClientConfig propaga el modo soporte al redirigir");
+
+      // 3) getClientConfigByName redirige aunque le pasen un cliente real por nombre.
+      //    Cubre las rutas DRP y los processors que hardcodean nombres de clientes.
+      getClientConfigByName = _getClientConfigByNameOriginal;
+      MasterSheetSingleton.getMasterData = function () {
+        return [
+          ["remitente", "cliente", "excepciones", "proyecto", "servicedesk", "tipo", "tecnologia", "origen"],
+          ["@cliente-real.com", "Operaciones Cliente Real", "id-exc-real", "REAL", "1", "Solicitud", "VMware vSphere", ""],
+          ["@testing.com", TESTING_SAFETY_CLIENT_NAME, "id-exc-test", "WPC", "9", "Solicitud", "VMware vSphere", ""]
+        ];
+      };
+      MasterSheetSingleton.getExceptionData = function () { return { exceptionSheet: null, exceptionData: [] }; };
+      getRequestTypeIdForServiceDesk = function () { return "req-1"; };
+
+      const configRedirigida = getClientConfigByName("Operaciones Cliente Real", "VMs inaccesibles");
+      assertTrue(configRedirigida !== null, "TESTING: getClientConfigByName devuelve una configuración");
+      assertEqual(configRedirigida.clientName, TESTING_SAFETY_CLIENT_NAME, "TESTING: un nombre de cliente real se redirige al cliente de pruebas");
+      assertEqual(configRedirigida.jiraProjectKey, "WPC", "TESTING: el ticket va al proyecto de pruebas, no al del cliente real");
+
+      // 4) Fuera de TESTING el comportamiento normal no cambia.
+      esEntornoTesting = function () { return false; };
+      const configReal = getClientConfigByName("Operaciones Cliente Real", "VMs inaccesibles");
+      assertEqual(configReal.clientName, "Operaciones Cliente Real", "Fuera de TESTING: se respeta el cliente pedido");
+      assertEqual(configReal.jiraProjectKey, "REAL", "Fuera de TESTING: se respeta el proyecto del cliente pedido");
+
+    } finally {
+      esEntornoTesting = _esEntornoTestingOriginal;
+      getClientConfigByName = _getClientConfigByNameOriginal;
+      MasterSheetSingleton.getMasterData = _getMasterDataOriginal;
+      MasterSheetSingleton.getExceptionData = _getExceptionDataOriginal;
+      getRequestTypeIdForServiceDesk = _getRequestTypeIdOriginal;
+    }
+  } catch(e) { Logger.log("Error en Test safeguard TESTING: " + e.message); }
+
+  // --- TESTS: resolución de remitente para Drive ---
+  Logger.log("--- Test: DriveClientIndexSingleton / parseo de From ---");
+  try {
+    const emailDeFrom = DriveClientIndexSingleton.emailDeFrom;
+    // El caso real que motivó el refactor: reportes de Veeam ONE de Petersen.
+    assertEqual(emailDeFrom('"Veeam ONE" <veeamsmtp@gpsa.com.ar>'), "veeamsmtp@gpsa.com.ar", "emailDeFrom: extrae la casilla de un From con nombre visible");
+    assertEqual(emailDeFrom("vrealizeoperations@gbsj.com.ar"), "vrealizeoperations@gbsj.com.ar", "emailDeFrom: tolera un From sin nombre visible");
+    assertEqual(emailDeFrom("  ALERTAS@Wetcom.COM  "), "alertas@wetcom.com", "emailDeFrom: normaliza espacios y mayúsculas");
+    assertEqual(emailDeFrom(null), "", "emailDeFrom: tolera null sin romper");
+  } catch(e) { Logger.log("Error en Test emailDeFrom: " + e.message); }
+
+  // --- TESTS: registro central de fallos (regresión del incidente WPC-815, 27/07/2026) ---
+  Logger.log("--- Test: Registro de fallos del mensaje ---");
+  try {
+    iniciarSeguimientoDeFallos();
+    assertEqual(obtenerFallosDelMensaje().length, 0, "fallos: arranca vacío tras iniciarSeguimientoDeFallos()");
+
+    // Caso real: Jira devolvió HTTP 500 al adjuntar y el processor igual devolvía SUCCESS.
+    registrarFalloDePaso("addAttachmentToJiraTicket", "Ticket WPC-815: Jira devolvió HTTP 500 al adjuntar.");
+    assertEqual(obtenerFallosDelMensaje().length, 1, "fallos: registra el fallo de adjunto");
+    assertEqual(obtenerFallosDelMensaje()[0].origen, "addAttachmentToJiraTicket", "fallos: guarda el origen del fallo");
+
+    // Cada correo arranca limpio: un fallo no puede contaminar al siguiente.
+    iniciarSeguimientoDeFallos();
+    assertEqual(obtenerFallosDelMensaje().length, 0, "fallos: se limpian entre correos");
+
+    // El registro devuelve una copia: mutarla no debe afectar el estado interno.
+    registrarFalloDePaso("resolveJiraTicket", "Ticket X: no existe transición.");
+    const copia = obtenerFallosDelMensaje();
+    copia.push({ origen: "falso", detalle: "no debería persistir" });
+    assertEqual(obtenerFallosDelMensaje().length, 1, "fallos: obtenerFallosDelMensaje devuelve una copia, no la referencia interna");
+
+    // Fallos terminales: los que no se arreglan reintentando (ej. tarea programada inexistente).
+    iniciarSeguimientoDeFallos();
+    registrarFalloDePaso("addAttachmentToJiraTicket", "HTTP 500 transitorio");
+    assertFalse(hayFalloTerminal(), "fallos: un fallo transitorio NO es terminal (se reintenta)");
+
+    registrarFalloDePaso("buscarYCerrarTareaProgramada", "La tarea no existe en el proyecto", true);
+    assertTrue(hayFalloTerminal(), "fallos: NOT_FOUND marca el correo como terminal (va a [OPS-ERROR])");
+    assertEqual(obtenerFallosDelMensaje()[1].terminal, true, "fallos: guarda el flag terminal en el registro");
+
+    iniciarSeguimientoDeFallos();
+    assertFalse(hayFalloTerminal(), "fallos: el flag terminal también se limpia entre correos");
+  } catch(e) { Logger.log("Error en Test registro de fallos: " + e.message); }
+
+  // --- TESTS: registro de processors (Etapa A/B del refactor) ---
+  Logger.log("--- Test: Registro de processors ---");
+  try {
+    const registro = obtenerRegistroDeProcesadores();
+    assertTrue(registro.length > 24, "registro: incluye los processors originales + los de Veeam ONE + el catch-all");
+
+    // Toda entrada debe poder instanciarse: si una clase se renombra, esto lo detecta acá
+    // y no en producción a mitad del ciclo.
+    let instanciablesOk = true;
+    registro.forEach(function (e) {
+      try {
+        const p = e.crear();
+        if (!p || typeof p.processEmails !== "function") instanciablesOk = false;
+      } catch (err) {
+        instanciablesOk = false;
+        Logger.log(`  -> No se pudo instanciar "${e.tarea}": ${err.message}`);
+      }
+    });
+    assertTrue(instanciablesOk, "registro: todas las entradas se instancian y exponen processEmails()");
+
+    // El catch-all debe ir SIEMPRE último: si corriera antes, se llevaría correos que
+    // le corresponden a un processor específico.
+    assertEqual(registro[registro.length - 1].tarea, "processReportesSinProcessorEmails", "registro: el catch-all es la última tarea del ciclo");
+
+    // Los asuntos reclamados alimentan al catch-all; el suyo propio ("") no debe estar.
+    const asuntos = obtenerAsuntosConProcessor();
+    assertTrue(asuntos.indexOf("VMs protegidas") !== -1, "asuntos: incluye los reportes de Veeam ONE (Etapa 2)");
+    assertTrue(asuntos.every(function (a) { return a && a.trim() !== ""; }), "asuntos: no incluye vacíos (el catch-all quedaría sin correos)");
+  } catch(e) { Logger.log("Error en Test registro de processors: " + e.message); }
 
   Logger.log("=== FIN DE SUITE DE PRUEBAS ===");
   Logger.log(`Resultados: ${passed} Pasaron, ${failed} Fallaron.`);

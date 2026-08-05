@@ -107,8 +107,16 @@ function procesarRVToolsManual(clientName, rvToolsFolderId) {
   }
 
   // 5. Gestionar Tickets en Jira
+  // Zombies y Connect son dos reportes independientes con su propia Tarea Programada.
+  // buscarYCerrarTareaProgramada se niega a cerrar si obtenerFallosDelMensaje() tiene algo
+  // (guarda central en JiraService.js), y ese registro es global: sin resetearlo entre
+  // reportes, un NOT_FOUND de Zombies (p.ej. su TP no se creó hoy) queda pisando el cierre
+  // de Connect aunque su ticket haya salido perfecto. iniciarSeguimientoDeFallos() antes de
+  // cada uno los trata como unidades independientes, igual que MailProcessor hace por correo.
   Logger.log("Gestionando tickets en Jira...");
+  iniciarSeguimientoDeFallos();
   gestionarReporteRVTools(configZombies, summaryReport, ZOMBIE_TASK_NAME,  ZOMBIE_TICKET_TITLE,  allZombieHeaders,  allZombieAnomalies);
+  iniciarSeguimientoDeFallos();
   gestionarReporteRVTools(configConnect, summaryReport, CONNECT_TASK_NAME, CONNECT_TICKET_TITLE, allConnectHeaders, allConnectAnomalies);
 
   // 6. Enviar mensaje a Slack
