@@ -54,7 +54,7 @@ class VMsEnMasDeUnJobProcessor extends MailProcessor {
 
     const attachmentCsv = this.extractedBlobs.find(blob => {
       const name = blob.getName().toLowerCase();
-      return name.includes("details") && name.endsWith(".csv");
+      return (name.includes("details") || name.includes(searchString)) && name.endsWith(".csv");
     });
 
     if (attachmentExcel) {
