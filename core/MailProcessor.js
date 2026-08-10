@@ -29,6 +29,9 @@ class MailProcessor {
 
   /** @returns {boolean} true si este processor debe ejecutar el paso indicado. */
   requierePaso(paso) {
+    if (paso === 'tickets' && globalThis.ES_DIA_NO_LABORABLE) {
+      return false; // Skip Jira tickets on weekends/holidays
+    }
     return this.pasos.indexOf(paso) !== -1;
   }
 

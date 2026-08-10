@@ -121,18 +121,11 @@ function ejecutarCicloDeOperaciones() {
   const diaDeLaSemana = ahora.getDay();
   const horaActual = ahora.getHours();
 
-  // 1. Validar Día Laborable (Lunes a Viernes)
-  if (diaDeLaSemana < 1 || diaDeLaSemana > 5) { 
-    Logger.log("EJECUCIÓN OMITIDA: Fin de semana.");
-    borrarActivadorTemporal();
-    return;
-  }
-
-  // 2. Validar Feriado
-  if (esFeriadoHoy()) {
-    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado.");
-    borrarActivadorTemporal();
-    return;
+  // 1 & 2. Validar Día Laborable (Lunes a Viernes) y Feriados
+  if (diaDeLaSemana < 1 || diaDeLaSemana > 5 || esFeriadoHoy()) { 
+    globalThis.ES_DIA_NO_LABORABLE = true;
+  } else {
+    globalThis.ES_DIA_NO_LABORABLE = false;
   }
 
   // 3. Control de Concurrencia (Lock)
@@ -193,8 +186,10 @@ function ejecutarCicloDeOperaciones() {
       } else {
         Logger.log("Fin de ventana operativa. Ejecutando reportes finales de cierre...");
         
-        try { generarReporteDiarioDeTickets(); } catch (e) {}
-        try { generarReporteTareasCerradas(); } catch (e) {}
+        if (!globalThis.ES_DIA_NO_LABORABLE) {
+          try { generarReporteDiarioDeTickets(); } catch (e) {}
+          try { generarReporteTareasCerradas(); } catch (e) {}
+        }
         // A-04: se eliminó la llamada a generarReporteConsumoVsphere() sin argumento.
         // Esa función requiere un opsKey (es por-cliente) y sin él salía de inmediato
         // logueando "Key: undefined" sin hacer nada; además su retorno se descartaba.
