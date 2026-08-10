@@ -35,14 +35,66 @@ class VMsEnMasDeUnJobProcessor extends MailProcessor {
       const attNameLower = att.getName().toLowerCase();
       if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
         try {
-          const unzippedBlobs = Utilities.unzip(att.copyBlob());
-          this.extractedBlobs = this.extractedBlobs.concat(unzippedBlobs);
+          const zipBlob = att.copyBlob();
+          const bytes = zipBlob.getBytes();
+          const size = bytes.length;
+
+          // Detectar formato real por magic bytes
+          const magic = size >= 4 ? `${(bytes[0] & 0xFF).toString(16)}-${(bytes[1] & 0xFF).toString(16)}-${(bytes[2] & 0xFF).toString(16)}-${(bytes[3] & 0xFF).toString(16)}` : "archivo muy corto";
+          Logger.log(`[DEBUG findAttachment] ZIP "${att.getName()}" | Tamaño: ${size} bytes | Magic: ${magic}`);
+
+          // Intentar unzip estándar
+          zipBlob.setContentType("application/zip");
+          let unzippedBlobs = Utilities.unzip(zipBlob);
+
+          // Si falló, reintentar con blob desde bytes crudos
+          if (!unzippedBlobs || unzippedBlobs.length === 0) {
+            Logger.log(`[DEBUG findAttachment] unzip con copyBlob() devolvió 0. Reintentando con newBlob()...`);
+            const rawBlob = Utilities.newBlob(bytes, "application/zip", att.getName());
+            unzippedBlobs = Utilities.unzip(rawBlob);
+          }
+
+          if (unzippedBlobs && unzippedBlobs.length > 0) {
+            this.extractedBlobs = this.extractedBlobs.concat(unzippedBlobs);
+          } else {
+            // Intentar GZIP (magic bytes 1f-8b)
+            if (size >= 2 && (bytes[0] & 0xFF) === 0x1F && (bytes[1] & 0xFF) === 0x8B) {
+              Logger.log(`[DEBUG findAttachment] Detectado formato GZIP. Intentando ungzip...`);
+              const gzBlob = Utilities.newBlob(bytes, "application/x-gzip", att.getName());
+              const ungzipped = Utilities.ungzip(gzBlob);
+              const csvName = att.getName().replace(/\.zip$/i, ".csv");
+              ungzipped.setName(csvName);
+              this.extractedBlobs.push(ungzipped);
+            } else {
+              // Último recurso: leer como texto directo (puede ser CSV renombrado a .zip)
+              Logger.log(`[DEBUG findAttachment] unzip sigue en 0. Intentando leer como texto directo...`);
+              const textContent = zipBlob.getDataAsString("UTF-8");
+              const firstChars = textContent.substring(0, 200);
+              Logger.log(`[DEBUG findAttachment] Primeros 200 chars: "${firstChars}"`);
+              
+              // Si parece un CSV (contiene comas o punto y comas y saltos de línea), usarlo
+              if (textContent.includes(",") || textContent.includes(";")) {
+                Logger.log(`[DEBUG findAttachment] El contenido parece ser un CSV. Usándolo directamente.`);
+                const csvBlob = Utilities.newBlob(textContent, "text/csv", att.getName().replace(/\.zip$/i, ".csv"));
+                this.extractedBlobs.push(csvBlob);
+              } else {
+                Logger.log(`[DEBUG findAttachment] No se pudo interpretar el archivo. ZIP vacío o formato desconocido.`);
+              }
+            }
+          }
         } catch(e) {
+          Logger.log(`[DEBUG findAttachment] Error al descomprimir "${att.getName()}": ${e.message}`);
           this.extractedBlobs.push(att.copyBlob());
         }
       } else {
         this.extractedBlobs.push(att.copyBlob());
       }
+    });
+
+    // Debug: loguear todos los blobs extraídos para diagnóstico
+    Logger.log(`[DEBUG findAttachment] Blobs extraídos (${this.extractedBlobs.length}):`);
+    this.extractedBlobs.forEach(blob => {
+      Logger.log(`  - "${blob.getName()}"`);
     });
 
     const searchString = this.attachmentMatch.toLowerCase().trim();
@@ -64,6 +116,24 @@ class VMsEnMasDeUnJobProcessor extends MailProcessor {
       this.isV13 = true;
       return attachmentCsv;
     }
+
+    // Fallback: si no matcheó por nombre pero hay exactamente un CSV, usarlo
+    const allCsvs = this.extractedBlobs.filter(blob => blob.getName().toLowerCase().endsWith(".csv"));
+    if (allCsvs.length === 1) {
+      Logger.log(`[DEBUG findAttachment] Fallback: usando el único CSV encontrado: "${allCsvs[0].getName()}"`);
+      this.isV13 = true;
+      return allCsvs[0];
+    }
+
+    // Fallback para ZIPs vacíos: Veeam ONE envía ZIPs de 22 bytes (0 archivos adentro) cuando el reporte está limpio (sin VMs duplicadas).
+    // Devolvemos un CSV con solo encabezado para que MailProcessor lo interprete como "sin anomalías" y cierre la tarea programada.
+    if (this.extractedBlobs.length === 0) {
+      Logger.log(`[DEBUG findAttachment] Fallback: ZIP vacío. Se asume reporte sin anomalías.`);
+      this.isV13 = true;
+      return Utilities.newBlob("VMs\n", "text/csv", "empty_report.csv");
+    }
+
+    Logger.log(`[DEBUG findAttachment] No se encontró ningún adjunto válido. searchString="${searchString}"`);
     return null;
   }
 
