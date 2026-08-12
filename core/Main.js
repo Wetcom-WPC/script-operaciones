@@ -48,6 +48,9 @@ function obtenerRegistroDeProcesadores() {
     { tarea: 'processHorizonProblemMachinesEmails', crear: () => new HorizonProblemMachinesProcessor() },
     { tarea: 'processTanzuEmails',                crear: () => new TanzuMailProcessor() },
 
+    // --- Reportes de Nutanix (OPS-NTX-001 al 004) ---
+    { tarea: 'processNutanixOpsEmails',           crear: () => new NutanixOpsProcessor() },
+
     // --- Reportes de Veeam ONE (solo se archivan y cierran su tarea programada) ---
     { tarea: 'processVeeamVMsProtegidasEmails',       crear: () => new VeeamOneReporteProcessor("VMs protegidas") },
     { tarea: 'processVeeamReplicasProtegidasEmails',  crear: () => new VeeamOneReporteProcessor("Replicas protegidas") },
