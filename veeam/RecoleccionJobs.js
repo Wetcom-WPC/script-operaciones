@@ -86,6 +86,16 @@ Ante cualquier duda o consulta estamos a su disposición.`;
     return;
   }
 
+  // === VALIDAR ARCHIVO VACÍO ===
+  // Chequeamos el tamaño del archivo adjunto
+  const archivoBlob = adjuntos[0];
+  if (archivoBlob.getBytes().length === 0) {
+    const msjError = `El archivo ${nombreArchivoEsperado} llegó completamente vacío (0 bytes). Se cancela el envío del correo al cliente.`;
+    Logger.log(`🚨 ${msjError}`);
+    enviarAlertaCriticaSlack("Reporte de Comafi Vacío", msjError);
+    return;
+  }
+
   // === ENVIAR EL MAIL ===
   sendEmail({
     to: destinatario,
