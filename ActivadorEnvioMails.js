@@ -386,6 +386,6 @@ function enviarMailUnitario(tecnologia, opsKey, nombreOps, soporteKey, nombreSop
       Logger.log(`[MAIL] Error al cerrar tarea Jira: ${e.message}`);
     }
   }
- 
+  AutomatizarOperaciones.flushLogs();
   return true;
 }
