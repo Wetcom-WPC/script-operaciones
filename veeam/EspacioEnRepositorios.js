@@ -40,13 +40,95 @@ class EspacioEnRepositoriosProcessor extends MailProcessor {
   }
 
   findAttachment(message) {
-    const searchString = this.attachmentMatch.toLowerCase().trim();
-    return message.getAttachments().find(att => {
-      const attName = att.getName().toLowerCase();
-      const isNameMatch = attName.includes(searchString);
-      const isExcel = (att.getContentType() === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || attName.endsWith(".xlsx"));
-      return isNameMatch && isExcel;
+    let attachmentToUse = null;
+    this.extractedBlobs = [];
+
+    message.getAttachments().forEach(att => {
+      const attNameLower = att.getName().toLowerCase();
+      if (attNameLower.endsWith(".zip") || att.getContentType() === "application/zip") {
+        try {
+          const zipBlob = att.copyBlob();
+          const bytes = zipBlob.getBytes();
+          const size = bytes.length;
+
+          const magic = size >= 4 ? `${(bytes[0] & 0xFF).toString(16)}-${(bytes[1] & 0xFF).toString(16)}-${(bytes[2] & 0xFF).toString(16)}-${(bytes[3] & 0xFF).toString(16)}` : "archivo muy corto";
+          Logger.log(`[DEBUG findAttachment] ZIP "${att.getName()}" | Tamaño: ${size} bytes | Magic: ${magic}`);
+
+          zipBlob.setContentType("application/zip");
+          let unzippedBlobs = Utilities.unzip(zipBlob);
+
+          if (!unzippedBlobs || unzippedBlobs.length === 0) {
+            Logger.log(`[DEBUG findAttachment] unzip con copyBlob() devolvió 0. Reintentando con newBlob()...`);
+            const rawBlob = Utilities.newBlob(bytes, "application/zip", att.getName());
+            unzippedBlobs = Utilities.unzip(rawBlob);
+          }
+
+          if (unzippedBlobs && unzippedBlobs.length > 0) {
+            this.extractedBlobs = this.extractedBlobs.concat(unzippedBlobs);
+          } else {
+            if (size >= 2 && (bytes[0] & 0xFF) === 0x1F && (bytes[1] & 0xFF) === 0x8B) {
+              Logger.log(`[DEBUG findAttachment] Detectado formato GZIP. Intentando ungzip...`);
+              const gzBlob = Utilities.newBlob(bytes, "application/x-gzip", att.getName());
+              const ungzipped = Utilities.ungzip(gzBlob);
+              const csvName = att.getName().replace(/\.zip$/i, ".csv");
+              ungzipped.setName(csvName);
+              this.extractedBlobs.push(ungzipped);
+            } else {
+              Logger.log(`[DEBUG findAttachment] unzip sigue en 0. Intentando leer como texto directo...`);
+              const textContent = zipBlob.getDataAsString("UTF-8");
+              if (textContent.includes(",") || textContent.includes(";")) {
+                Logger.log(`[DEBUG findAttachment] El contenido parece ser un CSV. Usándolo directamente.`);
+                const csvBlob = Utilities.newBlob(textContent, "text/csv", att.getName().replace(/\.zip$/i, ".csv"));
+                this.extractedBlobs.push(csvBlob);
+              } else {
+                Logger.log(`[DEBUG findAttachment] No se pudo interpretar el archivo. ZIP vacío o formato desconocido.`);
+              }
+            }
+          }
+        } catch(e) {
+          Logger.log(`[DEBUG findAttachment] Error al descomprimir "${att.getName()}": ${e.message}`);
+          this.extractedBlobs.push(att.copyBlob());
+        }
+      } else {
+        this.extractedBlobs.push(att.copyBlob());
+      }
     });
+
+    const searchString = this.attachmentMatch.toLowerCase().trim();
+
+    const attachmentExcel = this.extractedBlobs.find(blob => {
+      const name = blob.getName().toLowerCase();
+      return name.includes(searchString) && name.endsWith(".xlsx");
+    });
+
+    const attachmentCsv = this.extractedBlobs.find(blob => {
+      const name = blob.getName().toLowerCase();
+      return (name.includes("details") || name.includes(searchString)) && name.endsWith(".csv");
+    });
+
+    if (attachmentExcel) {
+      this.isV13 = false;
+      return attachmentExcel;
+    } else if (attachmentCsv) {
+      this.isV13 = true;
+      return attachmentCsv;
+    }
+
+    const allCsvs = this.extractedBlobs.filter(blob => blob.getName().toLowerCase().endsWith(".csv"));
+    if (allCsvs.length === 1) {
+      Logger.log(`[DEBUG findAttachment] Fallback: usando el único CSV encontrado: "${allCsvs[0].getName()}"`);
+      this.isV13 = true;
+      return allCsvs[0];
+    }
+
+    if (this.extractedBlobs.length === 0) {
+      Logger.log(`[DEBUG findAttachment] Fallback: ZIP vacío. Se asume reporte sin anomalías.`);
+      this.isV13 = true;
+      return Utilities.newBlob("Repository: Name,Repository: Free Space (%),Backup Server Name\n", "text/csv", "empty_report.csv");
+    }
+
+    Logger.log(`[DEBUG findAttachment] No se encontró ningún adjunto válido. searchString="${searchString}"`);
+    return null;
   }
 
   resolveClientConfig(config, sender, attachment, message, summaryReport) {
@@ -56,9 +138,14 @@ class EspacioEnRepositoriosProcessor extends MailProcessor {
 
   parseAttachment(attachment, summaryReport) {
     try {
-      return convertRepoExcelToDataLocal(attachment.copyBlob());
+      if (this.isV13) {
+        const csvString = attachment.getDataAsString();
+        return parseCsvRobust(csvString);
+      } else {
+        return convertRepoExcelToDataLocal(attachment.copyBlob());
+      }
     } catch (e) {
-      summaryReport.errores.push({ error: "Fallo al leer el archivo Excel.", detalle: e.message });
+      summaryReport.errores.push({ error: `Fallo al leer el archivo ${this.isV13 ? 'CSV' : 'Excel'}.`, detalle: e.message });
       return null;
     }
   }
