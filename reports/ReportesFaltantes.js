@@ -137,14 +137,7 @@ function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy) {
   }
 
   const archivosEnCarpeta = CACHE_ARCHIVOS_CARPETA[cacheKey];
-  
-  // Normalizamos tanto el nombre en Drive como el de la planilla para ignorar mayúsculas y guiones/subguiones
-  const idNormalizado = identificadorReporte.toLowerCase().replace(/[-_]/g, ' ');
-  
-  return archivosEnCarpeta.some(nombreReal => {
-    const nombreRealNormalizado = nombreReal.toLowerCase().replace(/[-_]/g, ' ');
-    return nombreRealNormalizado.includes(idNormalizado);
-  });
+  return archivosEnCarpeta.some(nombreReal => nombreReal.includes(identificadorReporte));
 }
 
 /**
@@ -300,10 +293,9 @@ function crearTriggerAuditoriaDiaria() {
     .timeBased()
     .everyDays(1)
     .atHour(8)
-    .nearMinute(45)
     .create();
 
-  Logger.log("✅ Activador creado con éxito. Se ejecutará todos los días entre las 08:30 y las 09:00 hs.");
+  Logger.log("✅ Activador creado con éxito. Se ejecutará todos los días entre las 08:00 y las 09:00 hs.");
 }
 
 
