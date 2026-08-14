@@ -51,6 +51,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 
     const headers = parsedData[0].map(h => h.trim());
     const reportRows = parsedData.slice(1);
+    Logger.log("HEADERS ENCONTRADOS: " + JSON.stringify(headers));
     
     if (clientConfig && !clientConfig.exceptions) clientConfig.exceptions = [];
 
@@ -60,6 +61,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     let idxAge = findCol("Number_Days_Old") !== -1 ? findCol("Number_Days_Old") : findCol("Age");  
     let idxSpace = findCol("Snapshot_Space") !== -1 ? findCol("Snapshot_Space") : findCol("Space");
     let idxCount = findCol("Number_Snapshots") !== -1 ? findCol("Number_Snapshots") : findCol("Cantidad");
+    let idxSnapshotName = findCol("Snapshot_Name");
     
     let idxTotalCapacity = findCol("Total_Capacity") !== -1 ? findCol("Total_Capacity") : findCol("Total Capacity");
     if (idxTotalCapacity === -1) idxTotalCapacity = findCol("Summary|Datastore(s)");
@@ -103,7 +105,13 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     const opsAlerts = [];
     const soporteAlerts = [];
 
-    const sopRules = getSopRules(clientConfig.exceptionFileId);
+    // Las reglas de soporte vienen de la misma planilla de Excepciones (columnas AGE/SIZE/QTY/CRITERIO)
+    let sopRules = {};
+    if (typeof getClientConfig === "function") {
+      const emailParaSoporte = (clientConfig && clientConfig.senderEmail) ? clientConfig.senderEmail : "alarmas@wetcom.com";
+      const configSop = getClientConfig(emailParaSoporte, this.operationName + " SOP", true);
+      if (configSop && configSop.exceptions) sopRules = configSop.exceptions;
+    }
 
     reportRows.forEach(row => {
       if (row.length < idxAge || row.join('').trim() === '') return;
@@ -112,6 +120,15 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       if (vmName.toLowerCase().includes("replica")) return;
       
       const age = parseSeguro(row[idxAge]);
+      
+      // Ignorar snapshots con age -1 (o negativo) reportados por la plataforma
+      if (age < 0) return;
+      
+      if (idxSnapshotName !== -1) {
+         const snapName = (row[idxSnapshotName] || "").toString().toLowerCase();
+         if (snapName.includes("restore point") || snapName.includes("restore_point")) return;
+      }
+      
       const space = parseSpaceToGB(row[idxSpace]);
       const count = parseSeguro(row[idxCount]);
       
@@ -126,7 +143,10 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       
       if (isRowExcepted(row, headers, clientConfig.exceptions)) return;
 
-      const matchedRule = typeof findMatchingSopRule === 'function' ? findMatchingSopRule(row, headers, sopRules) : null;
+      const matchedRule = findMatchingSopRule(row, headers, sopRules);
+      if (matchedRule) {
+         Logger.log("[DEBUG SOPORTE] VM MATCH. Valores regla: AGE=" + matchedRule.age + ", SIZE=" + matchedRule.size + ", QTY=" + matchedRule.qty + ". Valores reales: AGE=" + age + ", SIZE=" + space + ", QTY=" + count);
+      }
       
       if (matchedRule) {
          let sizeLimit = matchedRule.size > 0 ? matchedRule.size : Infinity;
@@ -194,55 +214,59 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       const clientConfigOps = getClientConfigByName(clientConfig_Ignored.clientName, this.operationName) || clientConfig_Ignored;
       const existingTicketKeyOps = findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfigOps.jiraProjectKey) ||
                                    findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps.jiraProjectKey);
-                                   
-      const rowsExp = [...this.opsAlerts];
-      // Note: we'd append summaryRow if we had it, but we can just omit it for the split.
-      
-      if (existingTicketKeyOps) {
-        if (!haSidoActualizadoHoy(existingTicketKeyOps, "ALERTA-SNAPSHOTS-OPS")) {
-          let commentText = `🚨 **El problema persiste.** [HU-ALERTA-SNAPSHOTS-OPS]\n\nSe detectaron ${this.opsAlerts.length} VMs fuera de norma:\n${this.opsReasonsText}\n\n`;
-          if (this.opsAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-            commentText += `|| ${headers.join(" || ")} ||\n`;
-            this.opsAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
-            addCommentToJiraTicket(existingTicketKeyOps, commentText);
-            summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con tabla.` });
-          } else {
-            const nombreReporte = attachmentName.replace(/\.csv$/i, "-Ops-FILTRADO.xlsx");
-            const xlsxBlob = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporte);
-            if (xlsxBlob) {
-              const attStatus = addAttachmentToJiraTicket(existingTicketKeyOps, xlsxBlob);
-              if (attStatus.status === 'SUCCESS') {
-                commentText += "Se adjunta reporte detallado.";
-                addCommentToJiraTicket(existingTicketKeyOps, commentText);
-                summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con adjunto.` });
-                const accountIdAsignado = chequearSiEsInformativa(clientConfigOps.clientName, this.operationName);
-                if (accountIdAsignado) ticketInformativo(existingTicketKeyOps, accountIdAsignado);
+                               const rowsExp = [...this.opsAlerts];
+        
+        const nombreReporteOps = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-OPS.xlsx";
+        const xlsxBlobOps = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporteOps);
+        if (xlsxBlobOps) {
+            this.extractedBlobs = this.extractedBlobs || [];
+            this.extractedBlobs.push(xlsxBlobOps);
+        }
+
+        if (existingTicketKeyOps) {
+          if (!haSidoActualizadoHoy(existingTicketKeyOps, "ALERTA-SNAPSHOTS-OPS")) {
+            let commentText = `⏳ **El problema persiste.** [HU-ALERTA-SNAPSHOTS-OPS]\n\nSe detectaron ${this.opsAlerts.length} VMs fuera de norma:\n${this.opsReasonsText}\n\n`;
+            if (this.opsAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
+              commentText += `|| ${headers.join(" || ")} ||\n`;
+              this.opsAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+              addCommentToJiraTicket(existingTicketKeyOps, commentText);
+              summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con tabla.` });
+            } else {
+              if (xlsxBlobOps) {
+                const attStatus = addAttachmentToJiraTicket(existingTicketKeyOps, xlsxBlobOps);
+                if (attStatus.status === 'SUCCESS') {
+                  commentText += "Se adjunta reporte detallado.";
+                  addCommentToJiraTicket(existingTicketKeyOps, commentText);
+                  summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con adjunto.` });
+                  const accountIdAsignado = chequearSiEsInformativa(clientConfigOps.clientName, this.operationName);
+                  if (accountIdAsignado) ticketInformativo(existingTicketKeyOps, accountIdAsignado);
+                } else {
+                  summaryReport.advertencias.push("Fallo al adjuntar en Ops.");
+                  globalStatus = 'FAILURE';
+                }
               } else {
-                summaryReport.advertencias.push("Fallo al adjuntar en Ops.");
                 globalStatus = 'FAILURE';
               }
-            } else {
-              globalStatus = 'FAILURE';
             }
           }
-        }
-      } else {
-        let summary, description, xlsxBlob = null;
-        description = `Se detectaron ${this.opsAlerts.length} VMs con snapshots fuera del estándar (Ops):\n${this.opsReasonsText}\n\n`;
-        if (this.opsAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-          summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
-          description += `|| ${headers.join(" || ")} ||\n`;
-          this.opsAlerts.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
         } else {
-          summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT;
-          description += `Debido a la cantidad de registros, se adjunta el reporte.`;
-          const newFileName = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-Ops-FILTRADO.xlsx";
-          xlsxBlob = convertDataToXlsxBlob([headers, ...rowsExp], newFileName);
+          let summary, description;
+          description = `Se detectaron ${this.opsAlerts.length} VMs con snapshots fuera del estándar (Ops):\n${this.opsReasonsText}\n\n`;
+          if (this.opsAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
+            description += `|| ${headers.join(" || ")} ||\n`;
+            this.opsAlerts.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+            const creationResult = createTicketAndNotify(summary, description, null, clientConfigOps, this.operationName);
+            if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
+            else globalStatus = 'FAILURE';
+          } else {
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT;
+            description += `Debido a la cantidad de registros, se adjunta el reporte.`;
+            const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfigOps, this.operationName);
+            if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
+            else globalStatus = 'FAILURE';
+          }
         }
-        const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfigOps, this.operationName);
-        if (creationResult.status === 'SUCCESS') summaryReport.exitos.push("Ops: " + creationResult.detail);
-        else globalStatus = 'FAILURE';
-      }
     }
 
     // PROCESAR SOPORTE
@@ -251,63 +275,68 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       // Tratar de obtener el clientConfigSoporte (pasando true como 3er parámetro si getClientConfig lo soporta, o forzando datos manuales)
       let clientConfigSop = null;
       if (typeof getClientConfig === 'function') {
-         clientConfigSop = getClientConfig("alarmas@wetcom.com", this.operationName, true);
+         clientConfigSop = getClientConfig(senderEmail, this.operationName + " SOP", true);
       }
-      if (!clientConfigSop) {
-         // Fallback por si getClientConfig(..., true) no existe
-         clientConfigSop = { ...clientConfig_Ignored, jiraProjectKey: "SOP", clientName: "Veeam Backup & Replication" }; 
+      if (!clientConfigSop || !clientConfigSop.jiraProjectKeySop) {
+         // Fallback por si getClientConfig(..., true) no existe, o si estamos en Testing
+         clientConfigSop = { ...clientConfig_Ignored, jiraProjectKeySop: "SOP", clientNameSop: "Veeam Backup & Replication" }; 
       }
       
-      const existingTicketKeySop = findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfigSop.jiraProjectKeySop) ||
-                                   findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigSop.jiraProjectKeySop);
-                                   
-      const rowsExp = [...this.soporteAlerts];
-      
-      if (existingTicketKeySop) {
-        if (!haSidoActualizadoHoy(existingTicketKeySop, "ALERTA-SNAPSHOTS-SOP")) {
-          let commentText = `🚨 **El problema persiste.** [HU-ALERTA-SNAPSHOTS-SOP]\n\nSe detectaron ${this.soporteAlerts.length} VMs fuera de norma:\n${this.soporteReasonsText}\n\n`;
-          if (this.soporteAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-            commentText += `|| ${headers.join(" || ")} ||\n`;
-            this.soporteAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
-            addCommentToJiraTicket(existingTicketKeySop, commentText);
-            summaryReport.exitos.push({ mensaje: `Ticket SOPORTE ${existingTicketKeySop} actualizado con tabla.` });
-          } else {
-            const nombreReporte = attachmentName.replace(/\.csv$/i, "-Soporte-FILTRADO.xlsx");
-            const xlsxBlob = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporte);
-            if (xlsxBlob) {
-              const attStatus = addAttachmentToJiraTicket(existingTicketKeySop, xlsxBlob);
-              if (attStatus.status === 'SUCCESS') {
-                commentText += "Se adjunta reporte detallado.";
-                addCommentToJiraTicket(existingTicketKeySop, commentText);
-                summaryReport.exitos.push({ mensaje: `Ticket SOPORTE ${existingTicketKeySop} actualizado con adjunto.` });
+      const existingTicketKeySop = findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE + " (Soporte)", clientConfigSop.jiraProjectKeySop) ||
+                                   findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT + " (Soporte)", clientConfigSop.jiraProjectKeySop);
+                           const rowsExp = [...this.soporteAlerts];
+        
+        const nombreReporteSop = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-SOP.xlsx";
+        const xlsxBlobSop = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporteSop);
+        if (xlsxBlobSop) {
+            this.extractedBlobs = this.extractedBlobs || [];
+            this.extractedBlobs.push(xlsxBlobSop);
+        }
+        
+        if (existingTicketKeySop) {
+          if (!haSidoActualizadoHoy(existingTicketKeySop, "ALERTA-SNAPSHOTS-SOP")) {
+            let commentText = `⏳ **El problema persiste.** [HU-ALERTA-SNAPSHOTS-SOP]\n\nSe detectaron ${this.soporteAlerts.length} VMs fuera de norma:\n${this.soporteReasonsText}\n\n`;
+            if (this.soporteAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
+              commentText += `|| ${headers.join(" || ")} ||\n`;
+              this.soporteAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+              addCommentToJiraTicket(existingTicketKeySop, commentText);
+              summaryReport.exitos.push({ mensaje: `Ticket SOPORTE ${existingTicketKeySop} actualizado con tabla.` });
+            } else {
+              if (xlsxBlobSop) {
+                const attStatus = addAttachmentToJiraTicket(existingTicketKeySop, xlsxBlobSop);
+                if (attStatus.status === 'SUCCESS') {
+                  commentText += "Se adjunta reporte detallado.";
+                  addCommentToJiraTicket(existingTicketKeySop, commentText);
+                  summaryReport.exitos.push({ mensaje: `Ticket SOPORTE ${existingTicketKeySop} actualizado con adjunto.` });
+                } else {
+                  summaryReport.advertencias.push("Fallo al adjuntar en Soporte.");
+                  globalStatus = 'FAILURE';
+                }
               } else {
-                summaryReport.advertencias.push("Fallo al adjuntar en Soporte.");
                 globalStatus = 'FAILURE';
               }
-            } else {
-              globalStatus = 'FAILURE';
             }
           }
-        }
-      } else {
-        let summary, description, xlsxBlob = null;
-        description = `Se detectaron ${this.soporteAlerts.length} VMs con snapshots fuera del estándar (Soporte):\n${this.soporteReasonsText}\n\n`;
-        if (this.soporteAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-          summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
-          description += `|| ${headers.join(" || ")} ||\n`;
-          this.soporteAlerts.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
         } else {
-          summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT;
-          description += `Debido a la cantidad de registros, se adjunta el reporte.`;
-          const newFileName = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-Soporte-FILTRADO.xlsx";
-          xlsxBlob = convertDataToXlsxBlob([headers, ...rowsExp], newFileName);
+          let summary, description;
+          description = `Se detectaron ${this.soporteAlerts.length} VMs con snapshots fuera del estándar (Soporte):\n${this.soporteReasonsText}\n\n`;
+          if (this.soporteAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
+            description += `|| ${headers.join(" || ")} ||\n`;
+            this.soporteAlerts.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+            const creationResult = createTicketAndNotifySoporte(summary, description, null, clientConfigSop);
+            if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Soporte: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
+            else globalStatus = 'FAILURE';
+          } else {
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT;
+            description += `Debido a la cantidad de registros, se adjunta el reporte.`;
+            const creationResult = createTicketAndNotifySoporte(summary, description, xlsxBlobSop, clientConfigSop);
+            if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Soporte: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
+            else globalStatus = 'FAILURE';
+          }
         }
-        const creationResult = createTicketAndNotifySoporte(summary, description, xlsxBlob, clientConfigSop);
-        if (creationResult.status === 'SUCCESS') summaryReport.exitos.push("Soporte: " + creationResult.detail);
-        else globalStatus = 'FAILURE';
-      }
-    }
 
+    }
     if (globalStatus === 'SUCCESS' && this.scheduledTaskName) {
        buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig_Ignored, false);
     }
@@ -318,67 +347,42 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 function processSnapshotsEmails() {
   new VMsConSnapshotsProcessor().processEmails();
 }// --- SOP RULES PARSING ---
-function getSopRules(exceptionFileId) {
-    if (!exceptionFileId) return [];
-    try {
-        const sopSheet = SpreadsheetApp.openById(exceptionFileId).getSheetByName("VMs con Snapshots SOP");
-        if (!sopSheet) return [];
-        const sopData = sopSheet.getDataRange().getValues();
-        sopData.shift(); // remove headers
-        
-        const rules = [];
-        sopData.forEach(row => {
-            if (!row[0]) return; // Skip empty rows
-            rules.push({
-                idUmbral: (row[0] || "").toString().trim(),
-                column: (row[1] || "").toString().trim(),
-                matchType: (row[2] || "").toString().trim(),
-                matchValue: (row[3] || "").toString().trim(),
-                age: parseFloat(row[4]) || 0,
-                size: parseFloat(row[5]) || 0,
-                qty: parseFloat(row[6]) || 0,
-                sizeType: (row[7] || "").toString().trim().toLowerCase() // absoluto o relativo
-            });
-        });
-        return rules;
-    } catch (e) {
-        Logger.log("Error leyendo hoja SOP: " + e.message);
-        return [];
-    }
-}
+// Busca en clientConfig.exceptions el primer grupo cuyas condiciones coincidan
+// con la fila del reporte Y que tenga umbrales de soporte definidos (ageLimit/sizeLimit/qtyLimit).
+function findMatchingSopRule(reportRow, headers, exceptions) {
+  if (!exceptions || typeof exceptions !== 'object') return null;
+  const normalizedHeaders = headers.map(h => {
+    let n = h.trim().toLowerCase();
+    return n.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  });
+  for (const exceptionId in exceptions) {
+    const ruleGroup = exceptions[exceptionId];
+    // Solo procesar grupos marcados como 'considerar'
+    const hasConsiderar = ruleGroup.some(c => (c.criterio || '').toLowerCase() === 'considerar');
+    if (!hasConsiderar) continue;
 
-function findMatchingSopRule(row, headers, rules) {
-    const normalizedHeaders = headers.map(h => {
-        let n = h.trim().toLowerCase();
-        n = n.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        return n;
+    const allConditionsMet = ruleGroup.every(condition => {
+      let nCol = condition.column.trim().toLowerCase();
+      nCol = nCol.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const colIndex = normalizedHeaders.indexOf(nCol);
+      if (colIndex === -1) return false;
+      const reportValueStr = (reportRow[colIndex] || '').toString().trim().toLowerCase();
+      return condition.values.some(exceptionValue => {
+        switch (condition.matchType.toLowerCase()) {
+          case 'exacta':      return reportValueStr === exceptionValue;
+          case 'contiene':    return reportValueStr.includes(exceptionValue);
+          case 'comienza con': return reportValueStr.startsWith(exceptionValue);
+          case 'termina con': return reportValueStr.endsWith(exceptionValue);
+          default:            return reportValueStr === exceptionValue;
+        }
+      });
     });
 
-    for (const rule of rules) {
-        if (rule.matchType === '-') {
-            // Regla fallback (UMBRAL_GLOBAL)
-            return rule;
-        }
-
-        let nCol = rule.column.trim().toLowerCase();
-        nCol = nCol.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-        const colIndex = normalizedHeaders.indexOf(nCol);
-        
-        if (colIndex !== -1) {
-            const reportValueStr = (row[colIndex] || "").toString().trim().toLowerCase();
-            const exceptionValue = rule.matchValue.toLowerCase();
-            
-            let matched = false;
-            switch (rule.matchType.toLowerCase()) {
-                case "exacta": matched = (reportValueStr === exceptionValue); break;
-                case "contiene": matched = reportValueStr.includes(exceptionValue); break;
-                case "empieza con": matched = reportValueStr.startsWith(exceptionValue); break;
-                case "termina con": matched = reportValueStr.endsWith(exceptionValue); break;
-            }
-            if (matched) return rule;
-        }
+    if (allConditionsMet) {
+      // Devolver la primera condición del grupo que tenga límites definidos
+      const c = ruleGroup.find(r => r.ageLimit != null || r.sizeLimit != null || r.qtyLimit != null);
+      if (c) return { age: c.ageLimit, size: c.sizeLimit, qty: c.qtyLimit, sizeType: c.sizeType || '' };
     }
-    return null;
+  }
+  return null;
 }
-
-

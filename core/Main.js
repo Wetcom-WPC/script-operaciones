@@ -244,3 +244,6 @@ function esFeriadoHoy() {
     return calendario.getEventsForDay(new Date()).length > 0;
   } catch (error) { return false; }
 }
+// trigger push
+
+
