@@ -50,6 +50,7 @@ class JobsVeeamProcessor extends MailProcessor {
         summaryReport.exitos.push({ mensaje: `Reporte Veeam (SUCCESS) de ${clientConfig.clientName}.` });
         const closeResult = buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
         if(closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
+        return this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
       }
       return { status: 'SUCCESS' };
     }
