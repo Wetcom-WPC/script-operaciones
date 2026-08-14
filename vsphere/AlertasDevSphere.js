@@ -88,6 +88,20 @@ class VsphereAlertsProcessor extends MailProcessor {
       config.isDRP = isDRP;
       config.isAVS = isAVS;
     }
+
+    // --- FIX AVS DRIVE: Renombrar los blobs en memoria para que no se pisen al subir a Drive ---
+    // Se elimino por accidente en 251111b al portar las mejoras de Jira; restaurado desde 8a30701.
+    if (isAVS && this.extractedBlobs) {
+      this.extractedBlobs.forEach(blob => {
+        const currentName = blob.getName();
+        if (!currentName.toUpperCase().includes('AVS -')) {
+          blob.setName("AVS - " + currentName);
+        }
+      });
+      if (attachment && !attachment.getName().toUpperCase().includes('AVS -')) {
+        attachment.setName("AVS - " + attachment.getName());
+      }
+    }
     
     return config;
   }
