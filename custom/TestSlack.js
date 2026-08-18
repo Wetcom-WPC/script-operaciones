@@ -97,3 +97,38 @@ function testearNuevosLogsSlack() {
   
   Logger.log("✅ Tests de logs enviados a Slack.");
 }
+
+
+function testearFixAuditorSuccess() {
+  Logger.log("--- Iniciando prueba de Fix Auditor (SUCCESS) ---");
+  
+  // 1. Creamos un mensaje falso simulando ser un reporte SUCCESS
+  const mockMessage = {
+    getSubject: function() { return "Affinity Rules (SUCCESS)"; },
+    getFrom: function() { return "alertas@wetcom.com"; },
+    getDate: function() { return new Date(); },
+    getAttachments: function() { return []; },
+    getId: function() { return "test-msg-123"; }
+  };
+  
+  // 2. Iniciamos el SummaryReport
+  const summaryReport = {
+    exitos: [],
+    advertencias: [],
+    errores: [],
+    tareasCerradas: 0,
+    tareasCerradasDetalle: [],
+    drive: []
+  };
+  
+  // 3. Ejecutamos el procesador de Affinity Rules
+  const processor = new AffinityRulesProcessor();
+  const result = processor.processSingleMessage(mockMessage, summaryReport);
+  
+  // 4. Mostramos los resultados
+  Logger.log("Estado Final devuelto por el procesador: " + result.status);
+  Logger.log("Resumen de salidas a Drive:");
+  summaryReport.drive.forEach(f => Logger.log(" -> " + f.nombre + " (" + f.estado + ") en carpeta de " + f.cliente));
+  
+  Logger.log("--- Fin de la prueba ---");
+}

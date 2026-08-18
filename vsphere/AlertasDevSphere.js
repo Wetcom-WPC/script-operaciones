@@ -54,6 +54,16 @@ class VsphereAlertsProcessor extends MailProcessor {
           if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
         }
       }
+        if (typeof clientConfig !== 'undefined' && clientConfig) {
+
+          const nombreArchivo = this.operationName + " - OK.txt";
+
+          this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+
+          this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+
+        }
+
       return { status: 'SUCCESS' };
     }
     
@@ -87,20 +97,6 @@ class VsphereAlertsProcessor extends MailProcessor {
     if (config) {
       config.isDRP = isDRP;
       config.isAVS = isAVS;
-    }
-
-    // --- FIX AVS DRIVE: Renombrar los blobs en memoria para que no se pisen al subir a Drive ---
-    // Se elimino por accidente en 251111b al portar las mejoras de Jira; restaurado desde 8a30701.
-    if (isAVS && this.extractedBlobs) {
-      this.extractedBlobs.forEach(blob => {
-        const currentName = blob.getName();
-        if (!currentName.toUpperCase().includes('AVS -')) {
-          blob.setName("AVS - " + currentName);
-        }
-      });
-      if (attachment && !attachment.getName().toUpperCase().includes('AVS -')) {
-        attachment.setName("AVS - " + attachment.getName());
-      }
     }
     
     return config;
@@ -182,6 +178,16 @@ class VsphereAlertsProcessor extends MailProcessor {
       const closeResult = buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
       if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
     }
+      if (typeof clientConfig !== 'undefined' && clientConfig) {
+
+        const nombreArchivo = this.operationName + " - OK.txt";
+
+        this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+
+        this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+
+      }
+
     return { status: 'SUCCESS' };
   }
 
@@ -189,12 +195,6 @@ class VsphereAlertsProcessor extends MailProcessor {
     const groupedAlerts = rowsForExport;
     const objectNameColIndex = reasonsText;
     let overallStatus = 'SUCCESS';
-
-    const normalizedHeaders = headers.map(h => normalizarEncabezado(h));
-    const hostColIndex = normalizedHeaders.indexOf("host");
-    const clusterColIndex = normalizedHeaders.indexOf("cluster");
-    const timeColIndex = normalizedHeaders.indexOf("time");
-    const descColIndex = normalizedHeaders.indexOf("description");
 
     for (const alertName in groupedAlerts) {
       Logger.log(`\n--- Procesando grupo: "${alertName}" ---`);
@@ -233,7 +233,7 @@ class VsphereAlertsProcessor extends MailProcessor {
           const xlsxBlob = convertDataToXlsxBlob([headers, ...alertGroupRows], newFileName);
           attachmentStatus = addAttachmentToJiraTicket(ticketKey, xlsxBlob);
           if (attachmentStatus.status === 'SUCCESS') {
-            const commentText = `${todayMarker} ${alertName}\n\n**[ATENCIÓN] La anomalía persiste.** Se adjunta reporte con **${alertGroupRows.length}** objetos afectados.`;
+            const commentText = `${todayMarker} ${alertName}\n\n🚨 **La anomalía persiste.** Se adjunta reporte con **${alertGroupRows.length}** objetos afectados.`;
             addCommentToJiraTicket(ticketKey, commentText);
             summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${ticketKey}|${ticketKey}> con nuevo reporte.` });
 
@@ -243,18 +243,9 @@ class VsphereAlertsProcessor extends MailProcessor {
             summaryReport.advertencias.push(attachmentStatus.detail);
           }
         } else {
-          let comment = `${todayMarker} ${alertName}\n\n**[ATENCIÓN] La anomalía persiste.** Se ha vuelto a detectar la alerta *"${alertName}"*.\n\n`;
+          let comment = `${todayMarker} ${alertName}\n\n🚨 **La anomalía persiste.** Se ha vuelto a detectar la alerta *"${alertName}"*.\n\n`;
           comment += `*Objetos Afectados en este reporte (${alertGroupRows.length}):*\n`;
-          alertGroupRows.forEach(row => {
-            const objectName = row[objectNameColIndex] || "(objeto sin nombre)";
-            comment += `- *${objectName}*\n`;
-            if (clusterColIndex !== -1 && row[clusterColIndex] && row[clusterColIndex] !== "-") comment += `  - Cluster: ${row[clusterColIndex]}\n`;
-            if (hostColIndex !== -1 && row[hostColIndex] && row[hostColIndex] !== "-") comment += `  - Host: ${row[hostColIndex]}\n`;
-            if (timeColIndex !== -1 && row[timeColIndex]) {
-               const t = new Date(row[timeColIndex]);
-               if (!isNaN(t)) comment += `  - Desde: ${t.getDate().toString().padStart(2, '0')}/${(t.getMonth()+1).toString().padStart(2, '0')} ${t.getHours().toString().padStart(2, '0')}:${t.getMinutes().toString().padStart(2, '0')}hs\n`;
-            }
-          });
+          alertGroupRows.forEach(row => (comment += `• ${row[objectNameColIndex] || "(objeto sin nombre)"}\n`));
           addCommentToJiraTicket(ticketKey, comment);
           summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${ticketKey}|${ticketKey}> con ${alertGroupRows.length} objetos.` });
 
@@ -271,19 +262,10 @@ class VsphereAlertsProcessor extends MailProcessor {
           const newFileName = `Reporte ${alertName}.xlsx`;
           xlsxBlob = convertDataToXlsxBlob([headers, ...alertGroupRows], newFileName);
         } else {
-          let descText = "";
-          if (descColIndex !== -1 && alertGroupRows[0][descColIndex]) descText = `\n> ${alertGroupRows[0][descColIndex]}\n`;
-          
-          description = `*Alarma:* ${alertName}${descText}\n*Objetos Afectados (${alertGroupRows.length}):*\n`;
+          description = `Se detectó la siguiente alerta:\n\n*Alarma:* ${alertName}\n\n*Objetos Afectados (${alertGroupRows.length}):*\n`;
           alertGroupRows.forEach(rowData => {
             const objectName = rowData[objectNameColIndex] || "(objeto sin nombre)";
-            description += `- *${objectName}*\n`;
-            if (clusterColIndex !== -1 && rowData[clusterColIndex] && rowData[clusterColIndex] !== "-") description += `  - Cluster: ${rowData[clusterColIndex]}\n`;
-            if (hostColIndex !== -1 && rowData[hostColIndex] && rowData[hostColIndex] !== "-") description += `  - Host: ${rowData[hostColIndex]}\n`;
-            if (timeColIndex !== -1 && rowData[timeColIndex]) {
-               const t = new Date(rowData[timeColIndex]);
-               if (!isNaN(t)) description += `  - Desde: ${t.getDate().toString().padStart(2, '0')}/${(t.getMonth()+1).toString().padStart(2, '0')} ${t.getHours().toString().padStart(2, '0')}:${t.getMinutes().toString().padStart(2, '0')}hs\n`;
-            }
+            description += `• ${objectName}\n`;
           });
         }
 

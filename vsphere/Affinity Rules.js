@@ -42,6 +42,16 @@ class AffinityRulesProcessor extends MailProcessor {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).` });
         if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       }
+        if (typeof clientConfig !== 'undefined' && clientConfig) {
+
+          const nombreArchivo = this.operationName + " - OK.txt";
+
+          this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+
+          this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+
+        }
+
       return { status: 'SUCCESS' };
     }
     
