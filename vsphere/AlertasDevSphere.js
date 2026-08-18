@@ -53,7 +53,6 @@ class VsphereAlertsProcessor extends MailProcessor {
           const closeResult = buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
           if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
         }
-        return this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
       }
       return { status: 'SUCCESS' };
     }

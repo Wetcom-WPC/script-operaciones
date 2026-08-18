@@ -31,7 +31,6 @@ class VMsConPreguntasProcessor extends MailProcessor {
       if (clientConfig) {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).` });
         if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
-        return this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
       }
       return { status: 'SUCCESS' };
     }
