@@ -29,17 +29,18 @@ carpeta local con su propio `.clasp.json` (su propio scriptId):
 | `Indice Operativo/` | `indice-operativo` | 🔴 **PRODUCCIÓN** |
 | `Indice Playground/` | `indice-playground` | Staging |
 
-**`Ops Operativo/` y `Ops Playground/` son cada una su propio checkout git**,
-fijo en su rama (nunca hace falta `git checkout` para cambiar de proyecto: cada
-carpeta ya está en la rama que le corresponde). El árbol de cada rama es
-**plano** — refleja 1:1 lo que ves en el editor de Apps Script, sin carpeta
-contenedora. Si algún día ves `Ops Operativo/` como subcarpeta *dentro* del
-árbol de `main`, algo se rompió en la estructura: avisar antes de seguir.
+**Las cuatro carpetas son, cada una, su propio checkout git**, fijo en su rama
+(nunca hace falta `git checkout` para cambiar de proyecto: cada carpeta ya
+está en la rama que le corresponde). El árbol de cada rama es **plano** —
+refleja 1:1 lo que ves en el editor de Apps Script, sin carpeta contenedora.
+Si algún día ves una de estas carpetas como subcarpeta *dentro* del árbol de
+otra rama, algo se rompió en la estructura: avisar antes de seguir.
 
-`Indice Operativo/` e `Indice Playground/` **no** son checkouts git activos:
-son carpetas de trabajo normal para `clasp`, con un backup versionado en las
-ramas `indice-operativo` / `indice-playground` (actualizar ese backup a mano
-cuando corresponda — no hay automatización todavía).
+El respaldo de `Indice Operativo/` e `Indice Playground/` es el mismo flujo de
+git de siempre — `commit` + `push` a `indice-operativo` / `indice-playground`
+respectivamente — no un paso manual aparte que haya que acordarse de correr.
+No hay ninguna diferencia de proceso contra `Ops Operativo/` / `Ops
+Playground/` en este sentido.
 
 ### Sobre el nombre de la rama de Playground
 
@@ -53,18 +54,33 @@ rename (incluida una feature que todavía no se había traído del todo,
 "Detector de Gravedad en Snapshots") quedó preservado en la rama
 `backup-refactor-operaciones` y ya fue reintegrado a `ops-playground`.
 
+**Corrección del 18/08/2026:** lo anterior daba a entender que
+`refactor-operaciones` ya no existía y que todo su contenido estaba a salvo —
+ninguna de las dos cosas era cierta. La rama remota siguió viva en GitHub, y
+alguien siguió commiteando ahí después del rename sin saber que ya no era la
+rama activa: quedaron 4 commits (fixes de Veeam para el formato ZIP/CSV de
+Veeam ONE v13 y ZIPs vacíos, más la automatización completa de Nutanix
+OPS-NTX-001 a 004) que nunca llegaron a `ops-playground`. Se auditó, se
+trajeron 3 por `cherry-pick` (el cuarto ya estaba cubierto por un fix
+equivalente) y recién entonces se borró `origin/refactor-operaciones`. Ya no
+existe, ahora sí. Moraleja: antes de dar una rama vieja por "reintegrada y
+borrada" en este documento, verificar con `git log <vieja>..<nueva>` — no
+asumir a partir de la intención original del rename.
+
 ### Ramas que NO se deben tocar
 
 - `backup-real-prod`, `backup-refactor-operaciones`: snapshots de un estado
   anterior, para rollback. No son para trabajar ahí.
-- `refactor`, `backup-prod-20260723`: ramas históricas **con secretos reales
-  sin censurar en su historial de commits** (tokens de Atlassian, webhooks de
-  Slack). GitHub bloqueó el push la primera vez que se intentó por push
-  protection. **Nunca hacer merge, rebase ni cherry-pick desde estas ramas
-  hacia `main` o `ops-playground`** sin antes limpiar el historial —
-  arrastrarían los secretos.
+- `refactor`, `backup-prod-20260723`: existieron como ramas locales (nunca
+  llegaron a GitHub — bloqueadas por push protection por tener secretos
+  reales sin censurar en su historial: tokens de Atlassian, webhooks de
+  Slack) y se borraron el 18/08/2026 al confirmar que ya no hacía falta
+  conservar ese código. Si reaparecen en algún checkout local viejo, mismo
+  criterio: **nunca merge, rebase ni cherry-pick** desde ellas hacia `main` o
+  `ops-playground` sin limpiar el historial primero — arrastrarían los
+  secretos.
 
-## 3. Las cuatro reglas que no se negocian
+## 3. Las cinco reglas que no se negocian
 
 ### Regla 1 — Nunca `clasp push` a producción sin aprobación humana explícita
 
@@ -97,9 +113,10 @@ Por eso **no usar `clasp push` a secas**. Usar el script del proyecto:
 ```
 
 Hace, en este orden: exige descripción → muestra el `scriptId` y pide
-confirmación escrita si es producción (Regla 1) → `node --check` de todos los
-`.js` → chequeo de declaraciones duplicadas (§4) → `clasp push` →
-`clasp create-version`. Si algo falla antes del push, no sube nada.
+confirmación escrita si es producción (Regla 1) → sincroniza con GitHub
+primero (Regla 5) → `node --check` de todos los `.js` → chequeo de
+declaraciones duplicadas (§4) → `clasp push` → `clasp create-version`. Si algo
+falla antes del push, no sube nada — ni a GitHub ni a Apps Script.
 
 La descripción arranca con el nombre de quien despliega: es la convención que ya
 venía usando el equipo (`clasp list-versions`). Nunca dejarla vacía — quedan como
@@ -132,6 +149,32 @@ Recién después de esto, seguir con el flujo normal de despliegue (sección 10)
 Sin este respaldo, no se hace `clasp push` a producción — ni con aprobación
 explícita del usuario (Regla 1): son dos chequeos independientes, uno no
 reemplaza al otro.
+
+### Regla 5 — GitHub y Apps Script se mantienen sincronizados: siempre se pushea a GitHub primero
+
+Si dos personas despliegan casi al mismo tiempo (por ejemplo, alguien
+trabajando directo en `Ops Playground/` mientras otro agente hace lo mismo),
+la que llega segunda tiene que enterarse **antes** de escribir en Apps
+Script, no después. Un `clasp push` no sabe nada de git: pisa el borrador sin
+preguntar, aunque el commit que lo generó ya esté obsoleto.
+
+Por eso `deploy.sh` ahora hace `git push` **antes** de tocar Apps Script, no
+después:
+
+1. Si hay cambios sin commitear, `deploy.sh` corta ahí — hay que commitear
+   primero (si no, GitHub y GAS terminarían mostrando código distinto).
+2. `deploy.sh` pushea a GitHub. Si el remoto tiene commits que el local no
+   tiene (alguien ya desplegó desde acá y pusheó después que vos), GitHub
+   rechaza el push, `deploy.sh` corta ahí, y **no se toca Apps Script**. El
+   mensaje de error indica traer los cambios (`git pull`) y reintentar.
+3. Recién si GitHub aceptó el push sigue el resto del flujo (§4, `clasp
+   push`, `clasp create-version`).
+
+Con esto, un `clasp push` a un proyecto desactualizado deja de ser posible
+por accidente: falla primero en GitHub, que es más barato de resolver que
+descubrirlo mirando Apps Script. Aplica a las dos carpetas con `deploy.sh`
+(`Ops Operativo/` y `Ops Playground/`); `Indice Operativo/` e `Indice
+Playground/` todavía no tienen `deploy.sh` (ver sección 11).
 
 ## 4. La trampa que ya rompió producción una vez — scope global de Apps Script
 
@@ -254,7 +297,13 @@ actuar, no asumir que todo lo pendiente hay que resolverlo.
 2. Validar: correr `manual_runAllTests()` desde el editor de Apps Script
    (suite en `tests/TestRunner.js`). Todo fix de bug debería sumar un test de
    regresión ahí, no solo la corrección.
-3. Con la aprobación del usuario, promover a producción:
+3. Commitear los cambios en `Ops Playground/` y desplegar con
+   `./deploy.sh "Nombre - qué se despliega"`. El script pushea primero a
+   GitHub y recién después a Apps Script (Regla 5) — si queda algo sin
+   commitear, corta ahí. Mensajes de commit multilínea: usar heredoc de bash
+   (`git commit -m "$(cat <<'EOF' ... EOF)"`), nunca sintaxis de PowerShell
+   (`@'...'@`) en un entorno bash — genera un commit con basura literal.
+4. Con la aprobación del usuario, promover a producción:
    - Respaldar el código productivo vigente (Regla 4) — **antes** de tocar
      nada de lo que sigue.
    - `clasp pull` en `Ops Operativo/` (por si hubo cambios desde el
@@ -263,17 +312,18 @@ actuar, no asumir que todo lo pendiente hay que resolverlo.
    - Verificar sintaxis (`node --check archivo.js` sirve como chequeo rápido
      aunque el runtime real sea Apps Script V8) y ausencia de declaraciones
      duplicadas (sección 4).
-   - Desplegar con `./deploy.sh "Nombre - qué se despliega"` (ver Regla 3),
-     **solo con confirmación explícita del usuario**.
+   - Commitear ese cambio en `Ops Operativo/` (mismo criterio de heredoc para
+     el mensaje).
+   - Desplegar con `./deploy.sh "Nombre - qué se despliega"` (ver Regla 3 y
+     Regla 5), **solo con confirmación explícita del usuario** — el script
+     pushea a GitHub primero y recién después a Apps Script.
    - `clasp pull` de vuelta a una carpeta de verificación aparte y comparar
      contra lo que se pusheó, para confirmar que llegó como se esperaba.
-4. Commitear y pushear a `main`/`ops-playground` en GitHub para dejar
-   registro. Mensajes de commit multilínea: usar heredoc de bash
-   (`git commit -m "$(cat <<'EOF' ... EOF)"`), nunca sintaxis de PowerShell
-   (`@'...'@`) en un entorno bash — genera un commit con basura literal.
 
 El historial de Apps Script y el de GitHub tienen que contar la misma historia:
-por cada versión creada con `deploy.sh` debería haber un commit equivalente.
+por cada versión creada con `deploy.sh` debería haber un commit equivalente —
+y ahora eso queda garantizado por el propio script (Regla 5), no solo por
+convención.
 
 ## 11. Herramientas manuales
 
@@ -282,3 +332,8 @@ desde el editor de Apps Script (prefijo `manual_`): correr tests, probar un
 flujo puntual, forzar un trigger fuera de horario, auditar/cerrar tareas
 programadas. Si se necesita una función de diagnóstico o testing ad-hoc,
 agregarla ahí en vez de crear un archivo nuevo suelto.
+
+`Indice Operativo/` e `Indice Playground/` todavía no tienen su propio
+`deploy.sh`: los push ahí son `clasp push` directo, sin creación de versión
+(Regla 3) ni sincronización GitHub-primero (Regla 5). Si se les da más uso,
+portarles el mismo script que usan los proyectos Ops en vez de reinventarlo.
