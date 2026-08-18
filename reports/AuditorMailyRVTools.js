@@ -433,10 +433,16 @@ function _rvtoolsLeerFilasIndice() {
   const formulas = rango.getFormulas();
   const richText = rango.getRichTextValues();
 
-  const filas = [];
+  // La hoja trae varias filas por cliente (una por remitente o tecnología) y solo una
+  // lleva el ID de RVTools. Nos quedamos con esa: si no, el mismo cliente se reportaría
+  // dos veces y en PODs distintos.
+  const porCliente = {};
+  let filasConCliente = 0;
+
   valores.forEach((fila, i) => {
     const cliente = (fila[RVTOOLS_COL.CLIENTE] || "").toString().trim();
     if (!cliente) return;
+    filasConCliente++;
 
     // El link puede estar como texto plano, dentro de un =HYPERLINK() o como link de texto enriquecido.
     const celdaRich = richText[i][RVTOOLS_COL.CARPETA];
@@ -445,10 +451,22 @@ function _rvtoolsLeerFilasIndice() {
       _rvtoolsExtraerFolderId(formulas[i][RVTOOLS_COL.CARPETA]) ||
       _rvtoolsExtraerFolderId(fila[RVTOOLS_COL.CARPETA]);
 
-    filas.push({ cliente: cliente, pod: _rvtoolsNormalizarPod(fila[RVTOOLS_COL.POD]), folderId: folderId });
+    const clave     = cliente.toLowerCase();
+    const yaGuardado = porCliente[clave];
+
+    // Se pisa la fila guardada solo si la nueva aporta el ID que a la anterior le faltaba.
+    if (!yaGuardado || (!yaGuardado.folderId && folderId)) {
+      porCliente[clave] = {
+        cliente: cliente,
+        pod: _rvtoolsNormalizarPod(fila[RVTOOLS_COL.POD]),
+        folderId: folderId
+      };
+    }
   });
 
-  Logger.log(`Se leyeron ${filas.length} clientes con nombre en la columna L.`);
+  const filas = Object.keys(porCliente).map(clave => porCliente[clave]);
+  const descartadas = filasConCliente - filas.length;
+  Logger.log(`Se leyeron ${filasConCliente} filas con cliente en la columna L y quedaron ${filas.length} clientes únicos${descartadas > 0 ? ` (${descartadas} filas repetidas descartadas)` : ""}.`);
   return filas;
 }
 
@@ -495,16 +513,29 @@ function _rvtoolsFechasEsperadas(fecha) {
  * Compara ignorando separadores, así matchea 20260818, 2026/08/18, 26-08-18, etc.
  * @returns {string|null} El nombre real de la carpeta encontrada, o null.
  */
-function _rvtoolsBuscarCarpetaDeFecha(carpetaPadre, esperados, cliente) {
-  const subCarpetas = carpetaPadre.getFolders();
-  const casiFechas  = [];
+function _rvtoolsBuscarCarpetaDeFecha(carpetaPadre, esperados, cliente, permitirBajarUnNivel) {
+  const bajarUnNivel  = permitirBajarUnNivel !== false;
+  const subCarpetas   = carpetaPadre.getFolders();
+  const casiFechas    = [];
+  const carpetasDeAnio = [];
 
   while (subCarpetas.hasNext()) {
-    const nombre      = subCarpetas.next().getName();
+    const carpeta     = subCarpetas.next();
+    const nombre      = carpeta.getName();
     const soloDigitos = nombre.replace(/\D/g, "");
 
     if (esperados.indexOf(soloDigitos) !== -1) return nombre;
     if (soloDigitos.length >= 6) casiFechas.push(nombre);
+    else if (/^\d{4}$/.test(nombre.trim())) carpetasDeAnio.push(carpeta);
+  }
+
+  // Algunos clientes (BALANZ, por ejemplo) apuntan la columna J a la carpeta madre y
+  // cuelgan las fechas de una subcarpeta de año. Bajamos un nivel solo en ese caso.
+  if (bajarUnNivel && carpetasDeAnio.length > 0) {
+    for (const carpetaAnio of carpetasDeAnio) {
+      const encontrada = _rvtoolsBuscarCarpetaDeFecha(carpetaAnio, esperados, cliente, false);
+      if (encontrada) return `${carpetaAnio.getName()}/${encontrada}`;
+    }
   }
 
   // Si habia subcarpetas con pinta de fecha que no matchearon, queda en el log:
@@ -593,25 +624,4 @@ function diagnosticarCarpetasRVTools() {
       Logger.log(`   🔥 No se pudo abrir: ${e.message}`);
     }
   });
-}
-
-/**
- * Crea el activador semanal de los miércoles para auditarCarpetasRVTools.
- * Apps Script no permite fijar el minuto exacto: corre dentro de la hora indicada.
- * @param {number} [hora=9] Hora del día, 0 a 23, en la zona horaria del proyecto.
- */
-function crearTriggerAuditorRVTools(hora) {
-  const horaElegida = (typeof hora === "number" && hora >= 0 && hora <= 23) ? hora : 9;
-
-  ScriptApp.getProjectTriggers().forEach(trigger => {
-    if (trigger.getHandlerFunction() === "auditarCarpetasRVTools") ScriptApp.deleteTrigger(trigger);
-  });
-
-  ScriptApp.newTrigger("auditarCarpetasRVTools")
-    .timeBased()
-    .onWeekDay(ScriptApp.WeekDay.WEDNESDAY)
-    .atHour(horaElegida)
-    .create();
-
-  Logger.log(`Trigger creado: auditarCarpetasRVTools, los miércoles entre las ${horaElegida}:00 y las ${horaElegida + 1}:00.`);
 }
