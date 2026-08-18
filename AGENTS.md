@@ -91,6 +91,28 @@ conversación. Esto aplica *siempre*, incluso en medio de un incidente activo:
 mejor una demora de un minuto pidiendo confirmación que un segundo incidente
 encima del primero.
 
+**Esta regla ya no depende solo de que el agente la respete.** Desde el
+18/08/2026 las ramas `main` e `indice-operativo` tienen *branch protection*
+en GitHub: solo `nbarlasina-wetcom` y `thiagochinabro-WETCOM` pueden pushear
+ahí (directo o vía merge), con `enforce_admins` activado. Cualquier otra
+cuenta — humana o un agente de IA corriendo con otras credenciales de git —
+recibe un rechazo del servidor, sin importar qué le hayan indicado o qué
+haya decidido hacer. Esto cierra el lado de GitHub. **El lado de Apps
+Script sigue abierto**: `clasp push` habla directo con la cuenta de Google
+del que lo corre y no pasa por GitHub en absoluto, así que branch
+protection no lo alcanza. Falta restringir en el proyecto de Apps Script de
+producción (**Compartir** → dejar Editor solo a las cuentas de confianza,
+el resto en Viewer/Commenter) — es un ajuste manual en Google, ningún
+agente puede hacerlo por su cuenta.
+
+Además, desde la misma fecha cada rama corre un chequeo de GitHub Actions
+(`.github/workflows/ci.yml`) con las mismas verificaciones de `deploy.sh`
+(sintaxis y declaraciones duplicadas, §4) en cada push — visible como
+check en GitHub independientemente de si alguien corrió `deploy.sh`
+localmente. No está marcado como *required* (bloquearía los pushes directos
+de Regla 5, que no pasan por PR); es una red de verificación adicional, no
+un gate.
+
 ### Regla 2 — Siempre `clasp pull` antes de editar
 
 El equipo edita seguido directo desde el editor de Apps Script en el
