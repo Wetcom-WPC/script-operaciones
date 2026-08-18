@@ -608,3 +608,82 @@ function manual_cerrarTareasProgramadas() {
 
   return { cerradas, fallidas, omitidas, reportesPorCliente };
 }
+
+/**
+ * Cierra masivamente todos los tickets abiertos en los proyectos de Testing (WPC y WST).
+ * Ejecuta las transiciones obligatorias en orden.
+ */
+function manual_CerrarTicketsTesting() {
+  const proyectos = ["WPC", "WST"];
+
+  const rutaWPC = ["In Progress", "Closed"];
+  const rutaWST = ["En Ánalisis", "Esperando confirmación  del cliente", "Closed"];
+
+  // Helper para hacer las transiciones en cadena
+  function transicionarTicket(issueKey, rutas) {
+    for (let estado of rutas) {
+      const transitionsUrl = `${JIRA_DOMAIN}/rest/api/3/issue/${issueKey}/transitions`;
+      const optionsGet = { "method": "get", "headers": getJiraHeaders(), "muteHttpExceptions": true };
+      const responseGet = fetchWithRetries(transitionsUrl, optionsGet);
+      if (responseGet.getResponseCode() !== 200) continue;
+      
+      const data = JSON.parse(responseGet.getContentText());
+      const transicion = data.transitions.find(t => t.to.name === estado);
+      
+      if (transicion) {
+        Logger.log(`  -> Transicionando a: ${estado}`);
+        const payloadPost = { "transition": { "id": transicion.id } };
+        const optionsPost = {
+          "method": "post", "contentType": "application/json",
+          "headers": getJiraHeaders(), "payload": JSON.stringify(payloadPost), "muteHttpExceptions": true
+        };
+        fetchWithRetries(transitionsUrl, optionsPost);
+      }
+    }
+  }
+
+  proyectos.forEach(projectKey => {
+    Logger.log(`\n==============================================`);
+    Logger.log(`Buscando tickets abiertos en el proyecto ${projectKey}...`);
+    
+    const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
+    const jql = `project = "${projectKey}" AND statusCategory != "Done"`;
+    
+    // Pedimos hasta 100 resultados
+    const payload = { "jql": jql, "maxResults": 100, "fields": ["key", "summary"] };
+    const options = {
+      "method": "post", "contentType": "application/json",
+      "headers": getJiraHeaders(),
+      "payload": JSON.stringify(payload), "muteHttpExceptions": true
+    };
+    
+    try {
+      const response = fetchWithRetries(endpoint, options);
+      if (response.getResponseCode() !== 200) {
+        Logger.log(`Error al buscar en ${projectKey}: HTTP ${response.getResponseCode()}`);
+        return;
+      }
+      
+      const data = JSON.parse(response.getContentText());
+      const issues = data.issues || [];
+      
+      Logger.log(`Se encontraron ${issues.length} tickets abiertos en ${projectKey}.`);
+      
+      let procesados = 0;
+      
+      issues.forEach(issue => {
+        Logger.log(`- Procesando ticket ${issue.key} ("${issue.fields.summary}")...`);
+        const rutas = projectKey === "WPC" ? rutaWPC : rutaWST;
+        transicionarTicket(issue.key, rutas);
+        procesados++;
+      });
+      
+      Logger.log(`Resumen para ${projectKey}: ${procesados} procesados.`);
+      
+    } catch (e) {
+      Logger.log(`Error al procesar proyecto ${projectKey}: ${e.message}`);
+    }
+  });
+  
+  Logger.log(`\nLimpieza de tickets de Testing finalizada.`);
+}

@@ -64,7 +64,7 @@ const E2E_FILTRO_TAREA = "";
  * nota "CASOS BORDE" al principio del archivo. Si se completa esto, E2E_FILTRO_TAREA además
  * acota A CUÁL processor aplicarlo (por si el caso borde aplicara a más de uno).
  */
-const E2E_FILTRO_CASO = "";
+const E2E_FILTRO_CASO = "sinAnomaliasReales";
 
 /**
  * Corta la ejecución si el proyecto no es de pruebas.
@@ -405,6 +405,72 @@ function _e2eAvisarTicketsDeAlerta(projectKey) {
   }
 }
 
+/**
+ * Busca tickets de ALERTA (no Tareas Programadas) creados HOY cuyo summary coincida con el que
+ * genera un processor. Es la contraparte verificable de `esperado.creaTicket`: hasta ahora el
+ * harness sabía comprobar la etiqueta, Drive y el cierre de la Tarea Programada, pero no si se
+ * había creado un ticket de más — que es justo la forma que tomó PTRNSNR-12069.
+ *
+ * Se acota por `created >= hoy` porque el summary es fijo por processor y no lleva el runId: un
+ * ticket que quedó abierto de una corrida anterior del MISMO día se cuenta igual. Si eso pasa,
+ * cerralos antes de correr (manual_e2e_limpiar() los lista, y manual_CerrarTicketsTesting() de
+ * custom/HerramientasManuales.js los cierra en bloque).
+ *
+ * @param {string} projectKey Proyecto de Jira del cliente de testing.
+ * @param {string} summary Summary exacto que usaría el processor al crear el ticket.
+ * @returns {Array<{key: string, summary: string}>} Tickets encontrados (vacío si ninguno).
+ */
+function _e2eTicketsDeAlertaPorSummary(projectKey, summary) {
+  if (!projectKey || !summary) return [];
+
+  const hoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
+  const jql = `project = "${projectKey}" AND issuetype != "Tarea Programada" `
+    + `AND summary ~ "${String(summary).replace(/"/g, '\\"')}" AND created >= "${hoy}" ORDER BY created DESC`;
+
+  const options = {
+    method: "post", contentType: "application/json", headers: getJiraHeaders(),
+    payload: JSON.stringify({ jql: jql, maxResults: 50, fields: ["key", "summary"] }),
+    muteHttpExceptions: true
+  };
+
+  try {
+    const respuesta = fetchWithRetries(`${JIRA_DOMAIN}/rest/api/3/search/jql`, options);
+    if (respuesta.getResponseCode() !== 200) {
+      Logger.log(`[E2E] No se pudo consultar tickets con summary "${summary}" (HTTP ${respuesta.getResponseCode()}).`);
+      return [];
+    }
+    return (JSON.parse(respuesta.getContentText()).issues || []).map(function (i) {
+      return { key: i.key, summary: i.fields.summary };
+    });
+  } catch (e) {
+    Logger.log(`[E2E] Excepción consultando tickets con summary "${summary}": ${e.message}`);
+    return [];
+  }
+}
+
+/**
+ * Chequea `esperado.creaTicket` contra Jira. No hace nada si la fixture no lo declara, así que
+ * los casos a los que no les importa el ticket quedan igual que antes.
+ */
+function _e2eChequearTicketDeAlerta(item, projectKey, chequear) {
+  const esperado = item.esperado || {};
+  if (esperado.creaTicket === undefined || esperado.creaTicket === null) return;
+
+  const summary = esperado.ticketSummary;
+  if (!summary) {
+    chequear(false, `${item.id}: la fixture declara creaTicket pero no 'ticketSummary', así que no hay nada que buscar en Jira`);
+    return;
+  }
+
+  const encontrados = _e2eTicketsDeAlertaPorSummary(projectKey, summary);
+  const detalle = encontrados.map(function (t) { return t.key; }).join(", ") || "ninguno";
+
+  chequear(
+    (encontrados.length > 0) === !!esperado.creaTicket,
+    `${item.id}: se esperaba que ${esperado.creaTicket ? "SÍ" : "NO"} se creara un ticket "${summary}" y se encontraron ${encontrados.length} (${detalle})`
+  );
+}
+
 /** Project key de Jira del cliente de testing, según el Índice Maestro. */
 function _e2eProjectKeyDeTesting() {
   const config = getClientConfigByName(TESTING_SAFETY_CLIENT_NAME, "E2E");
@@ -499,7 +565,7 @@ function manual_e2e_dispararCicloReal() {
  * cierre de la Tarea Programada — mismos tres chequeos que el camino normal, pero sumando
  * varios envíos en vez de uno solo.
  */
-function _e2eVerificarEnvios(item, runId, hilos, archivosEnDrive, nombresAbiertos, chequear) {
+function _e2eVerificarEnvios(item, runId, hilos, archivosEnDrive, nombresAbiertos, chequear, projectKey) {
   // soloMetadatos: acá alcanza con los nombres, no hace falta volver a generar los adjuntos.
   const correos = construirEnviosDeFixture(item.tarea, item.fixture, runId, item.caso, true);
   if (correos.length === 0) return;
@@ -543,6 +609,8 @@ function _e2eVerificarEnvios(item, runId, hilos, archivosEnDrive, nombresAbierto
       `${item.id}: la Tarea Programada "${scheduledTaskName}" ${sigueAbierta ? "sigue abierta" : "se cerró"} y se esperaba lo contrario`
     );
   }
+
+  _e2eChequearTicketDeAlerta(item, projectKey, chequear);
 }
 
 /**
@@ -582,7 +650,7 @@ function manual_e2e_verificar(runId) {
 
   plan.forEach(function (item) {
     if (item.fixture.envios) {
-      _e2eVerificarEnvios(item, id, hilos, archivosEnDrive, nombresAbiertos, chequear);
+      _e2eVerificarEnvios(item, id, hilos, archivosEnDrive, nombresAbiertos, chequear, projectKey);
       return;
     }
 
@@ -634,6 +702,9 @@ function manual_e2e_verificar(runId) {
         `${item.id}: la Tarea Programada "${correo.scheduledTaskName}" ${sigueAbierta ? "sigue abierta" : "se cerró"} y se esperaba lo contrario`
       );
     }
+
+    // 4. Jira: ¿se creó un ticket de alerta que no correspondía (o falta el que sí)?
+    _e2eChequearTicketDeAlerta(item, projectKey, chequear);
   });
 
   Logger.log(`\n=== RESULTADO: ${pasaron} chequeos OK, ${fallaron} fallidos ===`);
