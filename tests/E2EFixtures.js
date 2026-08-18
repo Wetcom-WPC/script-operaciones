@@ -265,6 +265,31 @@ function obtenerCasosBorde() {
         }
       ],
       esperado: { etiqueta: OPS_LABEL_PROCESADO, cierraTarea: true, subeADrive: true }
+    },
+    sinAnomaliasReales: {
+      descripcion: "El reporte TRAE filas, pero ninguna es una anomalía real: todas quedan descartadas " +
+        "(acá por ser 'Backup to tape'; el caso que se vio en producción fue con todas las VMs exceptuadas). " +
+        "filterOrphanedVMsData*() devuelve el encabezado como primera fila de `rows`, así que ese reporte " +
+        "deja rows.length === 1 y vmCount === 0. Como MailProcessor enruta por finalAlerts.length, el caso " +
+        "caía en handleAlerts() y abría un ticket que decía 'Se han detectado 0 Orphaned VMs' " +
+        "(PTRNSNR-12069, 07/08/2026). Lo correcto es no crear NINGÚN ticket y cerrar la Tarea Programada.\n" +
+        "Ojo: distinto del caso 'vacio', donde el reporte no trae filas y corta antes, en isDataEmpty().",
+      extension: "csv",
+      // Tiene que contener "details" (o el attachmentMatch) para que lo tome findAttachment().
+      nombreArchivo: "details-Orphaned VMs sin anomalias.csv",
+      cuerpo: [
+        "Workload Name,Restore Points,Backup Location,Last Backup Date,Deleted at,Type of protection",
+        "vm-e2e-orphan-tape-01,3,Repo-E2E,10/08/2026,20/08/2026,Backup to tape",
+        "vm-e2e-orphan-tape-02,5,Repo-E2E,10/08/2026,20/08/2026,Backup to tape"
+      ].join("\r\n"),
+      esperado: {
+        etiqueta: OPS_LABEL_PROCESADO,
+        cierraTarea: true,
+        subeADrive: true,
+        // La aserción que hace fallar este caso contra el código viejo.
+        creaTicket: false,
+        ticketSummary: ORPHANED_VMS_TICKET_SUMMARY
+      }
     }
   };
 }
@@ -281,7 +306,8 @@ const E2E_CASOS_BORDE_APLICAN_A = {
   columnasEnEspanol: ['processPartitionEmails'],
   adjuntoSinMatch: ['processInaccessibleVMsEmails'],
   duplicado: ['processInaccessibleVMsEmails'],
-  adjuntoNuevoEnSegundoEnvio: ['processVeeamReplicasProtegidasEmails']
+  adjuntoNuevoEnSegundoEnvio: ['processVeeamReplicasProtegidasEmails'],
+  sinAnomaliasReales: ['processOrphanedVMsEmails']
 };
 
 /** MIME por extensión de fixture. */
