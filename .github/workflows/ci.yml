@@ -1,0 +1,35 @@
+name: Verificaciones de Apps Script
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sintaxis de los .js (node --check)
+        run: |
+          set -e
+          ERRORES=0
+          while IFS= read -r -d '' ARCHIVO; do
+            if ! node --check "$ARCHIVO"; then
+              echo "::error file=${ARCHIVO}::Error de sintaxis"
+              ERRORES=$((ERRORES + 1))
+            fi
+          done < <(find . -name "*.js" -not -path "./.git/*" -print0)
+          if [ "$ERRORES" -gt 0 ]; then
+            echo "Se encontraron ${ERRORES} archivo(s) con errores de sintaxis."
+            exit 1
+          fi
+
+      - name: Declaraciones duplicadas en el scope global (ver AGENTS.md §4)
+        run: |
+          DUPLICADOS=$(grep -rhoE "^(const|let|class) +[A-Za-z0-9_]+" --include=*.js . | sort | uniq -d || true)
+          if [ -n "$DUPLICADOS" ]; then
+            echo "Declaraciones duplicadas en el scope global (rompen el proyecto ENTERO en Apps Script):"
+            echo "$DUPLICADOS"
+            exit 1
+          fi
