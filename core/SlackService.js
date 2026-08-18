@@ -6,16 +6,17 @@ function enviarResumenSlack(operationName, summaryReport) {
   _registrarEnLog(operationName, summaryReport);
   if (!SLACK_WEBHOOK_URL || SLACK_WEBHOOK_URL.trim() === "") return;
 
-  const { exitos, advertencias, errores, tareasCerradas, tareasCerradasDetalle, drive } = summaryReport;
+  const { exitos, advertencias, errores, tareasCerradas } = summaryReport;
 
   // Si no hay absolutamente nada que reportar, no hace nada.
-  if (errores.length === 0 && advertencias.length === 0 && exitos.length === 0 && tareasCerradas === 0 && (!drive || drive.length === 0)) {
+  if (errores.length === 0 && advertencias.length === 0 && exitos.length === 0 && tareasCerradas === 0) {
     return;
   }
 
   let titulo;
   let mensaje = "";
 
+  // 1. Define el título basado en la severidad máxima del evento.
   if (errores.length > 0) {
     titulo = `❌ Ejecución con Errores (${operationName})`;
   } else if (advertencias.length > 0) {
@@ -24,56 +25,57 @@ function enviarResumenSlack(operationName, summaryReport) {
     titulo = `✅ Ejecución Exitosa (${operationName})`;
   }
 
+  // 2. Construye el mensaje por bloques, sin usar "else if".
+
+  // Bloque de Errores (si existen)
   if (errores.length > 0) {
     mensaje += `\n\n*--- 🚨 ERRORES CRÍTICOS ---*`;
     errores.forEach(err => {
-      mensaje += `\n• *Cliente:* ${err.cliente || "_Desconocido_"}`;
+      mensaje += `\n• *Cliente:* ${err.cliente || "_Desconocido_"}`; // NUEVO
       mensaje += `\n  • *Error:* \`${err.error}\``;
-      if (err.ticket) mensaje += `\n  • *Ticket:* <${JIRA_DOMAIN}/browse/${err.ticket}|${err.ticket}>`;
+      if (err.ticket) mensaje += `\n  • *Ticket:* <${JIRA_DOMAIN}/browse/${err.ticket}|${err.ticket}>`; // NUEVO
       if (err.detalle) mensaje += `\n  • *Detalle:* ${err.detalle}`;
     });
   }
 
+    // --- INICIO DE LA CORRECCIÓN EN EL BLOQUE DE ADVERTENCIAS ---
   if (advertencias.length > 0) {
     mensaje += `\n\n*--- ⚠️ ADVERTENCIAS ---*`;
     advertencias.forEach(warn => {
+      // Log de diagnóstico para ver el objeto exacto que llega.
+      Logger.log(`Objeto de advertencia recibido para Slack: ${JSON.stringify(warn)}`);
+
+      // Lógica robusta para encontrar los datos, buscando en el objeto principal o en su propiedad "detail".
       const warningData = warn.detail || warn;
-      if (warningData.cliente) mensaje += `\n• *Cliente:* ${warningData.cliente}`;
+
+      // Verificación ANTES de imprimir para evitar "undefined".
       if (warningData.ticketKey) {
         mensaje += `\n• *Ticket:* <${JIRA_DOMAIN}/browse/${warningData.ticketKey}|${warningData.ticketKey}>`;
         mensaje += `\n• *Problema:* ${warningData.problema || 'No se especificó el problema.'}`;
       } else {
-        mensaje += `\n• *Problema:* ${warningData.problema || '(Sin detalles adicionales)'}`;
+        // Mensaje genérico si no se encuentra el ticketKey, usando la información que sí tengamos.
+        mensaje += `\n• *Problema:* Ocurrió un fallo durante una operación. ${warningData.problema || '(Sin detalles adicionales)'}`;
       }
+      
       if (warningData.accion) mensaje += `\n• *Acción:* ${warningData.accion}`;
     });
   }
   
-  if (exitos.length > 0 || tareasCerradas > 0) {
-    mensaje += `\n\n*--- ✅ ÉXITOS DE NEGOCIO ---*`;
-    if (exitos.length > 0) {
-      exitos.forEach(succ => {
-        mensaje += `\n• ${succ.mensaje}`;
-      });
-    }
-    if (tareasCerradas > 0) {
-      if (tareasCerradasDetalle && tareasCerradasDetalle.length > 0) {
-        mensaje += `\n• Se cerraron *${tareasCerradas}* tareas programadas: ${tareasCerradasDetalle.join(", ")}`;
-      } else {
-        mensaje += `\n• Se cerraron *${tareasCerradas}* tareas programadas.`;
-      }
-    }
+  // Bloque de Éxitos (si existen)
+  if (exitos.length > 0) {
+    mensaje += `\n\n*--- ✅ ÉXITOS ---*`;
+    exitos.forEach(succ => {
+      mensaje += `\n• ${succ.mensaje}`;
+    });
   }
 
-  if (drive && drive.length > 0) {
-    mensaje += `\n\n*--- 📁 ARCHIVADO EN DRIVE ---*`;
-    drive.forEach(d => {
-      if (d.estado === 'omitido') {
-        mensaje += `\n• ⏭️ *Omitido (ya existía):* ${d.nombre} (${d.cliente})`;
-      } else {
-        mensaje += `\n• 📁 *Subido:* ${d.nombre} (${d.cliente})`;
-      }
-    });
+  // Bloque de Tareas Cerradas (si existen)
+  if (tareasCerradas > 0) {
+    // Si ya hay una sección de éxitos, lo añade ahí. Si no, crea su propia sección.
+    if (exitos.length === 0) {
+       mensaje += `\n\n*--- ✅ ÉXITOS ---*`;
+    }
+    mensaje += `\n• Se cerraron *${tareasCerradas}* tareas programadas.`;
   }
   
   const fullMessage = `*${titulo}*${mensaje}`;

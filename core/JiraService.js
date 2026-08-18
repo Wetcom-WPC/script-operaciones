@@ -199,9 +199,9 @@ function _resolverComoReporteDuplicado(taskKey, estadoTarea, fullTaskName, clien
  * @returns {{key: string, summary: string, status: string}|null}
  */
 function buscarTareaProgramadaDelDia(fullTaskName, projectKey) {
-  // Bug 1: startOfDay() dependía de la zona horaria del servidor (UTC).
-  // Se cambia por "-1d" (últimas 24 horas) para evitar problemas si el script corre temprano por la mañana en Argentina.
-  const jql = `project = "${projectKey}" AND issuetype = "Tarea Programada" AND summary ~ "\\"${String(fullTaskName).replace(/"/g, '\\"')}\\"" AND created >= -1d ORDER BY created DESC`;
+  // startOfDay() lo resuelve Jira con su propia zona horaria, así que no depende de que la del
+  // script coincida ni de formatear la fecha a mano.
+  const jql = `project = "${projectKey}" AND issuetype = "Tarea Programada" AND summary ~ "${String(fullTaskName).replace(/"/g, '\\"')}" AND created >= startOfDay() ORDER BY created DESC`;
   const options = {
     "method": "post", "contentType": "application/json",
     "headers": getJiraHeaders(),
@@ -212,18 +212,16 @@ function buscarTareaProgramadaDelDia(fullTaskName, projectKey) {
   try {
     const respuesta = fetchWithRetries(`${JIRA_DOMAIN}/rest/api/3/search/jql`, options);
     if (respuesta.getResponseCode() !== 200) {
-      Logger.log(`[JIRA] No se pudo verificar si "${fullTaskName}" ya existía hoy en ${projectKey} (HTTP ${respuesta.getResponseCode()}). Se asume que no.`);
+      Logger.log(`[JIRA] No se pudo verificar si "${fullTaskName}" ya existía hoy en ${projectKey} (HTTP ${respuesta.getResponseCode()}). Se asume que no, para no dar por procesado un reporte que quizá no lo está.`);
       return null;
     }
 
-    // Bug 2: El operador ~ es difuso. Si buscábamos "Replicas protegidas", nos podía traer "Replicas protegidas San Juan".
-    // Ahora en el JQL envolvemos en comillas escapadas (\\"Nombre\\") para buscar la frase exacta,
-    // y relajamos la comparación en memoria a un includes() en lugar de un === estricto, 
-    // porque si Jira lo devolvió y contiene la frase exacta, es el ticket que buscamos.
+    // El operador ~ de JQL es difuso ("Idle VMs" matchea "Idle VMs Prod"), así que se exige
+    // coincidencia exacta en memoria — igual que findExistingJiraTicket.
     const objetivo = String(fullTaskName).trim().toLowerCase();
     const issues = JSON.parse(respuesta.getContentText()).issues || [];
     const exacta = issues.find(function (i) {
-      return i.fields.summary && i.fields.summary.trim().toLowerCase().includes(objetivo);
+      return i.fields.summary && i.fields.summary.trim().toLowerCase() === objetivo;
     });
 
     if (!exacta) return null;

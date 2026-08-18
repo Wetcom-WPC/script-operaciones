@@ -40,7 +40,7 @@ class MailProcessor {
    */
   processEmails() {
     const timeGuard = new TimeGuard({ operationName: this.operationName });
-    const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, tareasCerradasDetalle: [], drive: [], timeGuard: timeGuard };
+    const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, timeGuard: timeGuard };
     const threads = fetchAndFilterGlobalThreads(this.emailSubject);
     
     if (threads.length > 0) {
@@ -322,10 +322,11 @@ class MailProcessor {
     const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName, blobsToUpload);
 
     if (resultadoDrive.ok) {
-      if (!summaryReport.drive) summaryReport.drive = [];
-      resultadoDrive.subidos.forEach(f => summaryReport.drive.push({ nombre: f, cliente: resultadoDrive.cliente, estado: 'subido' }));
-      resultadoDrive.omitidos.forEach(f => summaryReport.drive.push({ nombre: f, cliente: resultadoDrive.cliente, estado: 'omitido' }));
-
+      if (resultadoDrive.subidos.length > 0) {
+        summaryReport.exitos.push({
+          mensaje: `📁 Se archivaron en Drive ${resultadoDrive.subidos.length} archivo(s) de ${resultadoDrive.cliente}: ${resultadoDrive.subidos.join(", ")}.`
+        });
+      }
       return resultadoTickets;
     }
 
@@ -448,8 +449,6 @@ class MailProcessor {
 
     if (estado === 'SUCCESS') {
       summaryReport.tareasCerradas++;
-      if (!summaryReport.tareasCerradasDetalle) summaryReport.tareasCerradasDetalle = [];
-      summaryReport.tareasCerradasDetalle.push(`${this.scheduledTaskName} (${clientConfig.clientName})`);
       Logger.log(`[${this.operationName}] Tarea programada "${this.scheduledTaskName}" cerrada para ${clientConfig.clientName}.`);
       return { status: 'SUCCESS' };
     }
