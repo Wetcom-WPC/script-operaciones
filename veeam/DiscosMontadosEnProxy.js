@@ -33,16 +33,11 @@ class DiscosMontadosProcessor extends MailProcessor {
         if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       }
         if (typeof clientConfig !== 'undefined' && clientConfig) {
-
-          const nombreArchivo = this.operationName + " - OK.txt";
-
-          this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
-
-          this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
-
-        }
-
-      return { status: 'SUCCESS' };
+      const nombreArchivo = this.operationName + " - OK.txt";
+      this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+      this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+    }
+    return { status: 'SUCCESS' };
     }
     return super.processSingleMessage(message, summaryReport);
   }
@@ -104,16 +99,6 @@ class DiscosMontadosProcessor extends MailProcessor {
       summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
     }
     if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
-      if (typeof clientConfig !== 'undefined' && clientConfig) {
-
-        const nombreArchivo = this.operationName + " - OK.txt";
-
-        this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
-
-        this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
-
-      }
-
     return { status: 'SUCCESS' };
   }
 

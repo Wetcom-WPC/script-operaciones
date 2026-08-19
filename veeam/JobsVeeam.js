@@ -52,16 +52,11 @@ class JobsVeeamProcessor extends MailProcessor {
         if(closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas++;
       }
         if (typeof clientConfig !== 'undefined' && clientConfig) {
-
-          const nombreArchivo = this.operationName + " - OK.txt";
-
-          this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
-
-          this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
-
-        }
-
-      return { status: 'SUCCESS' };
+      const nombreArchivo = this.operationName + " - OK.txt";
+      this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+      this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+    }
+    return { status: 'SUCCESS' };
     }
     return super.processSingleMessage(message, summaryReport);
   }
@@ -134,16 +129,6 @@ class JobsVeeamProcessor extends MailProcessor {
   }
 
   handleNoAlerts(existingTicketKey, clientConfig, summaryReport) {
-      if (typeof clientConfig !== 'undefined' && clientConfig) {
-
-        const nombreArchivo = this.operationName + " - OK.txt";
-
-        this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
-
-        this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
-
-      }
-
     return { status: 'SUCCESS' };
   }
 
