@@ -55,16 +55,11 @@ class VsphereAlertsProcessor extends MailProcessor {
         }
       }
         if (typeof clientConfig !== 'undefined' && clientConfig) {
-
-          const nombreArchivo = this.operationName + " - OK.txt";
-
-          this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
-
-          this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
-
-        }
-
-      return { status: 'SUCCESS' };
+      const nombreArchivo = this.operationName + " - OK.txt";
+      this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+      this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+    }
+    return { status: 'SUCCESS' };
     }
     
     return super.processSingleMessage(message, summaryReport);
@@ -178,16 +173,6 @@ class VsphereAlertsProcessor extends MailProcessor {
       const closeResult = buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
       if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
     }
-      if (typeof clientConfig !== 'undefined' && clientConfig) {
-
-        const nombreArchivo = this.operationName + " - OK.txt";
-
-        this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
-
-        this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
-
-      }
-
     return { status: 'SUCCESS' };
   }
 
