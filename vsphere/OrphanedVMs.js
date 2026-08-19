@@ -103,10 +103,21 @@ class OrphanedVMsProcessor extends MailProcessor {
       filteredData = filterOrphanedVMsData(parsedData, clientConfig.exceptions);
     }
 
-    return { 
-      headers: [], 
-      finalAlerts: filteredData.rows, 
-      rowsForExport: filteredData.rows, 
+    // filterOrphanedVMsData*() deja el encabezado como PRIMERA FILA de `rows`, así que un
+    // reporte donde todas las VMs quedaron exceptuadas devuelve rows.length === 1, no 0.
+    // MailProcessor enruta por finalAlerts.length, de modo que ese caso caía en handleAlerts()
+    // y abría un ticket "Se han detectado 0 Orphaned VMs" (PTRNSNR-12069, 07/08/2026).
+    // Sin filas reales no hay anomalía: se devuelve vacío para que enrute por handleNoAlerts(),
+    // que cierra la tarea programada y comenta el ticket previo si existía.
+    // Mismo criterio que VMsEnMasDeUnJobProcessor y EspacioEnRepositoriosProcessor.
+    if (filteredData.vmCount === 0) {
+      return { headers: [], finalAlerts: [], rowsForExport: [], reasonsText: 0 };
+    }
+
+    return {
+      headers: [],
+      finalAlerts: filteredData.rows,
+      rowsForExport: filteredData.rows,
       reasonsText: filteredData.vmCount
     };
   }

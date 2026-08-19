@@ -11,6 +11,6 @@
   "jsonExtensions": [
     ".json"
   ],
-  "filePushOrder": [],
+  "filePushOrder": ["core/"],
   "skipSubdirectories": false
 }

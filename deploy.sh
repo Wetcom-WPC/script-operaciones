@@ -56,7 +56,30 @@ if [ "$SCRIPT_ID" = "$ID_PRODUCCION" ]; then
   echo ""
 fi
 
-# --- 3. Chequeo de sintaxis antes de subir --------------------------------------------
+# --- 3. GitHub primero, GAS después ---------------------------------------------------
+# Si dos personas despliegan casi al mismo tiempo, la que llega segunda tiene que
+# enterarse ANTES de escribir en Apps Script, no después. Por eso el push a GitHub va
+# primero: si lo rechaza porque el remoto tiene commits que no tenés en local, es señal
+# de que alguien ya desplegó desde acá — seguir pisaría ese trabajo. GitHub y GAS quedan
+# sincronizados porque, si uno falla, el otro tampoco se toca.
+if [ -n "$(git status --porcelain)" ]; then
+  echo "ERROR: hay cambios sin commitear. Commiteá antes de desplegar — si no, clasp push"
+  echo "subiría a Apps Script código que git todavía no tiene, y quedan desincronizados."
+  exit 1
+fi
+
+echo "Sincronizando con GitHub..."
+if ! git push origin HEAD; then
+  echo ""
+  echo "ERROR: GitHub rechazó el push (el remoto tiene commits que no tenés en local,"
+  echo "probablemente alguien más ya desplegó desde acá). NO se tocó Apps Script."
+  echo "Traé los cambios (git pull) y volvé a correr ./deploy.sh."
+  exit 1
+fi
+echo "GitHub OK."
+echo ""
+
+# --- 4. Chequeo de sintaxis antes de subir --------------------------------------------
 # Apps Script no valida hasta que algo se ejecuta: un error de sintaxis pusheado a
 # producción puede quedar latente hasta el ciclo de la mañana siguiente. `node --check`
 # sólo parsea (no ejecuta), que es exactamente lo que hace falta.
@@ -79,7 +102,7 @@ else
   echo "AVISO: node no está disponible, se omite el chequeo de sintaxis."
 fi
 
-# --- 4. Declaraciones duplicadas ------------------------------------------------------
+# --- 5. Declaraciones duplicadas ------------------------------------------------------
 # En Apps Script todos los archivos comparten un scope global: un const/let/class repetido
 # entre dos archivos rompe el proyecto ENTERO al cargar, no sólo el archivo culpable
 # (ver AGENTS.md §4). Es barato chequearlo y caro descubrirlo en producción.
@@ -93,7 +116,7 @@ fi
 echo "Sin declaraciones duplicadas."
 echo ""
 
-# --- 5. Push + versión ----------------------------------------------------------------
+# --- 6. Push + versión ----------------------------------------------------------------
 echo "Pusheando..."
 clasp push --force
 
@@ -106,5 +129,4 @@ echo "Últimas versiones:"
 clasp list-versions | tail -3
 
 echo ""
-echo "Listo. Acordate de commitear y pushear a GitHub para que el código y el"
-echo "historial de Apps Script cuenten la misma historia."
+echo "Listo. GitHub y Apps Script quedaron sincronizados (GitHub se actualizó antes de tocar GAS)."

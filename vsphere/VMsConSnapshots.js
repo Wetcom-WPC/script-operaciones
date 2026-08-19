@@ -51,6 +51,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 
     const headers = parsedData[0].map(h => h.trim());
     const reportRows = parsedData.slice(1);
+    Logger.log("HEADERS ENCONTRADOS: " + JSON.stringify(headers));
     
     if (clientConfig && !clientConfig.exceptions) clientConfig.exceptions = [];
 
@@ -60,6 +61,12 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     let idxAge = findCol("Number_Days_Old") !== -1 ? findCol("Number_Days_Old") : findCol("Age");  
     let idxSpace = findCol("Snapshot_Space") !== -1 ? findCol("Snapshot_Space") : findCol("Space");
     let idxCount = findCol("Number_Snapshots") !== -1 ? findCol("Number_Snapshots") : findCol("Cantidad");
+    let idxSnapshotName = findCol("Snapshot_Name");
+    
+    let idxTotalCapacity = findCol("Total_Capacity") !== -1 ? findCol("Total_Capacity") : findCol("Total Capacity");
+    if (idxTotalCapacity === -1) idxTotalCapacity = findCol("Summary|Datastore(s)");
+    if (idxTotalCapacity === -1) idxTotalCapacity = findCol("Capacity");
+    if (idxTotalCapacity === -1) idxTotalCapacity = findCol("Total");
 
     if (idxName === -1 || idxAge === -1 || idxSpace === -1 || idxCount === -1) {
       summaryReport.errores.push({ error: "Faltan columnas clave." });
@@ -67,6 +74,9 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     }
     
     headers[idxName] = "Name";
+    if (idxTotalCapacity !== -1 && !headers.includes("Used Space %")) {
+      headers.push("Used Space %");
+    }
     
     const parseSeguro = (val) => {
       if (!val) return 0;
@@ -76,26 +86,110 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       return parseFloat(clean) || 0;
     };
 
-    const detectedReasons = new Set();
-    const finalAlerts = reportRows.filter(row => {
-      if (row.length < idxAge || row.join('').trim() === '') return false;
+    const parseSpaceToGB = (val) => {
+      if (!val) return 0;
+      let str = val.toString().trim().toUpperCase();
+      let clean = str;
+      if (clean.includes('.') && clean.includes(',')) clean = clean.replace(/\./g, '');
+      clean = clean.replace(/[^\d.,-]/g, '').trim();
+      clean = clean.replace(',', '.');
+      let num = parseFloat(clean) || 0;
+      if (str.includes('TB')) return num * 1024;
+      if (str.includes('MB')) return num / 1024;
+      if (str.includes('KB')) return num / (1024 * 1024);
+      return num; // defaults to GB if no unit or 'GB'
+    };
+
+    const detectedReasonsOps = new Set();
+    const detectedReasonsSoporte = new Set();
+    const opsAlerts = [];
+    const soporteAlerts = [];
+
+    // Las reglas de soporte vienen de la misma planilla de Excepciones (columnas AGE/SIZE/QTY/CRITERIO)
+    let sopRules = {};
+    if (typeof getClientConfig === "function") {
+      const emailParaSoporte = (clientConfig && clientConfig.senderEmail) ? clientConfig.senderEmail : "alarmas@wetcom.com";
+      const configSop = getClientConfig(emailParaSoporte, this.operationName + " SOP", true);
+      if (configSop && configSop.exceptions) sopRules = configSop.exceptions;
+    }
+
+    reportRows.forEach(row => {
+      if (row.length < idxAge || row.join('').trim() === '') return;
       
       const vmName = (row[idxName] || "").trim();
-      if (vmName.toLowerCase().includes("replica")) return false;
+      if (vmName.toLowerCase().includes("replica")) return;
       
       const age = parseSeguro(row[idxAge]);
-      const space = parseSeguro(row[idxSpace]);
+      
+      // Ignorar snapshots con age -1 (o negativo) reportados por la plataforma
+      if (age < 0) return;
+      
+      if (idxSnapshotName !== -1) {
+         const snapName = (row[idxSnapshotName] || "").toString().toLowerCase();
+         if (snapName.includes("restore point") || snapName.includes("restore_point")) return;
+      }
+      
+      const space = parseSpaceToGB(row[idxSpace]);
       const count = parseSeguro(row[idxCount]);
       
-      let rowBreaksRule = false;
-      if (age >= AGE_MAX) { detectedReasons.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
-      if (space >= SIZE_MAX) { detectedReasons.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
-      if (count >= CANTIDAD_MAX) { detectedReasons.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+      let usedPercent = 0;
+      const totalCap = idxTotalCapacity !== -1 ? parseSpaceToGB(row[idxTotalCapacity]) : 0;
+      if (totalCap > 0) {
+         usedPercent = (space / totalCap) * 100;
+      }
+      if (idxTotalCapacity !== -1) {
+        row.push(usedPercent > 0 ? usedPercent.toFixed(2) + "%" : "0.00%");
+      }
       
-      return rowBreaksRule && !isRowExcepted(row, headers, clientConfig.exceptions);
+      if (isRowExcepted(row, headers, clientConfig.exceptions)) return;
+
+      const matchedRule = findMatchingSopRule(row, headers, sopRules);
+      if (matchedRule) {
+         Logger.log("[DEBUG SOPORTE] VM MATCH. Valores regla: AGE=" + matchedRule.age + ", SIZE=" + matchedRule.size + ", QTY=" + matchedRule.qty + ". Valores reales: AGE=" + age + ", SIZE=" + space + ", QTY=" + count);
+      }
+      
+      if (matchedRule) {
+         let sizeLimit = matchedRule.size > 0 ? matchedRule.size : Infinity;
+         let ageLimit = matchedRule.age > 0 ? matchedRule.age : Infinity;
+         let qtyLimit = matchedRule.qty > 0 ? matchedRule.qty : Infinity;
+         
+         let rowBreaksRule = false;
+         if (age >= ageLimit) { detectedReasonsSoporte.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
+         if (count >= qtyLimit) { detectedReasonsSoporte.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
+         
+         if (matchedRule.sizeType === 'relativo') {
+            if (usedPercent >= sizeLimit && sizeLimit !== Infinity) {
+               detectedReasonsSoporte.add(`Tamaño Relativo >= ${sizeLimit}%`); 
+               rowBreaksRule = true;
+            }
+         } else {
+            if (space >= sizeLimit && sizeLimit !== Infinity) {
+               detectedReasonsSoporte.add(`Tamaño Absoluto >= ${sizeLimit} GB`); 
+               rowBreaksRule = true;
+            }
+         }
+         if (rowBreaksRule) soporteAlerts.push(row);
+      } else {
+         let rowBreaksRule = false;
+         if (age >= AGE_MAX) { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
+         if (space >= SIZE_MAX) { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
+         if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+         
+         if (rowBreaksRule) opsAlerts.push(row);
+      }
     });
 
-    const reasonsText = Array.from(detectedReasons).map(r => `* ${r}`).join('\n');
+    const opsReasonsText = Array.from(detectedReasonsOps).map(r => `* ${r}`).join('\n');
+    const soporteReasonsText = Array.from(detectedReasonsSoporte).map(r => `* ${r}`).join('\n');
+    
+    this.opsAlerts = opsAlerts;
+    this.soporteAlerts = soporteAlerts;
+    this.opsReasonsText = opsReasonsText;
+    this.soporteReasonsText = soporteReasonsText;
+    
+    // Devolvemos la unión de ambas para que la clase base detecte si hubo alertas en total.
+    const finalAlerts = [...opsAlerts, ...soporteAlerts];
+    const reasonsText = opsReasonsText + '\n' + soporteReasonsText;
     
     const rowsForExport = [...finalAlerts];
     if (summaryRow.length > 0) rowsForExport.push(summaryRow);
@@ -108,161 +202,187 @@ class VMsConSnapshotsProcessor extends MailProcessor {
            findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfig.jiraProjectKey);
   }
 
-  hasCriticalAlerts(headers, finalAlerts, clientConfig) {
-    let criticalAge = Infinity;
-    let criticalSize = Infinity;
-    let criticalCount = Infinity;
-    let hasCustomCriticalConfig = false;
+  handleAlerts(existingTicketKeyIgnored, clientConfig_Ignored, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
+    let globalStatus = 'SUCCESS';
+    let huboAlertaOps = false;
+    let huboAlertaSop = false;
+    let senderEmail = clientConfig_Ignored.senderEmail || "alarmas@wetcom.com"; // workaround para conseguir el email
 
-    if (clientConfig && clientConfig.exceptions && clientConfig.exceptions["UMBRALES_CRITICOS"]) {
-      const configRules = clientConfig.exceptions["UMBRALES_CRITICOS"];
-      configRules.forEach(rule => {
-        if (rule.column === "CONFIG") {
-          rule.values.forEach(val => {
-            const parts = val.split(':');
-            if (parts.length === 2) {
-              const k = parts[0].trim().toLowerCase();
-              const v = parseFloat(parts[1].trim());
-              if (!isNaN(v)) {
-                if (k === "age") criticalAge = v;
-                if (k === "size") criticalSize = v;
-                if (k === "qty") criticalCount = v;
-                hasCustomCriticalConfig = true;
+    // PROCESAR OPS
+    if (this.opsAlerts && this.opsAlerts.length > 0) {
+      huboAlertaOps = true;
+      const clientConfigOps = getClientConfigByName(clientConfig_Ignored.clientName, this.operationName) || clientConfig_Ignored;
+      const existingTicketKeyOps = findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfigOps.jiraProjectKey) ||
+                                   findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps.jiraProjectKey);
+                               const rowsExp = [...this.opsAlerts];
+        
+        const nombreReporteOps = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-OPS.xlsx";
+        const xlsxBlobOps = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporteOps);
+        if (xlsxBlobOps) {
+            this.extractedBlobs = this.extractedBlobs || [];
+            this.extractedBlobs.push(xlsxBlobOps);
+        }
+
+        if (existingTicketKeyOps) {
+          if (!haSidoActualizadoHoy(existingTicketKeyOps, "ALERTA-SNAPSHOTS-OPS")) {
+            let commentText = `⏳ **El problema persiste.** [HU-ALERTA-SNAPSHOTS-OPS]\n\nSe detectaron ${this.opsAlerts.length} VMs fuera de norma:\n${this.opsReasonsText}\n\n`;
+            if (this.opsAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
+              commentText += `|| ${headers.join(" || ")} ||\n`;
+              this.opsAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+              addCommentToJiraTicket(existingTicketKeyOps, commentText);
+              summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con tabla.` });
+            } else {
+              if (xlsxBlobOps) {
+                const attStatus = addAttachmentToJiraTicket(existingTicketKeyOps, xlsxBlobOps);
+                if (attStatus.status === 'SUCCESS') {
+                  commentText += "Se adjunta reporte detallado.";
+                  addCommentToJiraTicket(existingTicketKeyOps, commentText);
+                  summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con adjunto.` });
+                  const accountIdAsignado = chequearSiEsInformativa(clientConfigOps.clientName, this.operationName);
+                  if (accountIdAsignado) ticketInformativo(existingTicketKeyOps, accountIdAsignado);
+                } else {
+                  summaryReport.advertencias.push("Fallo al adjuntar en Ops.");
+                  globalStatus = 'FAILURE';
+                }
+              } else {
+                globalStatus = 'FAILURE';
               }
             }
-          });
-        }
-      });
-    }
-
-    // Si el cliente no tiene configurados umbrales críticos, nunca se escala a Soporte
-    if (!hasCustomCriticalConfig) return false;
-
-    const findCol = (namePart) => headers.findIndex(h => h.toLowerCase().includes(namePart.toLowerCase()));
-    let idxAge = findCol("Number_Days_Old") !== -1 ? findCol("Number_Days_Old") : findCol("Age");  
-    let idxSpace = findCol("Snapshot_Space") !== -1 ? findCol("Snapshot_Space") : findCol("Space");
-    let idxCount = findCol("Number_Snapshots") !== -1 ? findCol("Number_Snapshots") : findCol("Cantidad");
-
-    if (idxAge === -1 || idxSpace === -1 || idxCount === -1) return false;
-
-    const parseSeguro = (val) => {
-      if (!val) return 0;
-      let clean = val.toString().trim();
-      if (clean.includes('.') && clean.includes(',')) clean = clean.replace(/\./g, '');
-      clean = clean.replace(',', '.');
-      return parseFloat(clean) || 0;
-    };
-
-    for (const row of finalAlerts) {
-      const age = parseSeguro(row[idxAge]);
-      const space = parseSeguro(row[idxSpace]);
-      const count = parseSeguro(row[idxCount]);
-      
-      if (age >= criticalAge || space >= criticalSize || count >= criticalCount) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
-    const alertCount = finalAlerts.length;
-
-    const isCritical = this.hasCriticalAlerts(headers, finalAlerts, clientConfig);
-    let targetTicketKey = existingTicketKey;
-    let targetConfig = clientConfig;
-
-    if (isCritical) {
-      Logger.log(`[Snapshots] Gravedad CRÍTICA detectada para ${clientConfig.clientName}. Escalando a Soporte.`);
-      const soporteConfig = getClientConfigByName(clientConfig.clientName, this.operationName, true);
-      if (soporteConfig) {
-        targetConfig = soporteConfig;
-        targetTicketKey = this.findExistingTicket(soporteConfig);
-      } else {
-        Logger.log(`[Snapshots] No se pudo obtener la config de Soporte para ${clientConfig.clientName}. Se usará Operaciones como fallback.`);
-      }
-    }
-
-    if (targetTicketKey) {
-      if (haSidoActualizadoHoy(targetTicketKey, "ALERTA-SNAPSHOTS")) return { status: 'SUCCESS' };
-      
-      let commentText = `🚨 **El problema persiste.** [HU-ALERTA-SNAPSHOTS]\n\nSe detectaron ${alertCount} VMs fuera de norma:\n${reasonsText}\n\n`;
-      
-      if (alertCount <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-        commentText += `|| ${headers.join(" || ")} ||\n`;
-        finalAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
-        addCommentToJiraTicket(targetTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Ticket ${targetTicketKey} actualizado con tabla.` });
-      } else {
-        // El nombre DEBE incluir la fecha del reporte: addAttachmentToJiraTicket omite adjuntos
-        // que ya existen en el ticket, y con un nombre fijo la actualización del día siguiente
-        // se descartaría por error. Se usa la misma convención que MailProcessor.handleAlerts.
-        const nombreReporte = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
-        const xlsxBlob = convertDataToXlsxBlob([headers, ...rowsForExport], nombreReporte);
-        const attStatus = addAttachmentToJiraTicket(targetTicketKey, xlsxBlob);
-        
-        if (attStatus.status === 'SUCCESS') {
-            commentText += "Se adjunta reporte detallado.";
-            addCommentToJiraTicket(targetTicketKey, commentText);
-            summaryReport.exitos.push({ mensaje: `Ticket ${targetTicketKey} actualizado con adjunto.` });
-
-            const accountIdAsignado = chequearSiEsInformativa(targetConfig.clientName, this.operationName);
-            if (accountIdAsignado) ticketInformativo(targetTicketKey, accountIdAsignado);
+          }
         } else {
-            // No cerrar la tarea programada acá: el reporte todavía no se adjuntó. Si un 500
-            // transitorio de Jira cierra la tarea de todos modos, el próximo reintento la
-            // encuentra ya cerrada (NOT_FOUND es terminal en buscarYCerrarTareaProgramada) y el
-            // correo se aparta a [OPS-ERROR] para siempre aunque el 500 se hubiera resuelto solo.
-            summaryReport.advertencias.push("Fallo al adjuntar.");
-            return { status: attStatus.status === 'HTTP_500' ? 'HTTP_500' : 'FAILURE' };
+          let summary, description;
+          description = `Se detectaron ${this.opsAlerts.length} VMs con snapshots fuera del estándar (Ops):\n${this.opsReasonsText}\n\n`;
+          if (this.opsAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
+            description += `|| ${headers.join(" || ")} ||\n`;
+            this.opsAlerts.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+            const creationResult = createTicketAndNotify(summary, description, null, clientConfigOps, this.operationName);
+            if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
+            else globalStatus = 'FAILURE';
+          } else {
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT;
+            description += `Debido a la cantidad de registros, se adjunta el reporte.`;
+            const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfigOps, this.operationName);
+            if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
+            else globalStatus = 'FAILURE';
+          }
         }
-      }
-
-      if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
-      return { status: 'SUCCESS' };
-      
-    } else {
-      let summary, description, xlsxBlob = null;
-      description = `Se detectaron ${alertCount} VMs con snapshots fuera del estándar permitido:\n${reasonsText}\n\n`;
-      
-      if (alertCount <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-        summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
-        description += `|| ${headers.join(" || ")} ||\n`;
-        finalAlerts.forEach(rowData => {
-          description += `| ${rowData.map(cell => (cell || "").trim()).join(" | ")} |\n`;
-        });
-      } else {
-        summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT;
-        description += `Debido a la cantidad de registros (${alertCount}), se adjunta el reporte detallado.`;
-        const newFileName = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-FILTRADO.xlsx";
-        xlsxBlob = convertDataToXlsxBlob([headers, ...rowsForExport], newFileName);
-      }
-     
-      const creationResult = createTicketAndNotify(summary, description, xlsxBlob, targetConfig, this.operationName);
-      const estadoCreacion = (creationResult && creationResult.status) ? creationResult.status : 'ERROR';
-
-      if (estadoCreacion === 'SUCCESS') {
-        summaryReport.exitos.push(creationResult.detail);
-      } else {
-        // Mismo motivo que en la rama de ticket existente: si el reporte no se llegó a adjuntar,
-        // NO se cierra la tarea programada. Cerrarla acá hace que el reintento la encuentre
-        // cerrada (NOT_FOUND es terminal) y mande el correo a [OPS-ERROR] para siempre, aunque
-        // el 500 de Jira haya sido pasajero.
-        summaryReport.errores.push(creationResult && creationResult.detail ? creationResult.detail : {
-          cliente: clientConfig.clientName,
-          error: `No se pudo crear/completar el ticket de "${this.operationName}"`,
-          detalle: `Estado devuelto: ${estadoCreacion}. El correo queda pendiente y se reintenta.`
-        });
-        Logger.log(`[${this.operationName}] Creación/adjunto no confirmado (estado ${estadoCreacion}). NO se cierra la tarea programada; el correo se reintenta.`);
-        return { status: estadoCreacion };
-      }
-
-      if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
-      return { status: estadoCreacion };
     }
+
+    // PROCESAR SOPORTE
+    if (this.soporteAlerts && this.soporteAlerts.length > 0) {
+      huboAlertaSop = true;
+      // Tratar de obtener el clientConfigSoporte (pasando true como 3er parámetro si getClientConfig lo soporta, o forzando datos manuales)
+      let clientConfigSop = null;
+      if (typeof getClientConfig === 'function') {
+         clientConfigSop = getClientConfig(senderEmail, this.operationName + " SOP", true);
+      }
+      if (!clientConfigSop || !clientConfigSop.jiraProjectKeySop) {
+         // Fallback por si getClientConfig(..., true) no existe, o si estamos en Testing
+         clientConfigSop = { ...clientConfig_Ignored, jiraProjectKeySop: "SOP", clientNameSop: "Veeam Backup & Replication" }; 
+      }
+      
+      const existingTicketKeySop = findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE + " (Soporte)", clientConfigSop.jiraProjectKeySop) ||
+                                   findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT + " (Soporte)", clientConfigSop.jiraProjectKeySop);
+                           const rowsExp = [...this.soporteAlerts];
+        
+        const nombreReporteSop = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-SOP.xlsx";
+        const xlsxBlobSop = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporteSop);
+        if (xlsxBlobSop) {
+            this.extractedBlobs = this.extractedBlobs || [];
+            this.extractedBlobs.push(xlsxBlobSop);
+        }
+        
+        if (existingTicketKeySop) {
+          if (!haSidoActualizadoHoy(existingTicketKeySop, "ALERTA-SNAPSHOTS-SOP")) {
+            let commentText = `⏳ **El problema persiste.** [HU-ALERTA-SNAPSHOTS-SOP]\n\nSe detectaron ${this.soporteAlerts.length} VMs fuera de norma:\n${this.soporteReasonsText}\n\n`;
+            if (this.soporteAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
+              commentText += `|| ${headers.join(" || ")} ||\n`;
+              this.soporteAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+              addCommentToJiraTicket(existingTicketKeySop, commentText);
+              summaryReport.exitos.push({ mensaje: `Ticket SOPORTE ${existingTicketKeySop} actualizado con tabla.` });
+            } else {
+              if (xlsxBlobSop) {
+                const attStatus = addAttachmentToJiraTicket(existingTicketKeySop, xlsxBlobSop);
+                if (attStatus.status === 'SUCCESS') {
+                  commentText += "Se adjunta reporte detallado.";
+                  addCommentToJiraTicket(existingTicketKeySop, commentText);
+                  summaryReport.exitos.push({ mensaje: `Ticket SOPORTE ${existingTicketKeySop} actualizado con adjunto.` });
+                } else {
+                  summaryReport.advertencias.push("Fallo al adjuntar en Soporte.");
+                  globalStatus = 'FAILURE';
+                }
+              } else {
+                globalStatus = 'FAILURE';
+              }
+            }
+          }
+        } else {
+          let summary, description;
+          description = `Se detectaron ${this.soporteAlerts.length} VMs con snapshots fuera del estándar (Soporte):\n${this.soporteReasonsText}\n\n`;
+          if (this.soporteAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
+            description += `|| ${headers.join(" || ")} ||\n`;
+            this.soporteAlerts.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+            const creationResult = createTicketAndNotifySoporte(summary, description, null, clientConfigSop);
+            if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Soporte: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
+            else globalStatus = 'FAILURE';
+          } else {
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT;
+            description += `Debido a la cantidad de registros, se adjunta el reporte.`;
+            const creationResult = createTicketAndNotifySoporte(summary, description, xlsxBlobSop, clientConfigSop);
+            if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Soporte: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
+            else globalStatus = 'FAILURE';
+          }
+        }
+
+    }
+    if (globalStatus === 'SUCCESS' && this.scheduledTaskName) {
+       buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig_Ignored, false);
+    }
+    return { status: globalStatus };
   }
 }
 
 function processSnapshotsEmails() {
   new VMsConSnapshotsProcessor().processEmails();
+}// --- SOP RULES PARSING ---
+// Busca en clientConfig.exceptions el primer grupo cuyas condiciones coincidan
+// con la fila del reporte Y que tenga umbrales de soporte definidos (ageLimit/sizeLimit/qtyLimit).
+function findMatchingSopRule(reportRow, headers, exceptions) {
+  if (!exceptions || typeof exceptions !== 'object') return null;
+  const normalizedHeaders = headers.map(h => {
+    let n = h.trim().toLowerCase();
+    return n.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  });
+  for (const exceptionId in exceptions) {
+    const ruleGroup = exceptions[exceptionId];
+    // Solo procesar grupos marcados como 'considerar'
+    const hasConsiderar = ruleGroup.some(c => (c.criterio || '').toLowerCase() === 'considerar');
+    if (!hasConsiderar) continue;
+
+    const allConditionsMet = ruleGroup.every(condition => {
+      let nCol = condition.column.trim().toLowerCase();
+      nCol = nCol.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const colIndex = normalizedHeaders.indexOf(nCol);
+      if (colIndex === -1) return false;
+      const reportValueStr = (reportRow[colIndex] || '').toString().trim().toLowerCase();
+      return condition.values.some(exceptionValue => {
+        switch (condition.matchType.toLowerCase()) {
+          case 'exacta':      return reportValueStr === exceptionValue;
+          case 'contiene':    return reportValueStr.includes(exceptionValue);
+          case 'comienza con': return reportValueStr.startsWith(exceptionValue);
+          case 'termina con': return reportValueStr.endsWith(exceptionValue);
+          default:            return reportValueStr === exceptionValue;
+        }
+      });
+    });
+
+    if (allConditionsMet) {
+      // Devolver la primera condición del grupo que tenga límites definidos
+      const c = ruleGroup.find(r => r.ageLimit != null || r.sizeLimit != null || r.qtyLimit != null);
+      if (c) return { age: c.ageLimit, size: c.sizeLimit, qty: c.qtyLimit, sizeType: c.sizeType || '' };
+    }
+  }
+  return null;
 }
