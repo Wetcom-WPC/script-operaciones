@@ -208,6 +208,13 @@ function procesarTodasLasLicencias(opciones) {
 
       if (!cliente || !emailDestino || !folderId) continue;
 
+      // Filtrar clientes inactivos (Col F = "Activo")
+      const activo = (datos[i][5] || "").toString().trim().toUpperCase();
+      if (activo === "NO") {
+        console.log(`\u23ED\uFE0F Fila ${i} - ${cliente}: marcado como INACTIVO. Se omite.`);
+        continue;
+      }
+
       // ── IDEMPOTENCIA ─────────────────────────────────────────────────────
       // Red de seguridad: aunque algo reprocese este rango, no se reenvía.
       const marca = `${i}|${cliente}`;
@@ -780,8 +787,9 @@ function enviarAlertaSlackDetallada(cliente, alertas) {
  */
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
-  ui.createMenu('🚀 Wetcom Ops')
-    .addItem('Auditar Cliente Seleccionado', 'ejecutarClienteSeleccionado')
+  ui.createMenu('Ejecutar reporte de licencias')
+    .addItem('Auditar vSphere (Cliente Seleccionado)', 'ejecutarClienteSeleccionado')
+    .addItem('Auditar Veeam (Cliente Seleccionado)', 'ejecutarClienteSeleccionadoVeeamLic')
     .addToUi();
 }
 
@@ -810,16 +818,21 @@ function ejecutarClienteSeleccionado() {
   }
   
   // 2. Leer los datos exactos de esa fila según la estructura de tu "Licencias"
-  // Columna A: Destinatario | B: PODs | C: Cliente | D: ID Carpeta RVTools
-  const rangoFila = hoja.getRange(fila, 1, 1, 4).getValues()[0];
+  const rangoFila = hoja.getRange(fila, 1, 1, 6).getValues()[0];
   const emailDestino = rangoFila[0];
   const pod = rangoFila[1];
   const cliente = rangoFila[2];
   const folderId = rangoFila[3];
+  const activo = (rangoFila[5] || "").toString().trim().toUpperCase();
   
   // 3. Validar que la fila contenga los datos mínimos indispensables
   if (!cliente || !emailDestino || !folderId) {
-    ui.alert("⚠️ Fila Incompleta", `La fila ${fila} no tiene configurados todos los campos necesarios (Cliente, Destinatario o ID de Carpeta).`, ui.ButtonSet.OK);
+    ui.alert("⚠️ Fila Incompleta", `La fila ${fila} no tiene configurados todos los campos necesarios (Cliente, Destinatario o ID de Carpeta vSphere).`, ui.ButtonSet.OK);
+    return;
+  }
+
+  if (activo === "NO") {
+    ui.alert("⚠️ Cliente Inactivo", `El cliente ${cliente} está marcado como inactivo (Columna F). No se ejecutará la auditoría.`, ui.ButtonSet.OK);
     return;
   }
   
