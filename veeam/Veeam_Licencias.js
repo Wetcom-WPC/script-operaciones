@@ -90,10 +90,10 @@ function procesarTodasLasLicenciasVeeam(opciones) {
 
     if (opts.nuevoCiclo) {
       if (!opts.forzar && props.getProperty(VEEAM_LIC_PROP_CICLO) === ciclo) {
-        console.warn(🛑 El ciclo Veeam  ya fue iniciado. Abortando.);
+        console.warn(`🛑 El ciclo Veeam ${ciclo} ya fue iniciado. Abortando.`);
         return;
       }
-      console.log(🆕 Arrancando ciclo Veeam .);
+      console.log(`🆕 Arrancando ciclo Veeam ${ciclo}.`);
       limpiarTriggersContinuacionVeeamLic();
       props.setProperty(VEEAM_LIC_PROP_CICLO, ciclo);
       props.deleteProperty(VEEAM_LIC_PROP_BOOKMARK);
@@ -124,7 +124,7 @@ function procesarTodasLasLicenciasVeeam(opciones) {
 
     for (let i = indexInicial; i < datos.length; i++) {
       if (Date.now() - tiempoInicio > VEEAM_LIC_MAX_TIEMPO) {
-        console.warn(⏳ TIEMPO LÍMITE ALCANZADO (Fila ). Guardando marcapáginas Veeam...);
+        console.warn(`⏳ TIEMPO LÍMITE ALCANZADO (Fila ${i}). Guardando marcapáginas Veeam...`);
         props.setProperty(VEEAM_LIC_PROP_BOOKMARK, i.toString());
         props.setProperty(VEEAM_LIC_PROP_REPORTE, JSON.stringify(summaryReport));
         ScriptApp.newTrigger('continuarProcesamientoVeeamLic').timeBased().after(60 * 1000).create();
@@ -139,17 +139,17 @@ function procesarTodasLasLicenciasVeeam(opciones) {
 
       if (!cliente || !emailDestino || !folderId) continue;
       if (activo === "NO") {
-        console.log(⏭️ Fila  - : INACTIVO. Se omite.);
+        console.log(`⏭️ Fila ${i} - ${cliente}: INACTIVO. Se omite.`);
         continue;
       }
 
-      const marca = ${i}|;
+      const marca = `${i}|${cliente}`;
       if (enviados.has(marca)) {
-        console.log(↩️ Fila  - : ya notificado. Se omite.);
+        console.log(`↩️ Fila ${i} - ${cliente}: ya notificado. Se omite.`);
         continue;
       }
 
-      console.log(\n🔎 Procesando fila  - Cliente:  (Veeam)...);
+      console.log(`\n🔎 Procesando fila ${i} - Cliente: ${cliente} (Veeam)...`);
       const erroresAntes = summaryReport.errores.length;
       procesarInfraestructuraClienteVeeam(cliente, emailDestino, folderId, pod, summaryReport);
 
@@ -183,10 +183,10 @@ function procesarInfraestructuraClienteVeeam(cliente, emailDestino, rootFolderId
     const anioFolder = typeof obtenerSubcarpetaMasReciente === "function" ? obtenerSubcarpetaMasReciente(rootFolder, /^\d{4}/) : rootFolder.getFolders().next();
     if (!anioFolder) throw new Error("No se encontró carpeta de Año (YYYY)");
     const fechaFolder = typeof obtenerSubcarpetaMasReciente === "function" ? obtenerSubcarpetaMasReciente(anioFolder, /^\d{8}/) : anioFolder.getFolders().next();
-    if (!fechaFolder) throw new Error(No se encontró carpeta de Fecha en );
+    if (!fechaFolder) throw new Error(`No se encontró carpeta de Fecha en ${anioFolder.getName()}`);
 
-    rutaLog = ${anioFolder.getName()} > ;
-    console.log(📂 Ruta resuelta Veeam: );
+    rutaLog = `${anioFolder.getName()} > ${fechaFolder.getName()}`;
+    console.log(`📂 Ruta resuelta Veeam: ${rutaLog}`);
 
     const files = fechaFolder.getFiles();
     let archivosAProcesar = [];
@@ -199,12 +199,12 @@ function procesarInfraestructuraClienteVeeam(cliente, emailDestino, rootFolderId
       }
     }
 
-    if (archivosAProcesar.length === 0) throw new Error(Sin archivos CSV válidos en la ruta);
+    if (archivosAProcesar.length === 0) throw new Error(`Sin archivos CSV válidos en la ruta`);
     
     let todasLasLicenciasCliente = [];
 
     for (const file of archivosAProcesar) {
-      console.log(⏳ [] Leyendo CSV: );
+      console.log(`⏳ [${cliente}] Leyendo CSV: ${file.getName()}`);
       const content = file.getBlob().getDataAsString();
       let parsedData;
       if (typeof parseCsvDeReporte === "function") {
@@ -220,7 +220,7 @@ function procesarInfraestructuraClienteVeeam(cliente, emailDestino, rootFolderId
     let licenciasUnicas = [];
     let setDuplicados = new Set();
     todasLasLicenciasCliente.forEach(lic => {
-      let key = ${lic.servidor}|||||;
+      let key = `${lic.servidor}|${lic.nombre}|${lic.tipo}|${lic.vencimiento}|${lic.usadas}|${lic.workload}`;
       if (!setDuplicados.has(key)) {
         setDuplicados.add(key);
         licenciasUnicas.push(lic);
@@ -228,20 +228,20 @@ function procesarInfraestructuraClienteVeeam(cliente, emailDestino, rootFolderId
     });
 
     if (licenciasUnicas.length > 0) {
-      console.log(📧 Despachando reporte Veeam de  a  ( licencias procesadas).);
+      console.log(`📧 Despachando reporte Veeam de ${cliente} a ${emailDestino} (${licenciasUnicas.length} licencias procesadas).`);
       enviarAlertaLicenciasVeeam(cliente, emailDestino, licenciasUnicas);
       enviarAlertaSlackVeeamLic(cliente, licenciasUnicas);
     } else {
-      console.warn(⚠️ [] Archivo procesado pero no se encontraron datos de licencias válidos.);
-      summaryReport.advertencias.push({ ticket: "-", problema: [] CSV vacío o formato inválido, accion: "Revisar archivo en Drive" });
+      console.warn(`⚠️ [${cliente}] Archivo procesado pero no se encontraron datos de licencias válidos.`);
+      summaryReport.advertencias.push({ ticket: "-", problema: `[${cliente}] CSV vacío o formato inválido`, accion: "Revisar archivo en Drive" });
     }
     
-    summaryReport.exitos.push({ mensaje: **: Reporte Veeam OK });
+    summaryReport.exitos.push({ mensaje: `*${cliente}*: Reporte Veeam OK` });
     return { ruta: rutaLog, archivos: nombresArchivos.join("\n") };
 
   } catch (e) {
-    console.error(❌ [] Error Veeam: );
-    summaryReport.errores.push({ error: Fallo , detalle: e.message });
+    console.error(`❌ [${cliente}] Error Veeam: ${e.message}`);
+    summaryReport.errores.push({ error: `Fallo ${cliente}`, detalle: e.message });
     return { ruta: rutaLog || "Error", archivos: nombresArchivos.length > 0 ? nombresArchivos.join("\n") : "Ninguno" };
   }
 }
@@ -391,53 +391,53 @@ function enviarAlertaLicenciasVeeam(cliente, destinatarioRaw, todasLasLicencias)
   }
 
   const fechaHoy = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "dd/MM/yyyy");
-  const asunto = ${iconoHeader} Estado de Licencias Veeam - Wetcom /  - ;
+  const asunto = `${iconoHeader} Estado de Licencias Veeam - Wetcom / ${cliente} - ${fechaHoy}`;
   
-  let cuerpoHtml = \
+  let cuerpoHtml = `
   <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333; max-width: 850px;">
-    <div style="border: 1px solid #ddd; border-left: 6px solid \; padding: 20px; background-color: #f9f9f9; border-radius: 4px;">
-      <h2 style="margin-top: 0; color: \; font-size: 18px;">\</h2>
-      <p style="font-size: 14px;">Auditoría Veeam completa para <b>\</b>.</p>
-      <p style="font-size: 14px;"><b>Situación:</b> \</p>
-  \;
+    <div style="border: 1px solid #ddd; border-left: 6px solid ${colorHeader}; padding: 20px; background-color: #f9f9f9; border-radius: 4px;">
+      <h2 style="margin-top: 0; color: ${colorHeader}; font-size: 18px;">${statusTxt}</h2>
+      <p style="font-size: 14px;">Auditoría Veeam completa para <b>${cliente}</b>.</p>
+      <p style="font-size: 14px;"><b>Situación:</b> ${situacionTxt}</p>
+  `;
 
   const formatUso = (u, t, w) => {
     let un = typeof formatearNumero === "function" ? formatearNumero(u) : u;
     let tn = typeof formatearNumero === "function" ? formatearNumero(t) : t;
-    return \\ de \ (\)\;
+    return `${un} de ${tn} (${w})`;
   };
 
   const formatTable = (titulo, items, bgHeader, colorHeader, bgSub, colorSub) => {
     if (items.length === 0) return "";
-    let html = \
+    let html = `
       <div style="margin-top: 20px;">
         <table style="border-collapse: collapse; width: 100%; background-color: white; font-size: 13px; border: 1px solid #ddd;">
-          <tr style="background-color: \; color: \;">
-            <th colspan="6" style="padding: 10px; border: 1px solid #ddd; text-align: left; font-size: 14px;">\</th>
+          <tr style="background-color: ${bgHeader}; color: ${colorHeader};">
+            <th colspan="6" style="padding: 10px; border: 1px solid #ddd; text-align: left; font-size: 14px;">${titulo}</th>
           </tr>
-          <tr style="background-color: \; color: \;">
+          <tr style="background-color: ${bgSub}; color: ${colorSub};">
             <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Servidor</th>
             <th style="padding: 10px; border: 1px solid #ddd; text-align: left;">Licencia</th>
             <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">Tipo</th>
             <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">Vencimiento</th>
             <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">Días</th>
             <th style="padding: 10px; border: 1px solid #ddd; text-align: center;">Uso</th>
-          </tr>\;
+          </tr>`;
     items.forEach(a => {
       let isCrit = (a.diasRestantes < 0);
       let diasDisplay = (a.diasRestantes === 999999) ? "-" : (isCrit ? "VENCIDA" : a.diasRestantes);
       let rowColor = a.usadas === 0 ? "color: #666; background-color: #f2f2f2;" : "background-color: #fff;";
       
-      html += \<tr style="\">
-        <td style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">\</td>
-        <td style="padding: 10px; border: 1px solid #ddd;">\</td>
-        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">\</td>
-        <td style="padding: 10px; border: 1px solid #ddd; text-align: center; \">\</td>
-        <td style="padding: 10px; border: 1px solid #ddd; text-align: center; \">\</td>
-        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">\</td>
-      </tr>\;
+      html += `<tr style="${rowColor}">
+        <td style="padding: 10px; border: 1px solid #ddd; font-weight: bold;">${a.servidor}</td>
+        <td style="padding: 10px; border: 1px solid #ddd;">${a.nombre}</td>
+        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${a.tipo}</td>
+        <td style="padding: 10px; border: 1px solid #ddd; text-align: center; ${isCrit ? 'color:#d9534f; font-weight:bold;' : ''}">${a.vencimiento}</td>
+        <td style="padding: 10px; border: 1px solid #ddd; text-align: center; ${isCrit ? 'color:#d9534f; font-weight:bold;' : ''}">${diasDisplay}</td>
+        <td style="padding: 10px; border: 1px solid #ddd; text-align: center;">${formatUso(a.usadas, a.total, a.workload)}</td>
+      </tr>`;
     });
-    html += \</table></div>\;
+    html += `</table></div>`;
     return html;
   };
 
@@ -452,7 +452,7 @@ function enviarAlertaLicenciasVeeam(cliente, destinatarioRaw, todasLasLicencias)
     cuerpoHtml += formatTable("SALUDABLE - ESTADO OK / NO UTILIZADAS", sanasEnUso.concat(sinUso), bgH, colH, bgS, colS);
   }
 
-  cuerpoHtml += \</div><p style="margin-top: 25px; font-size: 12px; color: #666;">Saludos,<br><b>Wetcom Proactive Center</b></p></div>\;
+  cuerpoHtml += `</div><p style="margin-top: 25px; font-size: 12px; color: #666;">Saludos,<br><b>Wetcom Proactive Center</b></p></div>`;
   
   if (emailsAEnviar) {
     if (typeof sendEmail === "function") {
@@ -469,9 +469,9 @@ function enviarAlertaSlackVeeamLic(cliente, alertas) {
   const proximas = alertas.filter(a => a.usadas > 0 && a.diasRestantes >= 0 && a.diasRestantes <= VEEAM_LIC_DIAS_UMBRAL);
   if (vencidas.length === 0 && proximas.length === 0) return; 
   
-  let msg = \*Reporte de Licencias Veeam - \*\n\;
-  if (vencidas.length > 0) msg += \🔴 *CRÍTICO:* \ licencias vencidas en uso.\n\;
-  if (proximas.length > 0) msg += \🟡 *WARNING:* \ próximas a vencer.\n\;
+  let msg = `*Reporte de Licencias Veeam - ${cliente}*\n`;
+  if (vencidas.length > 0) msg += `🔴 *CRÍTICO:* ${vencidas.length} licencias vencidas en uso.\n`;
+  if (proximas.length > 0) msg += `🟡 *WARNING:* ${proximas.length} próximas a vencer.\n`;
   sendSlackMessage(SLACK_WEBHOOK_URL, msg);
 }
 
@@ -498,18 +498,18 @@ function ejecutarClienteSeleccionadoVeeamLic() {
     return ui.alert("⚠️ Cliente Inactivo", "El cliente está inactivo.", ui.ButtonSet.OK);
   }
   
-  const respuesta = ui.alert("Confirmar", \¿Auditar Veeam para \?\, ui.ButtonSet.YES_NO);
+  const respuesta = ui.alert("Confirmar", `¿Auditar Veeam para ${cliente}?`, ui.ButtonSet.YES_NO);
   if (respuesta !== ui.Button.YES) return;
   
   const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
-  ss.toast(\Procesando licencias Veeam de \...\, "🚀 Auditoría en Curso", -1);
+  ss.toast(`Procesando licencias Veeam de ${cliente}...`, "🚀 Auditoría en Curso", -1);
   
   try {
     const res = procesarInfraestructuraClienteVeeam(cliente, emailDestino, folderId, pod, summaryReport);
     if (summaryReport.errores.length > 0) {
       ui.alert("❌ Errores", summaryReport.errores[0].detalle, ui.ButtonSet.OK);
     } else {
-      ui.alert("✅ Éxito", \Reporte enviado a \.\, ui.ButtonSet.OK);
+      ui.alert("✅ Éxito", `Reporte enviado a ${emailDestino}.`, ui.ButtonSet.OK);
     }
   } catch (error) {
     ui.alert("❌ Error Crítico", error.message, ui.ButtonSet.OK);
