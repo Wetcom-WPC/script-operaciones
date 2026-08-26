@@ -19,8 +19,29 @@ de ser un cuello de botella sin repartir la contraseña ni sumar delegados.
 
 | Acción | Qué pasa |
 |---|---|
-| **Ejecutar ciclo ahora** | Crea un activador de una sola vez para `ejecutarCicloDeOperaciones`. La página responde al instante y el ciclo corre después, sobre la casilla del deploy. |
+| **Ejecutar ciclo ahora** | Crea un activador de una sola vez para `ejecutarCicloDeOperaciones`. La página responde al instante y el ciclo corre después, sobre la casilla del deploy. **Una pasada y se detiene.** |
 | **Actualizar** | Lee la bandeja del día (4 búsquedas de Gmail) y guarda la foto en `CacheService` por 6 h. Quien entre después ve esa foto sin volver a pagar el escaneo. |
+
+## Una corrida manual no se reprograma
+
+El ciclo automático, al terminar, se vuelve a agendar cada 5 minutos hasta `HORA_FIN`. Eso
+está bien para la jornada, pero convierte un clic en el botón en un bucle que sigue todo el
+día — y si se lanza pasadas las `HORA_FIN`, además re-dispara los reportes de cierre y duplica
+el resumen diario en Slack.
+
+Por eso `webapp_lanzarCiclo()` marca la corrida con la Script Property `EJECUCION_MANUAL`, y
+`core/Main.js` la consume al terminar: hace el ciclo entero y para. Sin bucle de sondeo y sin
+reportes de cierre.
+
+Dos matices que importan:
+
+- **Las continuaciones sí se mantienen.** Si el ciclo se corta por el límite de 15 minutos con
+  tareas pendientes, se reprograma al minuto para terminarlas. Eso no es una repetición: es el
+  mismo ciclo completándose. Cortarlo ahí dejaría reportes sin procesar en silencio.
+- **Dentro de la ventana operativa se repone el bucle automático.** Al arrancar,
+  `borrarActivadorTemporal()` borra *todos* los activadores del ciclo, incluido el del bucle
+  automático. Si la corrida manual no lo repusiera, un clic a media mañana dejaría la
+  automatización muerta hasta el activador diario del día siguiente.
 
 Las cuatro columnas siguen el orden del pipeline, no el alfabético: **Sin leer → Pendiente →
 Procesado / Error**. Cada tarjeta muestra hora, remitente, adjuntos, las etiquetas `[OPS-*]`

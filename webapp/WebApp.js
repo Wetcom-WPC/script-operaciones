@@ -229,9 +229,16 @@ function webapp_lanzarCiclo(forzar) {
     };
   }
 
+  // La marca se pone ANTES de crear el activador, no después: el activador dispara en un
+  // segundo y si llegara a ganarle a esta escritura, el ciclo se tomaría por automático y
+  // volvería a reprogramarse solo — justo lo que la corrida manual no debe hacer.
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty(PROP_EJECUCION_MANUAL, 'true');
+
   try {
     ScriptApp.newTrigger(WEBAPP_FUNCION_CICLO).timeBased().after(1000).create();
   } catch (e) {
+    props.deleteProperty(PROP_EJECUCION_MANUAL);
     Logger.log('[WebApp] No se pudo crear el activador del ciclo: ' + e.message);
     return {
       ok: false,
@@ -246,17 +253,26 @@ function webapp_lanzarCiclo(forzar) {
     ts: new Date().toISOString(),
     forzado: !!forzar
   };
-  PropertiesService.getScriptProperties()
-    .setProperty(WEBAPP_PROP_ULTIMO_LANZAMIENTO, JSON.stringify(registro));
+  props.setProperty(WEBAPP_PROP_ULTIMO_LANZAMIENTO, JSON.stringify(registro));
 
   Logger.log('[WebApp] Ciclo lanzado manualmente por ' + registro.usuario +
     (forzar ? ' (forzado en día no laboral)' : ''));
 
+  // El matiz importa: dentro de la ventana el bucle automático sigue vivo igual, y conviene
+  // que quien apretó el botón sepa que lo que vaya a pasar después no es "su" ciclo repitiéndose.
+  const hora = ahora.getHours();
+  const enVentana = hora >= HORA_INICIO && hora < HORA_FIN;
+
   return {
     ok: true,
     codigo: 'LANZADO',
-    mensaje: 'Ciclo lanzado. Arranca en unos segundos y sigue por su cuenta; podés cerrar esta ' +
-      'página. El resultado se ve en "Ejecuciones" del proyecto de Apps Script.',
+    mensaje: 'Ciclo lanzado. Arranca en unos segundos, hace una pasada completa y se detiene; ' +
+      'podés cerrar esta página. ' +
+      (enVentana
+        ? 'Como estamos dentro de la ventana operativa (' + HORA_INICIO + '–' + HORA_FIN + ' hs), ' +
+          'después sigue el ciclo automático de siempre.'
+        : 'No se reprograma: si hace falta otra pasada, volvé a lanzarlo.') +
+      ' El resultado se ve en "Ejecuciones" del proyecto de Apps Script.',
     ultimoLanzamiento: registro
   };
 }
