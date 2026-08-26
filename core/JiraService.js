@@ -703,19 +703,23 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
       const data = JSON.parse(response.getContentText());
       if (data.issues && data.issues.length > 0) {
         const targetSummary = summary.trim().toLowerCase();
-        
-        // 1. Buscamos coincidencia exacta primero
-        const exactMatch = data.issues.find(issue => issue.fields.summary.trim().toLowerCase() === targetSummary);
-        if (exactMatch) return exactMatch.key;
-        
-        // 2. Si buscamos un ticket No-AVS, filtramos para no agarrar por error uno AVS
-        if (!targetSummary.includes('avs')) {
-            const nonAvsMatch = data.issues.find(issue => !issue.fields.summary.toLowerCase().includes('avs'));
-            if (nonAvsMatch) return nonAvsMatch.key;
-        }
+        const targetIsAvs = targetSummary.includes('avs');
 
-        // 3. Fallback al primer resultado
-        return data.issues[0].key;
+        // El operador ~ de JQL es difuso: buscar "VMs con Preguntas" también trae
+        // "AVS - VMs con Preguntas" entre los resultados. Filtramos primero por si el
+        // ticket encontrado es o no AVS, y nunca cruzamos esa frontera — ni siquiera en
+        // el fallback. Antes, si un día solo estaba abierta la tarea del lado contrario
+        // (por ejemplo, la AVS ya se había cerrado por error), el fallback devolvía esa
+        // tarea igual: un reporte no-AVS terminaba cerrando "AVS - X" y viceversa.
+        const candidatos = data.issues.filter(issue => issue.fields.summary.toLowerCase().includes('avs') === targetIsAvs);
+        if (candidatos.length === 0) return null;
+
+        // 1. Buscamos coincidencia exacta primero
+        const exactMatch = candidatos.find(issue => issue.fields.summary.trim().toLowerCase() === targetSummary);
+        if (exactMatch) return exactMatch.key;
+
+        // 2. Fallback al primer resultado, ya filtrado por AVS
+        return candidatos[0].key;
       }
     }
     return null;
