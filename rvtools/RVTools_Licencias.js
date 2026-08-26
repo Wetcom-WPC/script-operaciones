@@ -97,7 +97,10 @@ function continuarProcesamiento() {
 }
 
 // 5. Puente Front-End (BotonCheckbox)
-function internal_procesarLicenciasManualLibreria(cliente, destinatario, folderId, pod) {
+// El nombre es público a propósito: el Índice Operativo lo invoca como
+// AutomatizarOperaciones.procesarLicenciasManualLibreria. En esta rama no hay
+// ApiPublica.js que lo reexponga, así que renombrarlo a internal_ rompe el checkbox.
+function procesarLicenciasManualLibreria(cliente, destinatario, folderId, pod) {
   const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
   try {
     const resultadoMotor = procesarInfraestructuraCliente(cliente, destinatario, folderId, pod, summaryReport);
