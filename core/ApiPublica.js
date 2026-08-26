@@ -2,6 +2,11 @@
  * @fileoverview Fachada de la API Pública de Ops Playground consumida por Índice Playground.
  * Este es el contrato estable entre ambos proyectos. Romper firmas o retornos aquí
  * exige desplegar nuevas versiones de ambos proyectos en conjunto.
+ *
+ * BAJA 2026-08-26: procesarLicenciasManualLibreria dejó de exponerse. Los módulos
+ * de licencias se eliminaron en 0ba6e87 y el Índice ya trae su propio motor
+ * autocontenido en RVTools_Licencias.js. El Índice debe llamar a la función local,
+ * sin el prefijo AutomatizarOperaciones.
  */
 
 /**
@@ -58,17 +63,6 @@ function procesarRVToolsManual(clientName, rvToolsFolderId) {
  */
 function procesarTanzuManual(clientName, tanzuFolderId) {
   return internal_procesarTanzuManual(clientName, tanzuFolderId);
-}
-
-/**
- * @public
- * @param {string} cliente
- * @param {string} destinatario
- * @param {string} folderId
- * @param {string} pod
- */
-function procesarLicenciasManualLibreria(cliente, destinatario, folderId, pod) {
-  return internal_procesarLicenciasManualLibreria(cliente, destinatario, folderId, pod);
 }
 
 /**
