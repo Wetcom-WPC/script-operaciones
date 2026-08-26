@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <?!= webapp_include('webapp/Estilos') ?>
+  </head>
+
+  <body>
+    <header class="barra">
+      <div class="marca">
+        <!-- Isotipo de WETCOM dibujado en SVG: la WebApp corre dentro del sandbox de Apps
+             Script, donde una imagen alojada afuera es una dependencia que puede fallar. -->
+        <svg class="logo" viewBox="0 0 100 100" role="img" aria-label="WETCOM">
+          <circle cx="50" cy="50" r="50" fill="#109E58"></circle>
+          <path d="M18 30 L34 66 L50 32 L66 66 L82 30" fill="none" stroke="#FFFFFF"
+                stroke-width="13" stroke-linecap="round" stroke-linejoin="round"></path>
+          <circle cx="50" cy="72" r="8" fill="#FFFFFF"></circle>
+        </svg>
+        <div>
+          <h1>Operaciones</h1>
+          <p>Panel de control · Mesa de Ayuda</p>
+        </div>
+      </div>
+
+      <div class="sesion">
+        <span id="usuario"></span>
+        <span class="casilla" id="casilla"></span>
+      </div>
+    </header>
+
+    <main>
+      <!-- 1. Ejecución manual del ciclo ---------------------------------------------------- -->
+      <section class="tarjeta">
+        <header>
+          <div>
+            <h2>Ciclo de operaciones</h2>
+            <p class="ayuda">
+              Corre el ciclo completo sobre la casilla de alarmas, sin necesidad de tener acceso
+              a ese buzón. Arranca en segundos y sigue por su cuenta: podés cerrar la página.
+            </p>
+          </div>
+          <button id="btnCiclo" class="btn-primario">Ejecutar ciclo ahora</button>
+        </header>
+
+        <div class="contexto" id="contexto"></div>
+        <div class="aviso" id="avisoCiclo" hidden></div>
+        <p class="ayuda" id="ultimoLanzamiento" style="margin-top:12px"></p>
+      </section>
+
+      <!-- 2. Bandeja del día --------------------------------------------------------------- -->
+      <section class="tarjeta">
+        <header>
+          <div>
+            <h2>Bandeja de hoy</h2>
+            <p class="ayuda">
+              Correos del día agrupados por estado. Leer Gmail es la parte cara, así que el
+              panel muestra la última foto guardada: actualizá solo cuando necesites datos
+              frescos.
+            </p>
+          </div>
+          <button id="btnActualizar" class="btn-secundario">Actualizar</button>
+        </header>
+
+        <div class="contexto" id="contextoBandeja"></div>
+        <div class="aviso" id="avisoBandeja" hidden></div>
+        <div class="columnas" id="columnas"></div>
+      </section>
+    </main>
+
+    <footer>
+      Automatización de Soporte Operativo · WETCOM
+    </footer>
+
+    <script>
+      // El estado inicial viaja incrustado en la página: así el primer render no cuesta un
+      // viaje extra al servidor. Lo serializa doGet() en webapp/WebApp.js.
+      window.ESTADO_INICIAL = <?!= estadoInicial ?>;
+    </script>
+    <?!= webapp_include('webapp/Script') ?>
+  </body>
+</html>
