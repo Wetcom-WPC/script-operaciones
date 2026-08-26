@@ -78,7 +78,25 @@ En **Configuración del proyecto → Propiedades del script**:
 | Propiedad | Obligatoria | Para qué |
 |---|---|---|
 | `WEBAPP_USUARIOS_AUTORIZADOS` | No | Emails separados por coma. Vacía o ausente = entra todo el dominio (lo que ya permite el deploy). Se cambia en caliente, sin volver a desplegar. |
+| `WEBAPP_MAX_HILOS_COLUMNA` | No | Cuántos hilos lista cada columna como máximo. Default 150, techo 500 (el de `GmailApp.search`). Ver abajo. |
 | `WEBAPP_ULTIMO_LANZAMIENTO` | No | La escribe el propio panel: quién lanzó el último ciclo y cuándo. No tocarla a mano. |
+
+## El tope por columna
+
+Cada columna lista como mucho `WEBAPP_MAX_HILOS_COLUMNA` hilos (150 por defecto). No es un
+límite de Gmail —su `search` admite hasta 500— sino un techo de costo: cada hilo listado cuesta
+abrir sus mensajes, adjuntos y etiquetas, y el escaneo entero tiene que caber en los 6 minutos
+que dura una llamada de `google.script.run`.
+
+En una casilla con el volumen de alarmas@, **"Sin leer" y "Procesado" chocan contra el tope casi
+todos los días**. Cuando eso pasa el total es un piso, no un conteo: la columna lo muestra como
+`150+` y la cinta de arriba dice cuáles quedaron cortadas.
+
+Las dos columnas que importan para debuggear, **Error y Pendiente, no se acercan nunca** — si
+alguna llegara al tope, eso ya sería el hallazgo.
+
+Subir el tope hace el botón "Actualizar" proporcionalmente más lento. Si se necesitan conteos
+exactos de las columnas de volumen, conviene antes recortar lo que se enriquece por hilo.
 
 ## Despliegue
 

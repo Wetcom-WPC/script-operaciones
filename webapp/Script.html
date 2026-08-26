@@ -179,7 +179,12 @@
       (datos.generadoPor ? ' por ' + datos.generadoPor : ''));
 
     if (datos.truncado) {
-      pildora(el.contextoBandeja, 'Listado incompleto: hay más correos de los que entran en el tope', 'alerta');
+      var cortadas = (datos.columnas || []).filter(function (c) { return c.truncada; })
+        .map(function (c) { return c.titulo; });
+      pildora(el.contextoBandeja,
+        (cortadas.length ? cortadas.join(' y ') : 'Algunas columnas') +
+        ' llegaron al tope de ' + (datos.tope || '?') + ' por columna: hay más correos sin listar',
+        'alerta');
     }
   }
 
@@ -208,7 +213,14 @@
     var cabecera = crear('header');
     var titulo = crear('div', 'titulo');
     titulo.appendChild(crear('h3', null, columna.titulo));
-    titulo.appendChild(crear('span', 'cuenta', String(columna.total)));
+
+    // El "+" no es decorativo: cuando la búsqueda llegó al tope, el total es un piso y no un
+    // conteo. Sin esa marca, dos columnas cortadas muestran el mismo número y parece un dato.
+    var cuenta = crear('span', 'cuenta', columna.total + (columna.truncada ? '+' : ''));
+    if (columna.truncada) {
+      cuenta.title = 'Hay más correos: la búsqueda se cortó en el tope por columna.';
+    }
+    titulo.appendChild(cuenta);
     cabecera.appendChild(titulo);
     cabecera.appendChild(crear('p', 'sub', columna.descripcion));
     seccion.appendChild(cabecera);

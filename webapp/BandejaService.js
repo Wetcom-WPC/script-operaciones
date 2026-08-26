@@ -19,8 +19,30 @@ const WEBAPP_CACHE_KEY = 'WEBAPP_BANDEJA_V1';
 /** 6 horas: el máximo que admite CacheService. La antigüedad se muestra siempre en pantalla. */
 const WEBAPP_CACHE_TTL_SEG = 21600;
 
-/** Tope de hilos por búsqueda. Gmail admite hasta 500; 150 alcanza de sobra para un día. */
-const WEBAPP_MAX_HILOS_POR_COLUMNA = 150;
+/**
+ * Tope de hilos por búsqueda, por defecto.
+ *
+ * No es un límite de Gmail (su search admite hasta 500): es un techo de costo. Cada hilo que
+ * entra en el listado cuesta abrir sus mensajes, sus adjuntos y sus etiquetas, y el escaneo
+ * entero tiene que caber en los 6 minutos que dura una llamada de `google.script.run`. En una
+ * casilla con el volumen de alarmas@, las columnas de "Sin leer" y "Procesado" chocan contra
+ * este tope casi todos los días — por eso cada columna avisa cuando quedó cortada.
+ *
+ * Las columnas que importan para debuggear (Error y Pendiente) no se acercan nunca.
+ *
+ * Configurable en caliente vía la Script Property "WEBAPP_MAX_HILOS_COLUMNA", sin volver a
+ * desplegar. Subirlo hace el botón "Actualizar" más lento; el techo útil ronda los 500.
+ */
+const WEBAPP_MAX_HILOS_POR_COLUMNA_DEFAULT = 150;
+
+/** @returns {number} Tope vigente (Script Property, o el default si no está seteada). */
+function webapp_maxHilosPorColumna() {
+  const valor = PropertiesService.getScriptProperties().getProperty('WEBAPP_MAX_HILOS_COLUMNA');
+  const parsed = parseInt(valor, 10);
+  return (valor !== null && !isNaN(parsed) && parsed > 0)
+    ? Math.min(parsed, 500)
+    : WEBAPP_MAX_HILOS_POR_COLUMNA_DEFAULT;
+}
 
 /**
  * Presupuesto de tiempo del escaneo. Una llamada de `google.script.run` muere a los 6 minutos
@@ -104,23 +126,28 @@ function webapp_escanearBandeja() {
 
   const items = {};
   const columnas = [];
+  const tope = webapp_maxHilosPorColumna();
   let truncado = false;
 
   webapp_definicionDeColumnas().forEach(function (columna) {
     const consulta = columna.query + ' after:' + hoyStr;
     let hilos = [];
     try {
-      hilos = GmailApp.search(consulta, 0, WEBAPP_MAX_HILOS_POR_COLUMNA);
+      hilos = GmailApp.search(consulta, 0, tope);
     } catch (e) {
       Logger.log('[WebApp] Falló la búsqueda "' + consulta + '": ' + e.message);
     }
 
-    if (hilos.length >= WEBAPP_MAX_HILOS_POR_COLUMNA) truncado = true;
+    // Si la búsqueda vuelve justo con el tope, Gmail cortó el resultado: el total de esta
+    // columna es un piso, no un número real. Se marca por columna y no solo en global para que
+    // la interfaz pueda mostrar "150+" en la que corresponda — un "150" a secas se lee como un
+    // conteo exacto y confunde, sobre todo cuando dos columnas dan el mismo número.
+    let truncada = hilos.length >= tope;
 
     const ids = [];
     hilos.forEach(function (hilo) {
       if (Date.now() - inicio > WEBAPP_PRESUPUESTO_MS) {
-        truncado = true;
+        truncada = true;
         return;
       }
       try {
@@ -138,11 +165,14 @@ function webapp_escanearBandeja() {
       }
     });
 
+    if (truncada) truncado = true;
+
     columnas.push({
       id: columna.id,
       titulo: columna.titulo,
       descripcion: columna.descripcion,
       total: ids.length,
+      truncada: truncada,
       ids: ids
     });
   });
@@ -151,6 +181,7 @@ function webapp_escanearBandeja() {
     generado: new Date().toISOString(),
     generadoPor: webapp_usuarioActual(),
     fecha: Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy'),
+    tope: tope,
     truncado: truncado,
     duracionMs: Date.now() - inicio,
     columnas: columnas,

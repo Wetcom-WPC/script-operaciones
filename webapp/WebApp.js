@@ -258,21 +258,10 @@ function webapp_lanzarCiclo(forzar) {
   Logger.log('[WebApp] Ciclo lanzado manualmente por ' + registro.usuario +
     (forzar ? ' (forzado en día no laboral)' : ''));
 
-  // El matiz importa: dentro de la ventana el bucle automático sigue vivo igual, y conviene
-  // que quien apretó el botón sepa que lo que vaya a pasar después no es "su" ciclo repitiéndose.
-  const hora = ahora.getHours();
-  const enVentana = hora >= HORA_INICIO && hora < HORA_FIN;
-
   return {
     ok: true,
     codigo: 'LANZADO',
-    mensaje: 'Ciclo lanzado. Arranca en unos segundos, hace una pasada completa y se detiene; ' +
-      'podés cerrar esta página. ' +
-      (enVentana
-        ? 'Como estamos dentro de la ventana operativa (' + HORA_INICIO + '–' + HORA_FIN + ' hs), ' +
-          'después sigue el ciclo automático de siempre.'
-        : 'No se reprograma: si hace falta otra pasada, volvé a lanzarlo.') +
-      ' El resultado se ve en "Ejecuciones" del proyecto de Apps Script.',
+    mensaje: 'Ciclo en ejecución, revisar executions en el proyecto.',
     ultimoLanzamiento: registro
   };
 }
