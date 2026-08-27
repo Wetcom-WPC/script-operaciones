@@ -91,8 +91,8 @@ class NutanixOpsProcessor extends MailProcessor {
     this._clusterFqdn = parsedData.clusterFqdn || "Desconocido";
     this._origen = parsedData.origen || "N/A";
 
-    // MODO TESTING: Consideramos TODAS las validaciones como alertas para forzar el ticket
-    const derivadas = validaciones; // en modo normal sería: validaciones.filter(v => v.estado === "Derivado");
+    // Solo las validaciones con estado diferente a Chequeado generan alertas
+    const derivadas = validaciones.filter(v => v.estado !== "Chequeado");
 
     const reasonsText = derivadas
       .map(v => `* *${v.id} — ${v.nombre}* (${v.estado}):\n  ${v.detalle}`)
@@ -121,7 +121,7 @@ class NutanixOpsProcessor extends MailProcessor {
 
     if (existingTicketKey) {
       const commentText = 
-        `🚨 *Reporte Nutanix Recibido* (Modo Testing)\n\n` +
+        `🔄 *Reporte Nutanix Recibido*\n\n` +
         `*Cluster:* ${origenDetalle}\n\n` +
         `*Validaciones evaluadas (${alertCount}):*\n\n` +
         `${reasonsText}`;
@@ -132,7 +132,7 @@ class NutanixOpsProcessor extends MailProcessor {
       });
     } else {
       const description = 
-        `Se recibieron los resultados de las validaciones operativas diarias de Nutanix (Modo Testing).\n\n` +
+        `Se recibieron los resultados de las validaciones operativas diarias de Nutanix.\n\n` +
         `*Cluster:* ${origenDetalle}\n\n` +
         `*Validaciones evaluadas (${alertCount}):*\n\n` +
         `${reasonsText}`;
