@@ -28,6 +28,32 @@ class NutanixOpsProcessor extends MailProcessor {
   }
 
   resolveClientConfig(config, sender, attachment, message, summaryReport) {
+    if (attachment) {
+      try {
+        const rawText = attachment.getDataAsString("UTF-8");
+        const data = JSON.parse(rawText);
+        if (data && data.clientName) {
+           // Buscamos el cliente real por nombre exacto segun el JSON
+           const newConfig = getClientConfigByName(data.clientName, this.operationName);
+           if (newConfig) {
+             config = newConfig;
+             
+             // BORRAR requestTypeId: Si no tiene request type, Jira lo crea como
+             // ticket interno y el cliente (portal) no se entera ni recibe mails.
+             // (Solo temporal para testing en produccion sin molestar)
+             delete config.requestTypeId;
+             
+           } else {
+             summaryReport.errores.push({
+               error: "Cliente Nutanix no encontrado",
+               detalle: `El JSON indica cliente "${data.clientName}" pero no existe exactamente así en la Columna B del Índice Maestro.`
+             });
+           }
+        }
+      } catch (e) {
+        // Si falla el parseo aca, el metodo parseAttachment lo va a loggear despues
+      }
+    }
     if (config) config.tecnologia = "Nutanix";
     return config;
   }
