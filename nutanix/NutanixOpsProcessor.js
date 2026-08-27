@@ -28,6 +28,32 @@ class NutanixOpsProcessor extends MailProcessor {
   }
 
   resolveClientConfig(config, sender, attachment, message, summaryReport) {
+    if (attachment) {
+      try {
+        const rawText = attachment.getDataAsString("UTF-8");
+        const data = JSON.parse(rawText);
+        if (data && data.clientName) {
+           // Buscamos el cliente real por nombre exacto segun el JSON
+           const newConfig = getClientConfigByName(data.clientName, this.operationName);
+           if (newConfig) {
+             config = newConfig;
+             
+             // BORRAR requestTypeId: Si no tiene request type, Jira lo crea como
+             // ticket interno y el cliente (portal) no se entera ni recibe mails.
+             // (Solo temporal para testing en produccion sin molestar)
+             delete config.requestTypeId;
+             
+           } else {
+             summaryReport.errores.push({
+               error: "Cliente Nutanix no encontrado",
+               detalle: `El JSON indica cliente "${data.clientName}" pero no existe exactamente así en la Columna B del Índice Maestro.`
+             });
+           }
+        }
+      } catch (e) {
+        // Si falla el parseo aca, el metodo parseAttachment lo va a loggear despues
+      }
+    }
     if (config) config.tecnologia = "Nutanix";
     return config;
   }
@@ -65,8 +91,8 @@ class NutanixOpsProcessor extends MailProcessor {
     this._clusterFqdn = parsedData.clusterFqdn || "Desconocido";
     this._origen = parsedData.origen || "N/A";
 
-    // MODO TESTING: Consideramos TODAS las validaciones como alertas para forzar el ticket
-    const derivadas = validaciones; // en modo normal sería: validaciones.filter(v => v.estado === "Derivado");
+    // Solo las validaciones con estado diferente a Chequeado generan alertas
+    const derivadas = validaciones.filter(v => v.estado !== "Chequeado");
 
     const reasonsText = derivadas
       .map(v => `* *${v.id} — ${v.nombre}* (${v.estado}):\n  ${v.detalle}`)
@@ -95,7 +121,7 @@ class NutanixOpsProcessor extends MailProcessor {
 
     if (existingTicketKey) {
       const commentText = 
-        `🚨 *Reporte Nutanix Recibido* (Modo Testing)\n\n` +
+        `🔄 *Reporte Nutanix Recibido*\n\n` +
         `*Cluster:* ${origenDetalle}\n\n` +
         `*Validaciones evaluadas (${alertCount}):*\n\n` +
         `${reasonsText}`;
@@ -106,7 +132,7 @@ class NutanixOpsProcessor extends MailProcessor {
       });
     } else {
       const description = 
-        `Se recibieron los resultados de las validaciones operativas diarias de Nutanix (Modo Testing).\n\n` +
+        `Se recibieron los resultados de las validaciones operativas diarias de Nutanix.\n\n` +
         `*Cluster:* ${origenDetalle}\n\n` +
         `*Validaciones evaluadas (${alertCount}):*\n\n` +
         `${reasonsText}`;
