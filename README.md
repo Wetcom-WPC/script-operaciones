@@ -1,8 +1,8 @@
-# Script Operaciones — Ops Playground (Staging)
+# Script Operaciones — Ops Operativo (Producción)
 
 Código fuente del proyecto de Google Apps Script que automatiza la Mesa de Ayuda (Soporte Operativo) de WETCOM: procesa correos, lee alertas de sistemas (vSphere, Veeam, vROps, Horizon, RVTools) y gestiona el ciclo de vida de tickets en Jira Service Management.
 
-Esta rama (`refactor-operaciones`) refleja **1:1 el contenido real del proyecto de Apps Script de staging (Ops Playground)** — es donde se prueban los cambios antes de promoverlos a producción. El árbol de archivos es el mismo que ves en el editor de GAS, sin carpetas contenedoras adicionales.
+Esta rama (`main`) refleja **1:1 el contenido real del proyecto de Apps Script en producción** — el árbol de archivos de este repo es el mismo que ves en el editor de GAS, sin carpetas contenedoras adicionales.
 
 ## Arquitectura
 
@@ -38,18 +38,17 @@ El día operativo de la Mesa es de **05:00 a 15:00 (hora Argentina)**. El orques
 
 `tests/TestRunner.js` contiene una suite de pruebas unitarias nativas (sin dependencias externas) para los helpers puros del proyecto. Correr `runAllTests()` (o `manual_runAllTests()`) desde el editor de Apps Script.
 
-## Repositorio hermano: Ops Operativo (Producción)
+## Repositorio hermano: Ops Playground
 
-El código validado acá se promueve al proyecto de Apps Script **Ops Operativo** (producción). Su código versionado vive en la rama [`main`](../../tree/main) de este mismo repositorio, con el mismo formato plano.
+Los cambios se prueban primero en el proyecto de Apps Script **Ops Playground** antes de promoverlos a producción. Su código versionado vive en la rama [`refactor-operaciones`](../../tree/refactor-operaciones) de este mismo repositorio, con el mismo formato plano.
 
-## Flujo de trabajo
+## Despliegue
 
-1. Trabajar y validar cambios acá (`refactor-operaciones` / Ops Playground). Antes de editar, `clasp pull` para traer cambios hechos desde el navegador.
-2. Una vez validado, promover a producción: portar los cambios a `main` (`Ops Operativo`) y hacer `clasp push` desde la carpeta local conectada al script de producción.
-3. Mantener esta rama actualizada a medida que se desarrollan cambios, para llevar control de versionado del entorno de staging.
+1. Trabajar y validar en el proyecto Playground (rama `refactor-operaciones`).
+2. Promover a producción: mergear/portar los cambios a `main` y hacer `clasp push` desde la carpeta local conectada al script de Apps Script de producción.
 
 ## Seguridad y Secretos
 
 Los tokens, contraseñas y webhooks **no** deben subirse en texto plano a GitHub. Todo token se configura a través de `Configuración del Proyecto → Propiedades de la Secuencia de Comandos` en la interfaz de Google Apps Script.
 
-Para las convenciones de trabajo y errores a evitar (importante antes de tocar código), ver [`AGENTS.md`](AGENTS.md).
+Para el historial de cambios, ver [`CHANGELOG.md`](CHANGELOG.md). Para las convenciones de trabajo y errores a evitar (importante antes de tocar código), ver [`AGENTS.md`](AGENTS.md).

@@ -146,7 +146,6 @@ const _FALTANTES_TECH_MAP = [
   { palabras: ["horizon","view","agente view"],                                  tech: "Connection Server" },
   { palabras: ["rvtools","zombie","vmdk","connect at power"],                    tech: "RVTools" },
   { palabras: ["affinity","preguntas","alertas de vsphere"],                     tech: "vRO" },
-  { palabras: ["nutanix","prism","ops-ntx","data resiliency","disk health"],     tech: "Nutanix" },
 ];
 function _deducirTecnologia(idReporte) {
   const lower = idReporte.toLowerCase();

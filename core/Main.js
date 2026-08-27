@@ -87,25 +87,6 @@ const HORA_INICIO = 7;  // 7 AM arranca
 const HORA_FIN = 15    // 12 AM termina definitivamente -- hasta las 15 PM
 
 /**
- * Script Property que marca la corrida en curso como MANUAL (la lanzó una persona desde el
- * panel web, no el activador diario).
- *
- * Una corrida manual hace el ciclo completo y se detiene. No reabre el bucle de sondeo de 5
- * minutos ni dispara los reportes de cierre del día: quien apretó el botón pidió un ciclo, no
- * que el proyecto se quedara trabajando el resto de la jornada.
- *
- * La escribe webapp_lanzarCiclo() antes de crear el activador; la consume y la borra esta
- * misma función. Se guarda en Properties y no en una variable porque el ciclo se encadena
- * entre ejecuciones distintas y la marca tiene que sobrevivir a ese salto.
- */
-const PROP_EJECUCION_MANUAL = 'EJECUCION_MANUAL';
-
-/** Borra la marca de corrida manual. Se llama en toda salida temprana del ciclo. */
-function limpiarMarcaEjecucionManual() {
-  PropertiesService.getScriptProperties().deleteProperty(PROP_EJECUCION_MANUAL);
-}
-
-/**
  * Punto de entrada del día. Lo dispara el activador diario (ver manual_configurarActivadorDiario).
  *
  * Los activadores diarios de Google NO se ejecutan a una hora exacta: se disparan en algún
@@ -143,38 +124,24 @@ function ejecutarCicloDeOperaciones() {
   const diaDeLaSemana = ahora.getDay();
   const horaActual = ahora.getHours();
 
-  // 1. Validar Día Laborable (Lunes a Viernes)
-  if (diaDeLaSemana < 1 || diaDeLaSemana > 5) {
-    Logger.log("EJECUCIÓN OMITIDA: Fin de semana.");
-    borrarActivadorTemporal();
-    limpiarMarcaEjecucionManual();
-    return;
-  }
-
-  // 2. Validar Feriado
-  if (esFeriadoHoy()) {
-    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado.");
-    borrarActivadorTemporal();
-    limpiarMarcaEjecucionManual();
-    return;
+  // 1 & 2. Validar Día Laborable (Lunes a Viernes) y Feriados
+  if (diaDeLaSemana < 1 || diaDeLaSemana > 5 || esFeriadoHoy()) { 
+    globalThis.ES_DIA_NO_LABORABLE = true;
+  } else {
+    globalThis.ES_DIA_NO_LABORABLE = false;
   }
 
   // 3. Control de Concurrencia (Lock)
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) {
     Logger.log("EJECUCIÓN OMITIDA: Ya hay un proceso corriendo.");
-    // Si esta corrida venía marcada como manual, la marca se descarta: ya hay un ciclo en
-    // curso, que es lo que quería quien apretó el botón. Dejarla puesta haría que la próxima
-    // corrida AUTOMÁTICA se tomara por manual y no se reprogramara.
-    limpiarMarcaEjecucionManual();
     return;
   }
 
   try {
     const scriptProperties = PropertiesService.getScriptProperties();
-    const esManual = scriptProperties.getProperty(PROP_EJECUCION_MANUAL) === 'true';
     borrarActivadorTemporal();
-
+    
     let indiceActual = parseInt(scriptProperties.getProperty('INDICE_SIGUIENTE_TAREA') || '0');
     if (indiceActual === 0) Logger.log("--- Obtenido el candado. Iniciando cadena de tareas. ---");
 
@@ -215,36 +182,17 @@ function ejecutarCicloDeOperaciones() {
       // Ciclo completado
       Logger.log("--- ¡CICLO COMPLETO DE TAREAS FINALIZADO! ---");
       scriptProperties.deleteProperty('INDICE_SIGUIENTE_TAREA');
-
-      if (esManual) {
-        // Corrida lanzada a mano: el ciclo se hizo entero y acá termina. Ni bucle de sondeo ni
-        // reportes de cierre — esos pertenecen al final de la jornada automática, y dispararlos
-        // desde un botón duplicaría el resumen diario en Slack.
-        scriptProperties.deleteProperty(PROP_EJECUCION_MANUAL);
-
-        // Salvedad importante: al arrancar, borrarActivadorTemporal() borró TODOS los
-        // activadores del ciclo, incluido el del bucle automático si estábamos dentro de la
-        // ventana. Si no se repone acá, un clic en el botón a media mañana dejaría la
-        // automatización muerta hasta el activador diario del día siguiente.
-        if (horaActual >= HORA_INICIO && horaActual < HORA_FIN) {
-          Logger.log(`Ciclo manual completado dentro de la ventana (${horaActual}hs): se repone el bucle automático en 5 min.`);
-          crearNuevoActivador('ejecutarCicloDeOperaciones', 5);
-        } else {
-          Logger.log(`Ciclo manual completado fuera de la ventana (${horaActual}hs). No se reprograma nada: si hace falta otra pasada, se lanza a mano de nuevo.`);
-        }
-
-        lock.releaseLock();
-        return;
-      }
-
+      
       if (horaActual < HORA_FIN) {
         Logger.log(`Aún en ventana (${horaActual}hs). Reiniciando bucle en 5 min.`);
         crearNuevoActivador('ejecutarCicloDeOperaciones', 5);
       } else {
         Logger.log("Fin de ventana operativa. Ejecutando reportes finales de cierre...");
         
-        try { generarReporteDiarioDeTickets(); } catch (e) {}
-        try { generarReporteTareasCerradas(); } catch (e) {}
+        if (!globalThis.ES_DIA_NO_LABORABLE) {
+          try { generarReporteDiarioDeTickets(); } catch (e) {}
+          try { generarReporteTareasCerradas(); } catch (e) {}
+        }
         // A-04: se eliminó la llamada a generarReporteConsumoVsphere() sin argumento.
         // Esa función requiere un opsKey (es por-cliente) y sin él salía de inmediato
         // logueando "Key: undefined" sin hacer nada; además su retorno se descartaba.
@@ -257,10 +205,6 @@ function ejecutarCicloDeOperaciones() {
     }
   } catch (e) {
     Logger.log(`Error crítico: ${e.message}`);
-    // Acá la cadena queda cortada (no se llegó a crear el activador siguiente), así que la
-    // marca de corrida manual ya no aplica a nada. Si se dejara puesta, la próxima corrida
-    // automática la consumiría y se comportaría como manual.
-    limpiarMarcaEjecucionManual();
     lock.releaseLock();
   }
 }
@@ -298,6 +242,3 @@ function esFeriadoHoy() {
     return calendario.getEventsForDay(new Date()).length > 0;
   } catch (error) { return false; }
 }
-// trigger push
-
-

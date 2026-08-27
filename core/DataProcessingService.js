@@ -221,13 +221,7 @@ function isRowExcepted(reportRow, headers, exceptions) {
         }
       });
     });
-    if (allConditionsMet) {
-      // Si la regla dice "Considerar", NO exceptuamos la fila: deja que el processor
-      // la evalúe contra sus umbrales de soporte (ageLimit, sizeLimit, qtyLimit).
-      const hasConsiderar = ruleGroup.some(c => (c.criterio || '').toLowerCase() === 'considerar');
-      if (hasConsiderar) return false;
-      return true; // fila exceptuada normalmente
-    }
+    if (allConditionsMet) return true; // Si todas las condiciones de un grupo se cumplen, la fila está exceptuada
   }
   return false;
 }

@@ -16,8 +16,8 @@
 
 // Cliente y carpeta de Drive usados para probar el flujo de RVTools.
 // (Reemplaza al viejo hola() que estaba en RVTools_Main.js — C-01).
-const MANUAL_TEST_CLIENT_NAME = "WPC - Operaciones Testing";
-const MANUAL_TEST_RVTOOLS_FOLDER_ID = "1REqgcvp0q0nDFHYuULKhzb2Yc-Hdnw7h";
+const MANUAL_TEST_CLIENT_NAME = "Operaciones Banco Macro";
+const MANUAL_TEST_RVTOOLS_FOLDER_ID = "1hqgJzoMtaqcMdwCSaSHjGBVvYMxe5Tvw";
 
 /**
  * Ejecuta el flujo completo de RVTools (Zombies + ConnectAtPowerOn) contra el
@@ -35,94 +35,6 @@ function manual_RVToolsTesting() {
 function manual_runAllTests() {
   return runAllTests();
 }
-
-/**
- * Ejecuta el processor de Nutanix manualmente desde el editor de Apps Script.
- *
- * Útil para:
- *   - Verificar que llegan correos del script nutanix_ops_check.ps1.
- *   - Probar el flujo completo (parseo JSON → evaluación → ticket Jira) sin esperar el trigger.
- *   - Diagnosticar por qué un correo quedó en [OPS-PENDIENTE].
- *
- * ⚠️ Asegurarse de que ENVIRONMENT = "TESTING" en Script Properties si no se quiere
- *    impactar clientes reales.
- *
- * Para simular sin un correo real, usar manual_simularNutanixOps() más abajo.
- */
-function manual_testNutanixOps() {
-  Logger.log('[manual_testNutanixOps] Iniciando NutanixOpsProcessor en modo manual...');
-  new NutanixOpsProcessor().processEmails();
-  Logger.log('[manual_testNutanixOps] Finalizado. Revisar logs y bandeja de entrada.');
-}
-
-/**
- * Simula el procesamiento de un reporte Nutanix directamente, sin necesitar un correo real.
- *
- * Útil en Fase 1 de testing: permite probar la lógica GAS (processData + handleAlerts)
- * antes de tener el script PS funcionando.
- *
- * Cómo usar:
- *   1. Ajustar el objeto `payloadSimulado` con los estados que querés probar.
- *   2. Asegurarse de que `clientName` coincide con un cliente en el Índice Maestro.
- *   3. Correr la función desde el desplegable del editor.
- *   4. Revisar los logs (Ctrl+Enter) para ver el resultado.
- */
-function manual_simularNutanixOps() {
-  // --- Ajustar este payload para simular distintos escenarios ---
-  const payloadSimulado = {
-    fecha:      Utilities.formatDate(new Date(), "America/Argentina/Buenos_Aires", "yyyy-MM-dd"),
-    origen:     "10.0.0.1 (simulado)",
-    clientName: "WPC - Operaciones Testing", // Debe existir en el Índice Maestro
-    validaciones: [
-      { id: "OPS-NTX-001", nombre: "Estado del Cluster",  estado: "Chequeado", detalle: "Todos los clusters accesibles y operativos. (SIMULADO)" },
-      { id: "OPS-NTX-002", nombre: "Alertas Activas",     estado: "Derivado",  detalle: "2 alerta(s) activa(s): 1 Critical, 1 Warning. (SIMULADO)" },
-      { id: "OPS-NTX-003", nombre: "Data Resiliency",     estado: "Chequeado", detalle: "Data Resiliency OK en todos los clusters. (SIMULADO)" },
-      { id: "OPS-NTX-004", nombre: "Salud de Discos",     estado: "Chequeado", detalle: "Discos OK. Sin alertas de disco. (SIMULADO)" }
-    ]
-  };
-
-  Logger.log('[manual_simularNutanixOps] Payload de prueba:');
-  Logger.log(JSON.stringify(payloadSimulado, null, 2));
-
-  const processor     = new NutanixOpsProcessor();
-  const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
-
-  // Simular parseAttachment() pasando el JSON directamente
-  const parsedData = payloadSimulado;
-
-  // Buscar el clientConfig del cliente de testing
-  const clientName    = payloadSimulado.clientName;
-  const clientConfig  = getClientConfigByName(clientName, NTX_OPERATION_NAME);
-
-  if (!clientConfig) {
-    Logger.log(`[manual_simularNutanixOps] ⚠️ No se encontró config para "${clientName}" en el Índice Maestro.`);
-    Logger.log('Verificar que el cliente existe y que la operación "Operaciones Nutanix" está configurada.');
-    return;
-  }
-
-  Logger.log(`[manual_simularNutanixOps] Config resuelta: ${clientConfig.clientName} (${clientConfig.jiraProjectKey})`);
-
-  const processed = processor.processData(parsedData, clientConfig, summaryReport);
-  Logger.log(`[manual_simularNutanixOps] processData() → ${processed.finalAlerts.length} alerta(s) derivada(s).`);
-  Logger.log(`[manual_simularNutanixOps] reasonsText: ${processed.reasonsText}`);
-
-  if (processed.finalAlerts.length === 0) {
-    Logger.log('[manual_simularNutanixOps] Sin alertas → handleNoAlerts() (no crea ticket).');
-  } else {
-    Logger.log('[manual_simularNutanixOps] Con alertas → handleAlerts() → crearía ticket en Jira.');
-    Logger.log('⚠️ Para ver el ticket creado, quitar el comentario de la línea handleAlerts() abajo.');
-    // Descomentar para ejecutar el flujo completo contra Jira:
-    // const existingKey = processor.findExistingTicket(clientConfig);
-    // const r = processor.handleAlerts(existingKey, clientConfig, summaryReport, processed.headers, processed.finalAlerts, processed.rowsForExport, processed.reasonsText, "simulacion.json");
-    // Logger.log(`handleAlerts() → status: ${r.status}`);
-  }
-
-  Logger.log('[manual_simularNutanixOps] Resumen:');
-  Logger.log(`  Éxitos: ${summaryReport.exitos.length}`);
-  Logger.log(`  Advertencias: ${summaryReport.advertencias.length}`);
-  Logger.log(`  Errores: ${summaryReport.errores.length}`);
-}
-
 
 /**
  * AUDITORÍA (solo lectura): lista los activadores del proyecto y a qué hora arranca el día.
@@ -695,83 +607,4 @@ function manual_cerrarTareasProgramadas() {
   }
 
   return { cerradas, fallidas, omitidas, reportesPorCliente };
-}
-
-/**
- * Cierra masivamente todos los tickets abiertos en los proyectos de Testing (WPC y WST).
- * Ejecuta las transiciones obligatorias en orden.
- */
-function manual_CerrarTicketsTesting() {
-  const proyectos = ["WPC", "WST"];
-
-  const rutaWPC = ["In Progress", "Closed"];
-  const rutaWST = ["En Ánalisis", "Esperando confirmación  del cliente", "Closed"];
-
-  // Helper para hacer las transiciones en cadena
-  function transicionarTicket(issueKey, rutas) {
-    for (let estado of rutas) {
-      const transitionsUrl = `${JIRA_DOMAIN}/rest/api/3/issue/${issueKey}/transitions`;
-      const optionsGet = { "method": "get", "headers": getJiraHeaders(), "muteHttpExceptions": true };
-      const responseGet = fetchWithRetries(transitionsUrl, optionsGet);
-      if (responseGet.getResponseCode() !== 200) continue;
-      
-      const data = JSON.parse(responseGet.getContentText());
-      const transicion = data.transitions.find(t => t.to.name === estado);
-      
-      if (transicion) {
-        Logger.log(`  -> Transicionando a: ${estado}`);
-        const payloadPost = { "transition": { "id": transicion.id } };
-        const optionsPost = {
-          "method": "post", "contentType": "application/json",
-          "headers": getJiraHeaders(), "payload": JSON.stringify(payloadPost), "muteHttpExceptions": true
-        };
-        fetchWithRetries(transitionsUrl, optionsPost);
-      }
-    }
-  }
-
-  proyectos.forEach(projectKey => {
-    Logger.log(`\n==============================================`);
-    Logger.log(`Buscando tickets abiertos en el proyecto ${projectKey}...`);
-    
-    const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
-    const jql = `project = "${projectKey}" AND statusCategory != "Done"`;
-    
-    // Pedimos hasta 100 resultados
-    const payload = { "jql": jql, "maxResults": 100, "fields": ["key", "summary"] };
-    const options = {
-      "method": "post", "contentType": "application/json",
-      "headers": getJiraHeaders(),
-      "payload": JSON.stringify(payload), "muteHttpExceptions": true
-    };
-    
-    try {
-      const response = fetchWithRetries(endpoint, options);
-      if (response.getResponseCode() !== 200) {
-        Logger.log(`Error al buscar en ${projectKey}: HTTP ${response.getResponseCode()}`);
-        return;
-      }
-      
-      const data = JSON.parse(response.getContentText());
-      const issues = data.issues || [];
-      
-      Logger.log(`Se encontraron ${issues.length} tickets abiertos en ${projectKey}.`);
-      
-      let procesados = 0;
-      
-      issues.forEach(issue => {
-        Logger.log(`- Procesando ticket ${issue.key} ("${issue.fields.summary}")...`);
-        const rutas = projectKey === "WPC" ? rutaWPC : rutaWST;
-        transicionarTicket(issue.key, rutas);
-        procesados++;
-      });
-      
-      Logger.log(`Resumen para ${projectKey}: ${procesados} procesados.`);
-      
-    } catch (e) {
-      Logger.log(`Error al procesar proyecto ${projectKey}: ${e.message}`);
-    }
-  });
-  
-  Logger.log(`\nLimpieza de tickets de Testing finalizada.`);
 }

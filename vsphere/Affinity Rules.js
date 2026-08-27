@@ -40,12 +40,14 @@ class AffinityRulesProcessor extends MailProcessor {
       
       if (clientConfig) {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).` });
-        if (this.scheduledTaskName) {
-          const taskNameToClose = clientConfig.isAVS ? "AVS - " + this.scheduledTaskName : this.scheduledTaskName;
-          buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
-        }
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       }
-      return { status: 'SUCCESS' };
+        if (typeof clientConfig !== 'undefined' && clientConfig) {
+      const nombreArchivo = this.operationName + " - OK.txt";
+      this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+      this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+    }
+    return { status: 'SUCCESS' };
     }
     
     return super.processSingleMessage(message, summaryReport);
@@ -55,11 +57,6 @@ class AffinityRulesProcessor extends MailProcessor {
     const emailSubject = message.getSubject();
     const subjectLower = emailSubject.toLowerCase();
     this.isDRP = false;
-
-    // isAVS: mismo criterio que AlertasDevSphere.js — si no se marca acá, el cierre de
-    // la Tarea Programada usa el nombre sin prefijo y puede terminar cerrando (o
-    // buscando) la tarea del lado equivocado (AVS vs. no-AVS).
-    const isAVS = subjectLower.includes('avs') || (attachment && attachment.getName().toLowerCase().includes('avs'));
 
     const drpClientName = extractDRPClientName(emailSubject, "Affinity Rules");
     if (drpClientName) {
@@ -74,10 +71,6 @@ class AffinityRulesProcessor extends MailProcessor {
       if (this.isDRP) Logger.log(`Búsqueda DRP por nombre falló. Revirtiendo a búsqueda por remitente.`);
       config = getClientConfig(sender, this.operationName);
       this.isDRP = false;
-    }
-
-    if (config) {
-      config.isAVS = isAVS;
     }
     return config;
   }
@@ -161,10 +154,7 @@ class AffinityRulesProcessor extends MailProcessor {
       }
       
       if (attachmentStatus.status === 'SUCCESS') {
-        if (this.scheduledTaskName) {
-          const taskNameToClose = clientConfig.isAVS ? "AVS - " + this.scheduledTaskName : this.scheduledTaskName;
-          buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
-        }
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       }
       return { status: attachmentStatus.status };
 
@@ -193,10 +183,7 @@ class AffinityRulesProcessor extends MailProcessor {
       }
       
       if (creationResult.status !== 'FAILURE' && creationResult.status !== 'HTTP_500') {
-        if (this.scheduledTaskName) {
-          const taskNameToClose = clientConfig.isAVS ? "AVS - " + this.scheduledTaskName : this.scheduledTaskName;
-          buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
-        }
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       }
       return { status: creationResult.status };
     }
