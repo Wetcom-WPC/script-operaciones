@@ -186,75 +186,73 @@ class VMsConSnapshotsProcessor extends MailProcessor {
          if (rowBreaksRule) soporteAlerts.push(row);
 
       } else {
-         // SOP 'exceptuar' o sin regla SOP → evaluar OPS
-         const matchedOpsRule = findMatchingSopRule(row, headers, clientConfig.exceptions);
-         if (matchedOpsRule) {
-            Logger.log('[DEBUG OPS] VM MATCH OPS: criterio=' + matchedOpsRule.criterio + ' VM=' + vmName);
+         // Si es 'exceptuar' de SOP o si no hay regla SOP
+         let fallsToOps = false;
+         
+         if (matchedSopRule && matchedSopRule.criterio === 'exceptuar') {
+            // Está exceptuada de SOP explícitamente -> pasamos directo a evaluar OPS
+            fallsToOps = true;
+         } else {
+            // PASO 2: Evaluar umbrales SOP Hardcodeados (Safety net)
+            let sopBreaksRule = false;
+            if (age >= SOP_AGE_MAX) { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
+            if (space >= SOP_SIZE_MAX) { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB`); sopBreaksRule = true; }
+            if (count >= SOP_CANTIDAD_MAX) { detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`); sopBreaksRule = true; }
+            
+            if (sopBreaksRule) {
+               Logger.log('[DEBUG EVAL] -> VM asignada a SOPORTE por umbrales hardcodeados: ' + vmName);
+               soporteAlerts.push(row);
+            } else {
+               fallsToOps = true;
+            }
          }
 
-         if (matchedOpsRule && matchedOpsRule.criterio === 'considerar') {
-            // Umbrales OPS personalizados
-            let sizeLimit = matchedOpsRule.size > 0 ? matchedOpsRule.size : Infinity;
-            let ageLimit  = matchedOpsRule.age  > 0 ? matchedOpsRule.age  : Infinity;
-            let qtyLimit  = matchedOpsRule.qty  > 0 ? matchedOpsRule.qty  : Infinity;
-            
-            let rowBreaksRule = false;
-            if (age   >= ageLimit) { detectedReasonsOps.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
-            if (count >= qtyLimit) { detectedReasonsOps.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
-            
-            const esRelativo = matchedOpsRule.sizeType === 'porcentaje' || matchedOpsRule.sizeType === 'relativo';
-            if (esRelativo) {
-               if (usedPercent >= sizeLimit && sizeLimit !== Infinity) { 
-                  detectedReasonsOps.add(`Tamaño Relativo >= ${sizeLimit}%`); 
-                  rowBreaksRule = true; 
-               }
-            } else {
-               if (space >= sizeLimit && sizeLimit !== Infinity) { 
-                  detectedReasonsOps.add(`Tamaño Absoluto >= ${sizeLimit} GB`); 
-                  rowBreaksRule = true; 
-               }
-            }
-            if (rowBreaksRule) {
-               Logger.log('[DEBUG EVAL] -> VM asignada a OPS por regla personalizada: ' + vmName);
-               opsAlerts.push(row);
+         if (fallsToOps) {
+            // PASO 3: Evaluar OPS
+            const matchedOpsRule = findMatchingSopRule(row, headers, clientConfig.exceptions);
+            if (matchedOpsRule) {
+               Logger.log('[DEBUG OPS] VM MATCH OPS: criterio=' + matchedOpsRule.criterio + ' VM=' + vmName);
             }
 
-         } else if (matchedOpsRule) {
-            // criterio = 'ignorar' o vacío (filas viejas sin CRITERIO = excepción clásica)
-            Logger.log('[DEBUG EVAL] -> VM IGNORADA por regla OPS (criterio=' + matchedOpsRule.criterio + '): ' + vmName);
-            // no se agrega a ningún array → no genera ticket
-
-         } else {
-            // Sin regla OPS → hardcoded
-            if (matchedSopRule && matchedSopRule.criterio === 'exceptuar') {
-               // Venimos de un SOP 'exceptuar': SOLO evaluar umbrales OPS hardcodeados
+            if (matchedOpsRule && matchedOpsRule.criterio === 'considerar') {
+               // Umbrales OPS personalizados
+               let sizeLimit = matchedOpsRule.size > 0 ? matchedOpsRule.size : Infinity;
+               let ageLimit  = matchedOpsRule.age  > 0 ? matchedOpsRule.age  : Infinity;
+               let qtyLimit  = matchedOpsRule.qty  > 0 ? matchedOpsRule.qty  : Infinity;
+               
                let rowBreaksRule = false;
-               if (age   >= AGE_MAX)      { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
-               if (space >= SIZE_MAX)     { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
-               if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+               if (age   >= ageLimit) { detectedReasonsOps.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
+               if (count >= qtyLimit) { detectedReasonsOps.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
+               
+               const esRelativo = matchedOpsRule.sizeType === 'porcentaje' || matchedOpsRule.sizeType === 'relativo';
+               if (esRelativo) {
+                  if (usedPercent >= sizeLimit && sizeLimit !== Infinity) { 
+                     detectedReasonsOps.add(`Tamaño Relativo >= ${sizeLimit}%`); 
+                     rowBreaksRule = true; 
+                  }
+               } else {
+                  if (space >= sizeLimit && sizeLimit !== Infinity) { 
+                     detectedReasonsOps.add(`Tamaño Absoluto >= ${sizeLimit} GB`); 
+                     rowBreaksRule = true; 
+                  }
+               }
                if (rowBreaksRule) {
-                  Logger.log('[DEBUG EVAL] -> VM exceptuada de SOP, asignada a OPS: ' + vmName);
+                  Logger.log('[DEBUG EVAL] -> VM asignada a OPS por regla personalizada: ' + vmName);
                   opsAlerts.push(row);
                }
+            } else if (matchedOpsRule) {
+               // criterio = 'ignorar' o vacío
+               Logger.log('[DEBUG EVAL] -> VM IGNORADA por regla OPS (criterio=' + matchedOpsRule.criterio + '): ' + vmName);
             } else {
-               // Sin regla SOP y sin regla OPS: evaluar SOP hardcodeado → OPS hardcodeado (IGUAL A HOY)
-               let sopBreaksRule = false;
-               if (age   >= SOP_AGE_MAX)      { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
-               if (space >= SOP_SIZE_MAX)     { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB`); sopBreaksRule = true; }
-               if (count >= SOP_CANTIDAD_MAX) { detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`); sopBreaksRule = true; }
+               // PASO 4: Evaluar umbrales OPS Hardcodeados
+               let rowBreaksRule = false;
+               if (age >= AGE_MAX) { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
+               if (space >= SIZE_MAX) { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
+               if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
                
-               if (sopBreaksRule) {
-                  Logger.log('[DEBUG EVAL] -> VM asignada a SOPORTE por umbrales hardcodeados: ' + vmName);
-                  soporteAlerts.push(row);
-               } else {
-                  let rowBreaksRule = false;
-                  if (age   >= AGE_MAX)      { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
-                  if (space >= SIZE_MAX)     { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
-                  if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
-                  if (rowBreaksRule) {
-                     Logger.log('[DEBUG EVAL] -> VM asignada a OPS: ' + vmName);
-                     opsAlerts.push(row);
-                  }
+               if (rowBreaksRule) {
+                  Logger.log('[DEBUG EVAL] -> VM asignada a OPS (umbrales hardcodeados): ' + vmName);
+                  opsAlerts.push(row);
                }
             }
          }
