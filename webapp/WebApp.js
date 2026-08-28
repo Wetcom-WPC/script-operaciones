@@ -138,7 +138,8 @@ function webapp_exigirAutorizacion(usuario) {
 function webapp_listaClientes() {
   const lista = [];
   try {
-    const spreadsheet = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID);
+    const PROD_INDEX_ID = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
+    const spreadsheet = SpreadsheetApp.openById(PROD_INDEX_ID);
     const sheet = spreadsheet.getSheets()[0];
     const data = sheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
@@ -149,7 +150,7 @@ function webapp_listaClientes() {
       }
     }
   } catch (e) {
-    Logger.log('[WebApp] Error leyendo clientes: ' + e.message);
+    Logger.log('[WebApp] Error leyendo clientes desde PROD_INDEX: ' + e.message);
   }
   return lista.sort((a, b) => a.nombre.localeCompare(b.nombre));
 }
