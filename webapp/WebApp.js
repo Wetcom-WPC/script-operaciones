@@ -202,7 +202,26 @@ function webapp_obtenerDatosGraficosJira(projectKey, rango) {
   let proyectosStr = `"${keyOps}"`;
   if (keySop) proyectosStr += `, "${keySop}"`;
 
-  const jql = `project IN (${proyectosStr}) AND creator = currentUser() AND ${jqlRango} ORDER BY created DESC`;
+  // 3. Obtener nombres del equipo WPC
+  let creadores = ["currentUser()"];
+  try {
+    const wpcSheetId = "14-l10On3DeGAhNPQu0qDI2bUHFmrkxlBYlG0Q1bSDZw";
+    const sheetWPC = SpreadsheetApp.openById(wpcSheetId).getSheetByName("Equipo");
+    if (sheetWPC) {
+      const dataWPC = sheetWPC.getRange("A2:A").getValues();
+      dataWPC.forEach(row => {
+        const nombre = row[0];
+        if (nombre && typeof nombre === 'string' && nombre.trim() !== '') {
+          creadores.push(`"${nombre.trim()}"`);
+        }
+      });
+    }
+  } catch(e) {
+    Logger.log("Error leyendo planilla Equipo WPC: " + e.message);
+  }
+
+  const creadoresStr = creadores.join(", ");
+  const jql = `project IN (${proyectosStr}) AND creator IN (${creadoresStr}) AND ${jqlRango} ORDER BY created DESC`;
 
   let allTickets = [];
   let nextPageToken = null;
