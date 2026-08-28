@@ -891,7 +891,7 @@ function manual_CrearPestanasSopSnapshots() {
       // K: CRITERIO
       sheet.getRange(2, 11, LAST_ROW, 1).setDataValidation(
         SpreadsheetApp.newDataValidation()
-          .requireValueInList(["Ignorar", "Considerar"], true)
+          .requireValueInList(["Exceptuar", "Considerar"], true)
           .setAllowInvalid(false)
           .build()
       );
