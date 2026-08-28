@@ -155,27 +155,23 @@ class VMsConSnapshotsProcessor extends MailProcessor {
         row.push(usedPercent > 0 ? usedPercent.toFixed(2) + "%" : "0.00%");
       }
       
-      if (isRowExcepted(row, headers, clientConfig.exceptions)) {
-         Logger.log('[DEBUG EVAL] -> IGNORADA por excepción global Ops: ' + vmName);
-         return;
+      // PASO 1: SOP siempre tiene prioridad
+      const matchedSopRule = findMatchingSopRule(row, headers, sopRules);
+      if (matchedSopRule) {
+         Logger.log('[DEBUG SOPORTE] VM MATCH SOP: criterio=' + matchedSopRule.criterio + ' VM=' + vmName);
       }
 
-      const matchedRule = findMatchingSopRule(row, headers, sopRules);
-      if (matchedRule) {
-         Logger.log("[DEBUG SOPORTE] VM MATCH. Valores regla: AGE=" + matchedRule.age + ", SIZE=" + matchedRule.size + ", QTY=" + matchedRule.qty + ". Valores reales: AGE=" + age + ", SIZE=" + space + ", QTY=" + count);
-      }
-      
-      if (matchedRule && matchedRule.criterio === 'considerar') {
-         let sizeLimit = matchedRule.size > 0 ? matchedRule.size : Infinity;
-         let ageLimit = matchedRule.age > 0 ? matchedRule.age : Infinity;
-         let qtyLimit = matchedRule.qty > 0 ? matchedRule.qty : Infinity;
+      if (matchedSopRule && matchedSopRule.criterio === 'considerar') {
+         // → Ticket SOPORTE con umbrales personalizados
+         let sizeLimit = matchedSopRule.size > 0 ? matchedSopRule.size : Infinity;
+         let ageLimit = matchedSopRule.age > 0 ? matchedSopRule.age : Infinity;
+         let qtyLimit = matchedSopRule.qty > 0 ? matchedSopRule.qty : Infinity;
          
          let rowBreaksRule = false;
          if (age >= ageLimit) { detectedReasonsSoporte.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
          if (count >= qtyLimit) { detectedReasonsSoporte.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
          
-         // La planilla escribe 'porcentaje' (dropdown); se mantiene 'relativo' por retrocompatibilidad.
-         const esRelativo = matchedRule.sizeType === 'porcentaje' || matchedRule.sizeType === 'relativo';
+         const esRelativo = matchedSopRule.sizeType === 'porcentaje' || matchedSopRule.sizeType === 'relativo';
          if (esRelativo) {
             if (usedPercent >= sizeLimit && sizeLimit !== Infinity) {
                detectedReasonsSoporte.add(`Tamaño Relativo >= ${sizeLimit}%`); 
@@ -188,36 +184,78 @@ class VMsConSnapshotsProcessor extends MailProcessor {
             }
          }
          if (rowBreaksRule) soporteAlerts.push(row);
-      } else if (matchedRule && matchedRule.criterio === 'exceptuar') {
-         // La VM está exceptuada de SOPORTE.
-         // Evaluamos si corresponde ticket de Operaciones bajo los umbrales normales (Ops).
-         let rowBreaksRule = false;
-         if (age >= AGE_MAX) { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
-         if (space >= SIZE_MAX) { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
-         if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
-         
-         if (rowBreaksRule) {
-            Logger.log('[DEBUG EVAL] -> VM exceptuada de SOP, asignada a OPS: ' + vmName);
-            opsAlerts.push(row);
-         }
-      } else {
-         let sopBreaksRule = false;
-         if (age >= SOP_AGE_MAX) { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
-         if (space >= SOP_SIZE_MAX) { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB`); sopBreaksRule = true; }
-         if (count >= SOP_CANTIDAD_MAX) { detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`); sopBreaksRule = true; }
 
-         if (sopBreaksRule) {
-            Logger.log('[DEBUG EVAL] -> VM asignada a SOPORTE por umbrales hardcodeados: ' + vmName);
-            soporteAlerts.push(row);
-         } else {
-            let rowBreaksRule = false;
-            if (age >= AGE_MAX) { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
-            if (space >= SIZE_MAX) { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
-            if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+      } else {
+         // SOP 'exceptuar' o sin regla SOP → evaluar OPS
+         const matchedOpsRule = findMatchingSopRule(row, headers, clientConfig.exceptions);
+         if (matchedOpsRule) {
+            Logger.log('[DEBUG OPS] VM MATCH OPS: criterio=' + matchedOpsRule.criterio + ' VM=' + vmName);
+         }
+
+         if (matchedOpsRule && matchedOpsRule.criterio === 'considerar') {
+            // Umbrales OPS personalizados
+            let sizeLimit = matchedOpsRule.size > 0 ? matchedOpsRule.size : Infinity;
+            let ageLimit  = matchedOpsRule.age  > 0 ? matchedOpsRule.age  : Infinity;
+            let qtyLimit  = matchedOpsRule.qty  > 0 ? matchedOpsRule.qty  : Infinity;
             
+            let rowBreaksRule = false;
+            if (age   >= ageLimit) { detectedReasonsOps.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
+            if (count >= qtyLimit) { detectedReasonsOps.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
+            
+            const esRelativo = matchedOpsRule.sizeType === 'porcentaje' || matchedOpsRule.sizeType === 'relativo';
+            if (esRelativo) {
+               if (usedPercent >= sizeLimit && sizeLimit !== Infinity) { 
+                  detectedReasonsOps.add(`Tamaño Relativo >= ${sizeLimit}%`); 
+                  rowBreaksRule = true; 
+               }
+            } else {
+               if (space >= sizeLimit && sizeLimit !== Infinity) { 
+                  detectedReasonsOps.add(`Tamaño Absoluto >= ${sizeLimit} GB`); 
+                  rowBreaksRule = true; 
+               }
+            }
             if (rowBreaksRule) {
-               Logger.log('[DEBUG EVAL] -> VM asignada a OPS: ' + vmName);
+               Logger.log('[DEBUG EVAL] -> VM asignada a OPS por regla personalizada: ' + vmName);
                opsAlerts.push(row);
+            }
+
+         } else if (matchedOpsRule) {
+            // criterio = 'ignorar' o vacío (filas viejas sin CRITERIO = excepción clásica)
+            Logger.log('[DEBUG EVAL] -> VM IGNORADA por regla OPS (criterio=' + matchedOpsRule.criterio + '): ' + vmName);
+            // no se agrega a ningún array → no genera ticket
+
+         } else {
+            // Sin regla OPS → hardcoded
+            if (matchedSopRule && matchedSopRule.criterio === 'exceptuar') {
+               // Venimos de un SOP 'exceptuar': SOLO evaluar umbrales OPS hardcodeados
+               let rowBreaksRule = false;
+               if (age   >= AGE_MAX)      { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
+               if (space >= SIZE_MAX)     { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
+               if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+               if (rowBreaksRule) {
+                  Logger.log('[DEBUG EVAL] -> VM exceptuada de SOP, asignada a OPS: ' + vmName);
+                  opsAlerts.push(row);
+               }
+            } else {
+               // Sin regla SOP y sin regla OPS: evaluar SOP hardcodeado → OPS hardcodeado (IGUAL A HOY)
+               let sopBreaksRule = false;
+               if (age   >= SOP_AGE_MAX)      { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
+               if (space >= SOP_SIZE_MAX)     { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB`); sopBreaksRule = true; }
+               if (count >= SOP_CANTIDAD_MAX) { detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`); sopBreaksRule = true; }
+               
+               if (sopBreaksRule) {
+                  Logger.log('[DEBUG EVAL] -> VM asignada a SOPORTE por umbrales hardcodeados: ' + vmName);
+                  soporteAlerts.push(row);
+               } else {
+                  let rowBreaksRule = false;
+                  if (age   >= AGE_MAX)      { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
+                  if (space >= SIZE_MAX)     { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
+                  if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+                  if (rowBreaksRule) {
+                     Logger.log('[DEBUG EVAL] -> VM asignada a OPS: ' + vmName);
+                     opsAlerts.push(row);
+                  }
+               }
             }
          }
       }
