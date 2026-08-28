@@ -165,7 +165,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
          Logger.log("[DEBUG SOPORTE] VM MATCH. Valores regla: AGE=" + matchedRule.age + ", SIZE=" + matchedRule.size + ", QTY=" + matchedRule.qty + ". Valores reales: AGE=" + age + ", SIZE=" + space + ", QTY=" + count);
       }
       
-      if (matchedRule) {
+      if (matchedRule && matchedRule.criterio === 'considerar') {
          let sizeLimit = matchedRule.size > 0 ? matchedRule.size : Infinity;
          let ageLimit = matchedRule.age > 0 ? matchedRule.age : Infinity;
          let qtyLimit = matchedRule.qty > 0 ? matchedRule.qty : Infinity;
@@ -188,7 +188,19 @@ class VMsConSnapshotsProcessor extends MailProcessor {
             }
          }
          if (rowBreaksRule) soporteAlerts.push(row);
-            } else {
+      } else if (matchedRule && matchedRule.criterio === 'exceptuar') {
+         // La VM está exceptuada de SOPORTE.
+         // Evaluamos si corresponde ticket de Operaciones bajo los umbrales normales (Ops).
+         let rowBreaksRule = false;
+         if (age >= AGE_MAX) { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
+         if (space >= SIZE_MAX) { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
+         if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+         
+         if (rowBreaksRule) {
+            Logger.log('[DEBUG EVAL] -> VM exceptuada de SOP, asignada a OPS: ' + vmName);
+            opsAlerts.push(row);
+         }
+      } else {
          let sopBreaksRule = false;
          if (age >= SOP_AGE_MAX) { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
          if (space >= SOP_SIZE_MAX) { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB`); sopBreaksRule = true; }
@@ -393,9 +405,6 @@ function findMatchingSopRule(reportRow, headers, exceptions) {
   });
   for (const exceptionId in exceptions) {
     const ruleGroup = exceptions[exceptionId];
-    // Solo procesar grupos marcados como 'considerar'
-    const hasConsiderar = ruleGroup.some(c => (c.criterio || '').toLowerCase() === 'considerar');
-    if (!hasConsiderar) continue;
 
     const allConditionsMet = ruleGroup.every(condition => {
       let nCol = condition.column.trim().toLowerCase();
@@ -415,9 +424,8 @@ function findMatchingSopRule(reportRow, headers, exceptions) {
     });
 
     if (allConditionsMet) {
-      // Devolver la primera condición del grupo que tenga límites definidos
-      const c = ruleGroup.find(r => r.ageLimit != null || r.sizeLimit != null || r.qtyLimit != null);
-      if (c) return { age: c.ageLimit, size: c.sizeLimit, qty: c.qtyLimit, sizeType: c.sizeType || '' };
+      const c = ruleGroup[0];
+      if (c) return { age: c.ageLimit, size: c.sizeLimit, qty: c.qtyLimit, sizeType: c.sizeType || '', criterio: (c.criterio || '').toLowerCase() };
     }
   }
   return null;
