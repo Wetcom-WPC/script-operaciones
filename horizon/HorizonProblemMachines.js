@@ -94,7 +94,7 @@ class HorizonProblemMachinesProcessor extends MailProcessor {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
       } else {
-        const newFileName = attachmentName.replace(/\.json$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const matrixData = [headers].concat(finalAlerts.map(r => [r.NombreMaquina, r.DesktopPool, r.Estado]));
         const xlsxBlob = convertDataToXlsxBlob(matrixData, newFileName);
         
@@ -130,7 +130,7 @@ class HorizonProblemMachinesProcessor extends MailProcessor {
       } else {
         summary = HZ_PM_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Informamos que se detectaron ${alertCount} escritorios virtuales (VMs) en estado problemático en Horizon. Por la cantidad de registros, se adjunta el reporte detallado en formato Excel (excepciones ya filtradas).`;
-        const newFileName = attachmentName.replace(/\.json$/i, ".xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, ".xlsx");
         const matrixData = [headers].concat(finalAlerts.map(r => [r.NombreMaquina, r.DesktopPool, r.Estado]));
         xlsxBlob = convertDataToXlsxBlob(matrixData, newFileName);
       }

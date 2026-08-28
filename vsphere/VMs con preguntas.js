@@ -93,7 +93,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
       } else {
-        const newFileName = attachmentName.replace(/\.json$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
         attachmentStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
 
@@ -123,7 +123,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
       } else {
         summary = Q_VM_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Se encontraron ${alertCount} VMs con preguntas pendientes. Se adjunta el reporte filtrado.`;
-        const newFileName = attachmentName.replace(/\.json$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       }
       const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, this.operationName);

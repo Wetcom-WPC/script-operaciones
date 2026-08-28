@@ -254,7 +254,7 @@ function convertirYGuardar(adjunto, carpetaDestino, nombreCliente) {
 
   try {
     if (extension === 'csv') {
-      const nuevoNombre = nombreArchivo.replace(/\.csv$/i, ".xlsx");
+      const nuevoNombre = nombreArchivo.replace(/\.(xlsx|csv|xls|json)$/i, ".xlsx");
       let csvData = adjunto.getDataAsString("UTF-8");
       if (csvData.charCodeAt(0) === 0xFEFF) csvData = csvData.substring(1);
 
@@ -275,7 +275,7 @@ function convertirYGuardar(adjunto, carpetaDestino, nombreCliente) {
     }
 
     if (extension === 'json') {
-      const nuevoNombre = nombreArchivo.replace(/\.json$/i, ".xlsx");
+      const nuevoNombre = nombreArchivo.replace(/\.(xlsx|csv|xls|json)$/i, ".xlsx");
       const jsonData = JSON.parse(adjunto.getDataAsString("UTF-8"));
       let datosDeTabla = null;
       for (const key in jsonData) {

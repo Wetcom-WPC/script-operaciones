@@ -180,7 +180,7 @@ class VMsEnMasDeUnJobProcessor extends MailProcessor {
 
   handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
     const alertCount = parseInt(reasonsText, 10) || finalAlerts.length;
-    const baseName = attachmentName.replace(/\.(xlsx|csv|zip)$/i, "");
+    const baseName = attachmentName.replace(/\.(xlsx|csv|xls|json|zip)$/i, "");
     const newFileName = `${baseName} - FILTRADO.xlsx`;
     const columnsToIgnore = ["Average VM Processing Time", "Average VM Transferred Data(GB)"];
     
