@@ -921,24 +921,12 @@ function manual_CrearPestanasSopSnapshots() {
 // HERRAMIENTA: Actualizar pestaña "VMs con snapshots" en planillas de excepciones para agregar columnas de umbrales
 // =================================================================
 /**
- * Recorre todas las filas del Índice Maestro y, para cada cliente que tenga un
- * spreadsheet de excepciones configurado, actualiza la pestaña "VMs con snapshots"
- * para agregar las columnas de umbrales personalizados de OPS, moviendo las
- * columnas existentes (Ticket, Responsable, Notas) hacia la derecha.
- *
- * Estructura de la pestaña actualizada:
- *   A-F: (Idéntico a SOP)
- *   G: AGE (días)
- *   H: SIZE (GB)
- *   I: QTY (cantidad)
- *   J: TIPO TAMAÑO           (dropdown: Absoluto / Relativo)
- *   K: CRITERIO              (dropdown: Ignorar / Considerar)
- *   L: Ticket de agente
- *   M: Responsable
- *   N: Notas / Riesgo
+ * Recorre todas las filas del Índice Maestro y actualiza la pestaña "VMs con snapshots"
+ * para que tenga el formato exacto de la pestaña SOP (11 columnas).
+ * Elimina cualquier dato basura de la columna G en adelante.
  */
 function manual_ActualizarPestanaOpsSnapshots() {
-  const TAB_NAME = "VMs con snapshots"; // Nombre exacto de la pestaña OPS existente
+  const TAB_NAME = "VMs con snapshots";
   
   const masterData = MasterSheetSingleton.getMasterData();
   if (!masterData || masterData.length === 0) {
@@ -947,7 +935,6 @@ function manual_ActualizarPestanaOpsSnapshots() {
   }
 
   let actualizadas = 0;
-  let yaActualizadas = 0;
   let sinPestana = 0;
   let errores = 0;
   let sinPlanilla = 0;
@@ -966,77 +953,38 @@ function manual_ActualizarPestanaOpsSnapshots() {
       const ss    = SpreadsheetApp.openById(exceptionFileId);
       let sheet   = ss.getSheetByName(TAB_NAME);
 
-      if (!sheet) {
-        // En lugar de "VMs con snapshots", a veces está como "VMs con Snapshots" (mayúscula)
-        sheet = ss.getSheetByName("VMs con Snapshots");
-      }
+      if (!sheet) sheet = ss.getSheetByName("VMs con Snapshots");
 
       if (!sheet) {
-        Logger.log(`[Fila ${idx + 1}] "${clientName}" — la pestaña "${TAB_NAME}" NO EXISTE. Se omite.`);
+        Logger.log(`[Fila ${idx + 1}] "${clientName}" — la pestaña NO EXISTE. Se omite.`);
         sinPestana++;
         return;
       }
 
-      // Chequear si ya está actualizada
-      const g1Value = sheet.getRange(1, 7).getValue();
-      if (String(g1Value).toUpperCase() === "AGE") {
-        Logger.log(`[Fila ${idx + 1}] "${clientName}" — la pestaña "${TAB_NAME}" ya está actualizada. Se omite.`);
-        yaActualizadas++;
-        return;
+      // Limpiar TODO desde la columna 7 (G) en adelante
+      const lastRow = sheet.getLastRow() > 0 ? sheet.getLastRow() : 1000;
+      const maxCols = sheet.getMaxColumns();
+      if (maxCols >= 7) {
+         sheet.getRange(1, 7, lastRow, maxCols - 6).clear();
+         sheet.getRange(1, 7, lastRow, maxCols - 6).clearDataValidations();
+         sheet.getRange(1, 7, lastRow, maxCols - 6).clearFormat();
       }
 
-      // --- Mover datos existentes ---
-      // Originalmente: G=Ticket de agente, H=Responsable, I=Notas / Riesgo
-      // Destino: L=Ticket de agente, M=Responsable, N=Notas / Riesgo
-      const lastRow = sheet.getLastRow();
-      if (lastRow >= 1) {
-        // Leer datos actuales de G, H, I
-        const oldDataRange = sheet.getRange(1, 7, lastRow, 3);
-        const oldData = oldDataRange.getValues();
-        
-        // Escribir en L, M, N (columnas 12, 13, 14)
-        const newDataRange = sheet.getRange(1, 12, lastRow, 3);
-        newDataRange.setValues(oldData);
-        
-        // Limpiar G, H, I
-        oldDataRange.clearContent();
-      }
-
-      // --- Escribir nuevos encabezados en G-N ---
-      const newHeaders = ["AGE", "SIZE", "QTY", "TIPO TAMAÑO", "CRITERIO", "Ticket de agente", "Responsable", "Notas / Riesgo"];
-      const headerRange = sheet.getRange(1, 7, 1, 8);
+      // Escribir nuevos encabezados en G-K (igual que SOP)
+      const newHeaders = ["AGE", "SIZE", "QTY", "TIPO TAMAÑO", "CRITERIO"];
+      const headerRange = sheet.getRange(1, 7, 1, 5);
       headerRange.setValues([newHeaders]);
       headerRange.setFontWeight("bold");
       
-      // Estilo de encabezado G-K (nuevas columnas)
-      const newColsHeaderRange = sheet.getRange(1, 7, 1, 5);
-      newColsHeaderRange.setBackground("#34A853"); // verde Wetcom
-      newColsHeaderRange.setFontColor("#FFFFFF");
+      headerRange.setBackground("#34A853");
+      headerRange.setFontColor("#FFFFFF");
       
-      // Estilo de encabezado L-N (columnas movidas, restaurar verde por si acaso)
-      const movedColsHeaderRange = sheet.getRange(1, 12, 1, 3);
-      movedColsHeaderRange.setBackground("#34A853");
-      movedColsHeaderRange.setFontColor("#FFFFFF");
-
-      // --- Anchos de columna aproximados ---
-      const colWidths = {
-        7: 60,  // G: AGE
-        8: 60,  // H: SIZE
-        9: 60,  // I: QTY
-        10: 110, // J: TIPO TAMAÑO
-        11: 110, // K: CRITERIO
-        12: 120, // L: Ticket de agente
-        13: 150, // M: Responsable
-        14: 250  // N: Notas
-      };
+      const colWidths = { 7: 60, 8: 60, 9: 60, 10: 110, 11: 110 };
       for (const col in colWidths) {
         sheet.setColumnWidth(parseInt(col), colWidths[col]);
       }
 
-      // --- Data Validations ---
       const LAST_ROW_VAL = 1000;
-
-      // J: TIPO TAMAÑO
       sheet.getRange(2, 10, LAST_ROW_VAL, 1).setDataValidation(
         SpreadsheetApp.newDataValidation()
           .requireValueInList(["Absoluto", "Relativo"], true)
@@ -1044,15 +992,14 @@ function manual_ActualizarPestanaOpsSnapshots() {
           .build()
       );
 
-      // K: CRITERIO
       sheet.getRange(2, 11, LAST_ROW_VAL, 1).setDataValidation(
         SpreadsheetApp.newDataValidation()
-          .requireValueInList(["Ignorar", "Considerar"], true) // Para OPS usamos Ignorar (no Exceptuar)
+          .requireValueInList(["Ignorar", "Considerar"], true)
           .setAllowInvalid(false)
           .build()
       );
 
-      Logger.log(`[Fila ${idx + 1}] "${clientName}" — pestaña "${TAB_NAME}" ACTUALIZADA exitosamente.`);
+      Logger.log(`[Fila ${idx + 1}] "${clientName}" — pestaña ACTUALIZADA exitosamente a formato SOP.`);
       actualizadas++;
 
     } catch (e) {
@@ -1062,11 +1009,15 @@ function manual_ActualizarPestanaOpsSnapshots() {
   });
 
   Logger.log(
-    `\n=== RESUMEN ===\n` +
-    `Pestañas actualizadas : ${actualizadas}\n` +
-    `Ya estaban actualizadas : ${yaActualizadas}\n` +
-    `Sin pestaña (no existe) : ${sinPestana}\n` +
-    `Sin planilla          : ${sinPlanilla}\n` +
+    `
+=== RESUMEN ===
+` +
+    `Pestañas arregladas   : ${actualizadas}
+` +
+    `Sin pestaña (no existe) : ${sinPestana}
+` +
+    `Sin planilla          : ${sinPlanilla}
+` +
     `Con error             : ${errores}`
   );
 }
