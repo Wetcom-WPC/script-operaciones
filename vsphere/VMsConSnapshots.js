@@ -296,7 +296,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
                                    findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps.jiraProjectKey);
                                const rowsExp = [...this.opsAlerts];
         
-        const nombreReporteOps = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-OPS.xlsx";
+        const nombreReporteOps = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "") + "-OPS.xlsx";
         const xlsxBlobOps = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporteOps);
         if (xlsxBlobOps) {
             this.extractedBlobs = this.extractedBlobs || [];
@@ -368,7 +368,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
                                    findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT + " (Soporte)", clientConfigSop.jiraProjectKeySop);
                            const rowsExp = [...this.soporteAlerts];
         
-        const nombreReporteSop = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-SOP.xlsx";
+        const nombreReporteSop = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "") + "-SOP.xlsx";
         const xlsxBlobSop = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporteSop);
         if (xlsxBlobSop) {
             this.extractedBlobs = this.extractedBlobs || [];

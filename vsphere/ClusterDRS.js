@@ -72,7 +72,7 @@ class ClusterDRSProcessor extends MailProcessor {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
       } else {
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
         attachmentStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
 
@@ -106,7 +106,7 @@ class ClusterDRSProcessor extends MailProcessor {
       } else {
         summary = DRS_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Se encontraron ${alertCount} clusters con una configuración de DRS no automatizada. Se adjunta el reporte completo para su revisión.`;
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       }
       
