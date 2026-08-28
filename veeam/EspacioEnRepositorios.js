@@ -177,7 +177,7 @@ class EspacioEnRepositoriosProcessor extends MailProcessor {
 
   handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
     const alertCount = finalAlerts.length;
-    const newFileName = attachmentName.replace(/\.xlsx$/i, " - FILTRADO.xlsx");
+    const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, " - FILTRADO.xlsx");
     
     // El método `generateStyledReportBlob` lo espera con la cabecera incluida
     const xlsxBlob = generateStyledReportBlob([headers, ...finalAlerts], newFileName, [], "Repository: Name");

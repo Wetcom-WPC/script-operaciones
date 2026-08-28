@@ -495,7 +495,7 @@ class MailProcessor {
     }
     
     const alertCount = finalAlerts.length;
-    const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+    const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
     const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
 
     // convertDataToXlsxBlob() devuelve null si falla (datos mal formados, error de Drive, etc).

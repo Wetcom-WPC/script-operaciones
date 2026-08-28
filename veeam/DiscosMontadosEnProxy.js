@@ -131,7 +131,7 @@ class DiscosMontadosProcessor extends MailProcessor {
         }
       }
     } else {
-      const newFileName = attachmentName.replace(/\.json$/i, "-FILTRADO.xlsx");
+      const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
       const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       
       if (existingTicketKey) {
