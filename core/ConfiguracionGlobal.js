@@ -1,9 +1,9 @@
 /**
- * @fileoverview Contiene todas las constantes de configuración que son
+ * Archivo de configuracion global. Contiene variables y constantes
  * compartidas por todos los scripts del proyecto.
  */
 
-const MASTER_INDEX_SHEET_ID = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
+const MASTER_INDEX_SHEET_ID = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU"; // Forzado por pedido de Ian
 const JIRA_AUTH_TOKEN_BASE_64 = PropertiesService.getScriptProperties().getProperty("JIRA_API_TOKEN_BASE64");
 const SLACK_WEBHOOK_URL = PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_GENERAL"); /** Canal tareas-programadas-tickets-logs*/
 const JIRA_FILTER_ID_REPORTE_DIARIO = PropertiesService.getScriptProperties().getProperty("JIRA_FILTER_VSPHERE_DIARIO");
