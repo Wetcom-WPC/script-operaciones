@@ -1,0 +1,8 @@
+**/**
+!appsscript.json
+!**/*.js
+!**/*.html
+!**/*.gs
+update_regex.js
+.git/**
+node_modules/**
