@@ -156,6 +156,30 @@ function webapp_listaClientes() {
 }
 
 /**
+ * Extrae los nombres de los miembros del equipo WPC para usarlos en queries JQL.
+ * @returns {Array<string>} Lista de nombres formateados para JQL (incluye "currentUser()")
+ */
+function webapp_obtenerEquipoWPC() {
+  let creadores = ["currentUser()"];
+  try {
+    const wpcSheetId = "14-l10On3DeGAhNPQu0qDI2bUHFmrkxlBYlG0Q1bSDZw";
+    const sheetWPC = SpreadsheetApp.openById(wpcSheetId).getSheetByName("Equipo");
+    if (sheetWPC) {
+      const dataWPC = sheetWPC.getRange("A2:A").getValues();
+      dataWPC.forEach(row => {
+        const nombre = row[0];
+        if (nombre && typeof nombre === 'string' && nombre.trim() !== '') {
+          creadores.push(`"${nombre.trim()}"`);
+        }
+      });
+    }
+  } catch(e) {
+    Logger.log("Error leyendo planilla Equipo WPC: " + e.message);
+  }
+  return creadores;
+}
+
+/**
  * Obtiene los datos de Jira para armar los gráficos interactivos.
  * @param {string} projectKey La clave del proyecto (Ops) del cliente.
  * @param {string} rango El filtro de tiempo (ej: 'mes_actual')
@@ -204,24 +228,7 @@ function webapp_obtenerDatosGraficosJira(projectKey, rango) {
   if (keySop) proyectosStr += `, "${keySop}"`;
 
   // 3. Obtener nombres del equipo WPC
-  let creadores = ["currentUser()"];
-  try {
-    const wpcSheetId = "14-l10On3DeGAhNPQu0qDI2bUHFmrkxlBYlG0Q1bSDZw";
-    const sheetWPC = SpreadsheetApp.openById(wpcSheetId).getSheetByName("Equipo");
-    if (sheetWPC) {
-      const dataWPC = sheetWPC.getRange("A2:A").getValues();
-      dataWPC.forEach(row => {
-        const nombre = row[0];
-        if (nombre && typeof nombre === 'string' && nombre.trim() !== '') {
-          creadores.push(`"${nombre.trim()}"`);
-        }
-      });
-    }
-  } catch(e) {
-    Logger.log("Error leyendo planilla Equipo WPC: " + e.message);
-  }
-
-  const creadoresStr = creadores.join(", ");
+  const creadoresStr = webapp_obtenerEquipoWPC().join(", ");
   const jql = `project IN (${proyectosStr}) AND creator IN (${creadoresStr}) AND ${jqlRango} ORDER BY created DESC`;
 
   let allTickets = [];
@@ -327,11 +334,26 @@ function webapp_estado() {
     Logger.log('[WebApp] No se pudo consultar el calendario de feriados: ' + e.message);
   }
 
+  const hoyStr = Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
+  
+  let procesadosHoy = 0;
+  let erroresHoy = 0;
+  let faltantesHoy = 0;
+  try {
+    const logs = webapp_obtenerLogs(100); // 100 rows is enough for a single day usually
+    const hoyCorto = hoyStr.substring(0,5); // dd/MM
+    procesadosHoy = logs.estadoFinal.filter(l => l.fecha === hoyStr && l.estado === 'Éxito').length;
+    erroresHoy = logs.erroresScript.filter(l => l.hora.startsWith(hoyCorto)).length; 
+    faltantesHoy = logs.reportesFaltantes.filter(l => l.fecha === hoyStr).length;
+  } catch(e) {
+    Logger.log("Error calculando KPIs de salud: " + e.message);
+  }
+
   return {
     usuario: usuario,
     cuenta: webapp_cuentaEfectiva(),
     testing: esEntornoTesting(),
-    fecha: Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy'),
+    fecha: hoyStr,
     hora: Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'HH:mm'),
     ventana: { inicio: HORA_INICIO, fin: HORA_FIN },
     enVentana: ahora.getHours() >= HORA_INICIO && ahora.getHours() < HORA_FIN,
@@ -340,7 +362,12 @@ function webapp_estado() {
     cicloEnCurso: webapp_hayCicloEnCurso(),
     ultimoLanzamiento: webapp_leerUltimoLanzamiento(),
     bandeja: webapp_cacheLeer(),
-    clientes: webapp_listaClientes()
+    clientes: webapp_listaClientes(),
+    kpis: {
+      procesados: procesadosHoy,
+      errores: erroresHoy,
+      faltantes: faltantesHoy
+    }
   };
 }
 
@@ -638,9 +665,17 @@ function webapp_obtenerTicketsJira(rango, projectKey) {
   const usuario = webapp_usuarioActual();
   webapp_exigirAutorizacion(usuario);
 
-  let jql = rango === "7dias" 
-    ? `creator = currentUser() AND created >= "-7d"`
-    : `creator = currentUser() AND created >= "-24h"`;
+  let jqlRango = `created >= "-24h"`; // default hoy
+  if (rango === "7dias") {
+    jqlRango = `created >= "-7d"`;
+  } else if (rango === "mes_actual") {
+    jqlRango = `created >= startOfMonth()`;
+  } else if (rango === "mes_pasado") {
+    jqlRango = `created >= startOfMonth(-1) AND created < startOfMonth()`;
+  }
+
+  const creadoresStr = webapp_obtenerEquipoWPC().join(", ");
+  let jql = `creator IN (${creadoresStr}) AND ${jqlRango}`;
 
   if (projectKey && projectKey !== "ALL") {
     jql += ` AND project = "${projectKey}"`;

@@ -99,6 +99,13 @@
     else if (!estado.enVentana) pildora(el.contexto, 'Fuera de la ventana automática', 'alerta');
     if (estado.cicloEnCurso) pildora(el.contexto, 'Hay un ciclo corriendo ahora', 'alerta');
 
+    // Renderizar KPIs
+    if (estado.kpis) {
+      document.getElementById('kpiProcesados').textContent = estado.kpis.procesados;
+      document.getElementById('kpiErrores').textContent = estado.kpis.errores;
+      document.getElementById('kpiFaltantes').textContent = estado.kpis.faltantes;
+    }
+
     pintarUltimoLanzamiento();
 
     // Poblar el filtro de Jira
@@ -123,6 +130,17 @@
       });
       selectReportes.addEventListener('change', function() {
         document.getElementById('btnCargarReportes').disabled = !this.value;
+      });
+    }
+
+    // Poblar el filtro de Logs
+    var selectLogs = document.getElementById('filtroClienteLogs');
+    if (selectLogs && selectLogs.options.length <= 1 && estado.clientes) {
+      estado.clientes.forEach(function(c) {
+        var opt = document.createElement('option');
+        opt.value = c.nombre.toLowerCase(); // En los logs el cliente viene por nombre
+        opt.textContent = c.nombre;
+        selectLogs.appendChild(opt);
       });
     }
   }
@@ -306,11 +324,25 @@
     return seccion;
   }
 
-  function pintarCorreo(item, columnaId) {
-    var li = crear('li', 'correo');
-    li.appendChild(crear('p', 'asunto', item.asunto));
-
-    var meta = crear('div', 'meta');
+    function pintarCorreo(item, columnaId) {
+      var li = crear('li', 'correo');
+      
+      var pAsunto = crear('p', 'asunto', item.asunto);
+      if (item.reintentos && item.reintentos > 0) {
+        var badgeReintentos = document.createElement('span');
+        badgeReintentos.style.background = '#ef4444';
+        badgeReintentos.style.color = 'white';
+        badgeReintentos.style.fontSize = '10px';
+        badgeReintentos.style.padding = '2px 6px';
+        badgeReintentos.style.borderRadius = '10px';
+        badgeReintentos.style.marginLeft = '8px';
+        badgeReintentos.style.verticalAlign = 'middle';
+        badgeReintentos.textContent = item.reintentos + ' retries';
+        pAsunto.appendChild(badgeReintentos);
+      }
+      li.appendChild(pAsunto);
+  
+      var meta = crear('div', 'meta');
     meta.appendChild(crear('span', 'hora', item.hora));
     var remitente = crear('span', null, item.remitente);
     remitente.title = item.remitenteEmail;
@@ -392,7 +424,23 @@
     vaciar(thead);
     vaciar(tbody);
     
-    var data = logsGlobales[logTabActivo] || [];
+    var dataRaw = logsGlobales[logTabActivo] || [];
+    
+    var textFiltroCli = document.getElementById('filtroClienteLogs') ? document.getElementById('filtroClienteLogs').value : '';
+    var textFiltroBuscar = document.getElementById('filtroBuscarLogs') ? document.getElementById('filtroBuscarLogs').value.toLowerCase() : '';
+
+    var data = dataRaw.filter(function(log) {
+      if (textFiltroCli && log.cliente && log.cliente.toLowerCase().indexOf(textFiltroCli) === -1) {
+        return false;
+      }
+      if (textFiltroBuscar) {
+        var contenido = JSON.stringify(log).toLowerCase();
+        if (contenido.indexOf(textFiltroBuscar) === -1) {
+          return false;
+        }
+      }
+      return true;
+    });
     
     if (data.length === 0) {
       document.getElementById('tablaLogs').style.display = 'none';
@@ -673,6 +721,11 @@
   document.getElementById('filtroCliente').addEventListener('change', pintarBandeja);
   document.getElementById('filtroBuscar').addEventListener('keyup', pintarBandeja);
   
+  if (document.getElementById('filtroClienteLogs')) {
+    document.getElementById('filtroClienteLogs').addEventListener('change', pintarTabActivo);
+    document.getElementById('filtroBuscarLogs').addEventListener('keyup', pintarTabActivo);
+  }
+
   // Listener logs y tabs
   document.getElementById('btnActualizarLogs').addEventListener('click', cargarLogs);
   var tabButtons = document.querySelectorAll('.tab-btn');
@@ -794,8 +847,14 @@
     var itemsPagina = tickets.slice(inicio, fin);
 
     itemsPagina.forEach(function(t) {
+      var colorClase = 'blue-gray';
+      if (t.statusCategory === 'yellow') colorClase = 'yellow';
+      else if (t.statusCategory === 'green') colorClase = 'green';
+      
+      var badgeHtml = '<span class="badge-jira ' + colorClase + '">' + t.status + '</span>';
+      
       var tr = document.createElement('tr');
-      tr.innerHTML = '<td><a href="https://wetcom.atlassian.net/browse/' + t.key + '" target="_blank" style="color:#2563eb;">' + t.key + '</a></td><td>' + t.summary + '</td><td>' + new Date(t.created).toLocaleDateString() + '</td>';
+      tr.innerHTML = '<td><a href="https://wetcom.atlassian.net/browse/' + t.key + '" target="_blank" style="color:#2563eb;">' + t.key + '</a></td><td>' + t.summary + '</td><td>' + badgeHtml + '</td><td>' + new Date(t.created).toLocaleDateString() + '</td>';
       tbody.appendChild(tr);
     });
 

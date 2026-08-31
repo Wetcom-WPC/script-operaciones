@@ -56,7 +56,24 @@
           </header>
   
           <div class="contexto" id="contexto"></div>
-          <div class="aviso" id="avisoCiclo" hidden></div>
+          
+          <!-- Bloque de Salud del Sistema (KPIs) -->
+          <div id="panelSalud" style="display: flex; gap: 16px; margin-top: 16px;">
+            <div style="flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; text-align: center; background: #f9fafb;">
+               <div style="font-size: 12px; color: #6b7280; text-transform: uppercase;">Correos procesados hoy</div>
+               <div id="kpiProcesados" style="font-size: 24px; font-weight: bold; color: #111827;">-</div>
+            </div>
+            <div style="flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; text-align: center; background: #f9fafb;">
+               <div style="font-size: 12px; color: #6b7280; text-transform: uppercase;">Errores hoy</div>
+               <div id="kpiErrores" style="font-size: 24px; font-weight: bold; color: #ef4444;">-</div>
+            </div>
+            <div style="flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; text-align: center; background: #f9fafb;">
+               <div style="font-size: 12px; color: #6b7280; text-transform: uppercase;">Faltantes hoy</div>
+               <div id="kpiFaltantes" style="font-size: 24px; font-weight: bold; color: #f59e0b;">-</div>
+            </div>
+          </div>
+
+          <div class="aviso" id="avisoCiclo" hidden style="margin-top: 16px;"></div>
           <p class="ayuda" id="ultimoLanzamiento" style="margin-top:12px"></p>
         </section>
   
@@ -101,11 +118,19 @@
           <button id="btnActualizarLogs" class="btn-secundario">Cargar Logs</button>
         </header>
 
-        <div class="tabs-container" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px;">
+        <div class="tabs-container" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
           <button class="tab-btn active" data-tab="estadoFinal">Estado Final</button>
           <button class="tab-btn" data-tab="erroresScript">Errores del Script</button>
           <button class="tab-btn" data-tab="envioMails">Envío de Mails</button>
           <button class="tab-btn" data-tab="reportesFaltantes">Reportes Faltantes</button>
+        </div>
+
+        <!-- Controles de filtrado para Logs -->
+        <div style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;" id="controlesLogs">
+          <select id="filtroClienteLogs" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none; min-width: 200px;">
+            <option value="">Todos los clientes</option>
+          </select>
+          <input type="text" id="filtroBuscarLogs" placeholder="Buscar en los logs..." style="flex-grow: 1; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; outline: none;">
         </div>
 
         <div class="aviso" id="avisoLogs" hidden></div>
@@ -137,6 +162,8 @@
               <select id="filtroTiempoJira" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px;">
                 <option value="hoy">Últimas 24 horas</option>
                 <option value="7dias">Últimos 7 días</option>
+                <option value="mes_actual">En el transcurso de este mes</option>
+                <option value="mes_pasado">Mes pasado</option>
               </select>
               <button id="btnCargarJira" class="btn-secundario">Cargar Tickets</button>
             </div>
@@ -191,7 +218,7 @@
                  <h3 style="margin-bottom: 16px; font-size: 16px; color: #111827;">Tickets de Operaciones (<span id="countOps">0</span>)</h3>
                  <div style="overflow-x: auto; flex-grow: 1;">
                    <table class="tabla-logs" style="width: 100%; text-align: left; border-collapse: collapse;">
-                      <thead><tr><th>Clave</th><th>Resumen</th><th>Creado</th></tr></thead>
+                      <thead><tr><th>Clave</th><th>Resumen</th><th>Estado</th><th>Creado</th></tr></thead>
                       <tbody id="tbodyOps"></tbody>
                    </table>
                  </div>
@@ -201,7 +228,7 @@
                  <h3 style="margin-bottom: 16px; font-size: 16px; color: #111827;">Tickets de Soporte (<span id="countSop">0</span>)</h3>
                  <div style="overflow-x: auto; flex-grow: 1;">
                    <table class="tabla-logs" style="width: 100%; text-align: left; border-collapse: collapse;">
-                      <thead><tr><th>Clave</th><th>Resumen</th><th>Creado</th></tr></thead>
+                      <thead><tr><th>Clave</th><th>Resumen</th><th>Estado</th><th>Creado</th></tr></thead>
                       <tbody id="tbodySop"></tbody>
                    </table>
                  </div>
