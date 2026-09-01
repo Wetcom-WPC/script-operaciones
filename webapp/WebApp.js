@@ -548,7 +548,7 @@ function manual_probarWebApp() {
  * @param {number} limite Cantidad máxima de logs a devolver por pestaña.
  * @returns {Object} Objeto con listas de logs para cada pestaña.
  */
-function webapp_obtenerLogs(limite) {
+function webapp_obtenerLogs(limite, overrideSheetId) {
   const usuario = webapp_usuarioActual();
   webapp_exigirAutorizacion(usuario);
   
@@ -562,7 +562,7 @@ function webapp_obtenerLogs(limite) {
   };
   
   try {
-    const logSheetId = PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID") || (typeof LOG_SHEET_ID !== 'undefined' ? LOG_SHEET_ID : null);
+    const logSheetId = overrideSheetId || PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID") || (typeof LOG_SHEET_ID !== 'undefined' ? LOG_SHEET_ID : null);
     if (!logSheetId) return resultados;
     
     const ss = SpreadsheetApp.openById(logSheetId);

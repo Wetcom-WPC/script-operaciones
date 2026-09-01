@@ -384,6 +384,10 @@
     var btn = document.getElementById('btnActualizarLogs');
     ocupar(btn, 'Cargando logs...');
     document.getElementById('avisoLogs').hidden = true;
+    
+    var sheetId = null;
+    var selectEnv = document.getElementById('filtroEntornoLogs');
+    if (selectEnv) sheetId = selectEnv.value;
 
     google.script.run
       .withSuccessHandler(function(logs) {
@@ -395,7 +399,7 @@
         liberar(btn);
         mostrarAviso(document.getElementById('avisoLogs'), 'error', 'No se pudieron cargar los logs: ' + error.message);
       })
-      .webapp_obtenerLogs(50);
+      .webapp_obtenerLogs(50, sheetId);
   }
 
   function cambiarTabLogs(event) {
@@ -721,6 +725,10 @@
   if (document.getElementById('filtroClienteLogs')) {
     document.getElementById('filtroClienteLogs').addEventListener('change', pintarTabActivo);
     document.getElementById('filtroBuscarLogs').addEventListener('keyup', pintarTabActivo);
+  }
+  
+  if (document.getElementById('filtroEntornoLogs')) {
+    document.getElementById('filtroEntornoLogs').addEventListener('change', cargarLogs);
   }
 
   // Listener logs y tabs
