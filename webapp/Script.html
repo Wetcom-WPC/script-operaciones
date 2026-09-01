@@ -379,6 +379,7 @@
   // --- Logs del Sistema ------------------------------------------------------------------
   var logsGlobales = null;
   var logTabActivo = 'estadoFinal';
+  var ordenLogs = { key: null, asc: true };
 
   function cargarLogs() {
     var btn = document.getElementById('btnActualizarLogs');
@@ -412,8 +413,9 @@
     }
     event.target.classList.add('active');
     
-    // Setear tab activo y renderizar
+    // Setear tab activo, resetear orden y renderizar
     logTabActivo = event.target.getAttribute('data-tab');
+    ordenLogs = { key: null, asc: true };
     pintarTabActivo();
   }
 
@@ -439,22 +441,37 @@
         return false;
       }
       if (textFiltroBuscar) {
-        var contenido = JSON.stringify(log).toLowerCase();
-        if (contenido.indexOf(textFiltroBuscar) === -1) {
-          return false;
-        }
+        var str = JSON.stringify(log).toLowerCase();
+        if (str.indexOf(textFiltroBuscar) === -1) return false;
       }
       return true;
     });
-    
+
+    if (ordenLogs.key) {
+      data.sort(function(a, b) {
+        var valA = a[ordenLogs.key];
+        var valB = b[ordenLogs.key];
+        
+        // Handle empty values safely
+        if (valA === undefined || valA === null) valA = '';
+        if (valB === undefined || valB === null) valB = '';
+        
+        if (typeof valA === 'string' && typeof valB === 'string') {
+           var r = valA.localeCompare(valB);
+           return ordenLogs.asc ? r : -r;
+        }
+        if (valA > valB) return ordenLogs.asc ? 1 : -1;
+        if (valA < valB) return ordenLogs.asc ? -1 : 1;
+        return 0;
+      });
+    }
+
     if (data.length === 0) {
       document.getElementById('tablaLogs').style.display = 'none';
-      var txtVacio = document.getElementById('logsVacio');
-      txtVacio.textContent = 'No hay datos recientes en esta pestaña.';
-      txtVacio.style.display = 'block';
+      document.getElementById('logsVacio').style.display = 'block';
       return;
     }
-    
+
     document.getElementById('tablaLogs').style.display = 'table';
     document.getElementById('logsVacio').style.display = 'none';
 
@@ -464,17 +481,60 @@
     
     var cabeceras = [];
     if (logTabActivo === 'estadoFinal') {
-      cabeceras = ['Hora', 'Operación', 'Cliente', 'Estado'];
+      cabeceras = [
+        { label: 'Hora', key: 'hora' },
+        { label: 'Operación', key: 'operacion' },
+        { label: 'Cliente', key: 'cliente' },
+        { label: 'Estado', key: 'estado' }
+      ];
     } else if (logTabActivo === 'erroresScript') {
-      cabeceras = ['Hora', 'Operación', 'Cliente', 'Detalle Error'];
+      cabeceras = [
+        { label: 'Hora', key: 'hora' },
+        { label: 'Operación', key: 'operacion' },
+        { label: 'Cliente', key: 'cliente' },
+        { label: 'Detalle Error', key: 'error' }
+      ];
     } else if (logTabActivo === 'envioMails') {
-      cabeceras = ['Hora', 'Cliente', 'Tecnología', 'POD', 'Estado', 'Tickets', 'Sop.', 'Ops.'];
+      cabeceras = [
+        { label: 'Hora', key: 'horaStr' },
+        { label: 'Cliente', key: 'cliente' },
+        { label: 'Tecnología', key: 'tecnologia' },
+        { label: 'POD', key: 'pod' },
+        { label: 'Estado', key: 'estado' },
+        { label: 'Tickets', key: 'totalTickets' },
+        { label: 'Sop.', key: 'soporte' },
+        { label: 'Ops.', key: 'operaciones' }
+      ];
     } else if (logTabActivo === 'reportesFaltantes') {
-      cabeceras = ['Fecha', 'Hora', 'Operación', 'Cliente'];
+      cabeceras = [
+        { label: 'Fecha', key: 'fecha' },
+        { label: 'Hora', key: 'hora' },
+        { label: 'Operación', key: 'operacion' },
+        { label: 'Cliente', key: 'cliente' }
+      ];
     }
     
     cabeceras.forEach(function(c) {
-      var th = crear('th', null, c);
+      var th = crear('th', null);
+      th.style.cursor = 'pointer';
+      th.style.userSelect = 'none';
+      
+      var texto = c.label;
+      if (ordenLogs.key === c.key) {
+         texto += ordenLogs.asc ? ' ▼' : ' ▲';
+      }
+      th.textContent = texto;
+      
+      th.addEventListener('click', function() {
+         if (ordenLogs.key === c.key) {
+            ordenLogs.asc = !ordenLogs.asc;
+         } else {
+            ordenLogs.key = c.key;
+            ordenLogs.asc = true;
+         }
+         pintarTabActivo();
+      });
+      
       trCabecera.appendChild(th);
     });
     thead.appendChild(trCabecera);
