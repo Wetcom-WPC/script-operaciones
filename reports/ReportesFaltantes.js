@@ -7,7 +7,7 @@ const SLACK_WEBHOOK_URL_YASC = PropertiesService.getScriptProperties().getProper
 //LOGS:PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_YASC")
 // POD-WPC: https://hooks.slack.com/services/REDACTED
 
-const ID_HOJA_MAESTRA = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
+const ID_HOJA_MAESTRA = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU"; // MODO PRUEBA: Prod Index
 // LOG_SHEET_ID ya está declarada globalmente en el repo (OperationsLogger.gs) — no redeclarar.
 
 const NOMBRE_PESTANA_MAESTRA = "Reportes Faltantes";
@@ -24,13 +24,22 @@ const COL = {
 let CACHE_ARCHIVOS_CARPETA = {};
 
 /**
+ * Función para ejecutar la auditoría de forma segura (solo logs, sin enviar mensajes a Slack ni escribir en la hoja)
+ */
+function probarAuditoria() {
+  Logger.log("=== INICIANDO AUDITORÍA EN MODO PRUEBA ===");
+  ejecutarAuditoriaDiaria(true);
+  Logger.log("=== FIN DE MODO PRUEBA ===");
+}
+
+/**
  * ======================================================================
  * FUNCIÓN PRINCIPAL (TRIGGER DIARIO)
  * ======================================================================
  */
-function ejecutarAuditoriaDiaria() {
+function ejecutarAuditoriaDiaria(modoPrueba = false) {
   // FRENO DE FERIADOS — Usa la función centralizada del repo
-  if (esFeriadoHoy()) {
+  if (!modoPrueba && esFeriadoHoy()) {
     Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el calendario de Alarmas Wetcom.");
     return;
   }
@@ -82,9 +91,12 @@ function ejecutarAuditoriaDiaria() {
           reportesFaltantes[cliente].push(idReporte);
           totalFaltantes++;
           Logger.log(`❌ FALTANTE: ${cliente} - ${idReporte}`);
-          // Usa la función centralizada del repo (OperationsLogger.gs)
-          // que ya tiene el nombre correcto de pestaña: LOG_FALTANTES_TAB_NAME = "Logs Reportes Faltantes"
-          logReporteFaltante(cliente, idReporte, hoy);
+          
+          if (!modoPrueba) {
+            // Usa la función centralizada del repo (OperationsLogger.gs)
+            // que ya tiene el nombre correcto de pestaña: LOG_FALTANTES_TAB_NAME = "Logs Reportes Faltantes"
+            logReporteFaltante(cliente, idReporte, hoy);
+          }
         } else {
           Logger.log(`✅ RECIBIDO: ${cliente} - ${idReporte}`);
         }
@@ -98,7 +110,12 @@ function ejecutarAuditoriaDiaria() {
   }
 
   Logger.log(`Auditoría finalizada. Faltantes: ${totalFaltantes}.`);
-  enviarNotificacionSlack(reportesFaltantes, totalFaltantes, hoy);
+  
+  if (!modoPrueba) {
+    enviarNotificacionSlack(reportesFaltantes, totalFaltantes, hoy);
+  } else {
+    Logger.log("MODO PRUEBA: Se omitió el envío de mensajes a Slack.");
+  }
 }
 
 /**
