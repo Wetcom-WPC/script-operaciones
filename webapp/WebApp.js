@@ -622,17 +622,19 @@ function webapp_obtenerLogs(limite) {
 
     // 3. Envío de Mails
     resultados.envioMails = procesarHoja("Envío de Mails", function(r) {
-      let d = r[0] ? new Date(r[0]) : new Date();
+      let horaStr = r[1];
+      if (r[1] instanceof Date) {
+        horaStr = Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, 'HH:mm:ss');
+      }
       return {
-        hora: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'dd/MM HH:mm'),
-        tecnologia: r[1] || "",
-        cliente: r[2] || "",
-        pod: r[3] || "",
-        totalTickets: r[4] || 0,
-        errores: r[5] || 0,
-        advertencias: r[6] || 0,
-        asunto: r[7] || "",
-        estado: r[8] || ""
+        horaStr: horaStr || "-",
+        cliente: r[3] || "-",
+        tecnologia: r[4] || "-",
+        pod: r[5] || "-",
+        estado: r[6] || "Desconocido",
+        totalTickets: r[7] !== "" ? r[7] : 0,
+        soporte: r[8] !== "" ? r[8] : 0,
+        operaciones: r[9] !== "" ? r[9] : 0
       };
     });
 

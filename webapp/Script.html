@@ -464,7 +464,7 @@
     } else if (logTabActivo === 'erroresScript') {
       cabeceras = ['Hora', 'Operación', 'Cliente', 'Detalle Error'];
     } else if (logTabActivo === 'envioMails') {
-      cabeceras = ['Hora', 'Tecnología', 'Cliente', 'Estado'];
+      cabeceras = ['Hora', 'Cliente', 'Tecnología', 'POD', 'Estado', 'Tickets', 'Sop.', 'Ops.'];
     } else if (logTabActivo === 'reportesFaltantes') {
       cabeceras = ['Fecha', 'Hora', 'Operación', 'Cliente'];
     }
@@ -483,7 +483,6 @@
       var tieneDetalle = false;
       if (logTabActivo === 'estadoFinal' && (log.origen || log.ultimoError)) tieneDetalle = true;
       if (logTabActivo === 'erroresScript' && log.error) tieneDetalle = true;
-      if (logTabActivo === 'envioMails' && (log.errores > 0 || log.advertencias > 0)) tieneDetalle = true;
       
       if (tieneDetalle) {
         tr.style.cursor = 'pointer';
@@ -513,10 +512,22 @@
         tr.appendChild(crear('td', null, (log.error ? log.error.substring(0, 50) + '...' : '-')));
       }
       else if (logTabActivo === 'envioMails') {
-        tr.appendChild(crear('td', null, log.hora));
-        tr.appendChild(crear('td', null, log.tecnologia));
+        tr.appendChild(crear('td', null, log.horaStr));
         tr.appendChild(crear('td', null, log.cliente || '-'));
-        tr.appendChild(crear('td', null, log.estado));
+        tr.appendChild(crear('td', null, log.tecnologia));
+        tr.appendChild(crear('td', null, log.pod));
+        
+        var tdEstado = crear('td');
+        var badge = 'badge-neutral';
+        if (log.estado === 'Sin Anomalías') badge = 'badge-success';
+        else if (log.estado === 'Con Advertencias') badge = 'badge-warning';
+        else if (log.estado === 'Con Incidencias') badge = 'badge-error';
+        tdEstado.appendChild(crear('span', badge, log.estado));
+        tr.appendChild(tdEstado);
+        
+        tr.appendChild(crear('td', null, log.totalTickets));
+        tr.appendChild(crear('td', null, log.soporte));
+        tr.appendChild(crear('td', null, log.operaciones));
       }
       else if (logTabActivo === 'reportesFaltantes') {
         tr.appendChild(crear('td', null, log.fecha));
@@ -534,7 +545,7 @@
         trDetalle.style.display = 'none';
         
         var tdWrap = crear('td');
-        tdWrap.colSpan = 4;
+        tdWrap.colSpan = cabeceras.length;
         var divDetalle = crear('div', 'detalle-contenido');
         
         if (logTabActivo === 'estadoFinal') {
@@ -566,21 +577,6 @@
             var pre = crear('pre', null, log.detalle);
             divDetalle.appendChild(pre);
           }
-        } else if (logTabActivo === 'envioMails') {
-          var badgesMails = crear('div', 'metadata-badges');
-          var bTotal = crear('span', 'badge-info');
-          bTotal.innerHTML = '<strong>Tickets Totales:</strong> ' + log.totalTickets;
-          var bErr = crear('span', 'badge-info');
-          bErr.innerHTML = '<strong>Errores:</strong> ' + log.errores;
-          var bAdv = crear('span', 'badge-info');
-          bAdv.innerHTML = '<strong>Advertencias:</strong> ' + log.advertencias;
-          
-          badgesMails.appendChild(bTotal);
-          badgesMails.appendChild(bErr);
-          badgesMails.appendChild(bAdv);
-          divDetalle.appendChild(badgesMails);
-
-          divDetalle.appendChild(crear('div', null, 'Asunto: ' + log.asunto));
         }
         
         tdWrap.appendChild(divDetalle);
