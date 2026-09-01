@@ -75,7 +75,7 @@ function ejecutarAuditoriaDiaria() {
     try {
       if (debeLlegarHoy(frecuencia, fechaOrigen, hoy)) {
         Logger.log(`[Fila ${numFilaExcel}] Revisando: ${cliente} - "${idReporte}"`);
-        const llego = verificarEnDrive(idCarpetaRaiz, idReporte, hoy);
+        const llego = verificarEnDrive(idCarpetaRaiz, idReporte, hoy, cliente);
 
         if (!llego) {
           if (!reportesFaltantes[cliente]) reportesFaltantes[cliente] = [];
@@ -106,17 +106,26 @@ function ejecutarAuditoriaDiaria() {
  * LÓGICA DE NEGOCIO: VERIFICACIÓN EN DRIVE
  * ======================================================================
  */
-function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy) {
+function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy, cliente) {
   const diaStr  = Utilities.formatDate(fechaHoy, Session.getScriptTimeZone(), "yyyyMMdd");
-  const cacheKey = idCarpetaRaiz + "_" + diaStr;
+  const cacheKey = idCarpetaRaiz + "_" + diaStr + "_" + cliente;
 
   if (!CACHE_ARCHIVOS_CARPETA[cacheKey]) {
     try {
-      const raiz = DriveApp.getFolderById(idCarpetaRaiz);
-      const carpetasDia = raiz.getFoldersByName(diaStr);
+      let raiz = DriveApp.getFolderById(idCarpetaRaiz);
+      
+      // Si la raíz no tiene la carpeta del día, buscamos si hay una carpeta con el nombre del cliente
+      let carpetasDia = raiz.getFoldersByName(diaStr);
+      if (!carpetasDia.hasNext()) {
+        const carpetasCliente = raiz.getFoldersByName(cliente);
+        if (carpetasCliente.hasNext()) {
+          raiz = carpetasCliente.next();
+          carpetasDia = raiz.getFoldersByName(diaStr);
+        }
+      }
 
       if (!carpetasDia.hasNext()) {
-        Logger.log(`❌ ERROR DRIVE: No existe carpeta del día "${diaStr}" en la raíz.`);
+        Logger.log(`❌ ERROR DRIVE: No existe carpeta del día "${diaStr}" para el cliente "${cliente}".`);
         CACHE_ARCHIVOS_CARPETA[cacheKey] = [];
         return false;
       }
@@ -128,16 +137,17 @@ function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy) {
         listaNombresArchivos.push(archivos.next().getName());
       }
       CACHE_ARCHIVOS_CARPETA[cacheKey] = listaNombresArchivos;
-      Logger.log(`📂 Caché OK: ${diaStr} tiene ${listaNombresArchivos.length} archivos.`);
+      Logger.log(`✅ Caché OK: ${cliente}/${diaStr} tiene ${listaNombresArchivos.length} archivos.`);
 
     } catch (e) {
-      Logger.log(`🔥 EXCEPCIÓN DRIVE (ID Raíz: ${idCarpetaRaiz}): ${e.message}`);
+      Logger.log(`⚠️ EXCEPCIÓN DRIVE (ID Raíz: ${idCarpetaRaiz}, Cliente: ${cliente}): ${e.message}`);
       throw new Error("Error de acceso a Drive. Verifica permisos e ID.");
     }
   }
 
   const archivosEnCarpeta = CACHE_ARCHIVOS_CARPETA[cacheKey];
-  return archivosEnCarpeta.some(nombreReal => nombreReal.includes(identificadorReporte));
+  const target = identificadorReporte.toLowerCase();
+  return archivosEnCarpeta.some(nombreReal => nombreReal.toLowerCase().includes(target));
 }
 
 /**
