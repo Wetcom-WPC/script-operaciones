@@ -66,16 +66,15 @@ function ejecutarAuditoriaDiaria() {
 
     const cliente       = fila[COL.CLIENTE];
     const idReporte     = fila[COL.ID_REPORTE]      ? fila[COL.ID_REPORTE].toString().trim()      : "";
-    const idCarpetaRaiz = fila[COL.ID_CARPETA_RAIZ] ? fila[COL.ID_CARPETA_RAIZ].toString().trim() : "";
     const frecuencia    = fila[COL.FRECUENCIA];
     const fechaOrigen   = fila[COL.FECHA_ORIGEN]    ? new Date(fila[COL.FECHA_ORIGEN])             : null;
 
-    if (!cliente || !idReporte || !idCarpetaRaiz || !frecuencia) continue;
+    if (!cliente || !idReporte || !frecuencia) continue;
 
     try {
       if (debeLlegarHoy(frecuencia, fechaOrigen, hoy)) {
         Logger.log(`[Fila ${numFilaExcel}] Revisando: ${cliente} - "${idReporte}"`);
-        const llego = verificarEnDrive(idCarpetaRaiz, idReporte, hoy, cliente);
+        const llego = verificarEnDrive(idReporte, hoy, cliente);
 
         if (!llego) {
           if (!reportesFaltantes[cliente]) reportesFaltantes[cliente] = [];
@@ -101,29 +100,34 @@ function ejecutarAuditoriaDiaria() {
   enviarNotificacionSlack(reportesFaltantes, totalFaltantes, hoy);
 }
 
+const BASE_FOLDER_ID = PropertiesService.getScriptProperties().getProperty("DRIVE_AVISO_BASE_FOLDER_ID");
+
 /**
  * ======================================================================
  * LÓGICA DE NEGOCIO: VERIFICACIÓN EN DRIVE
  * ======================================================================
  */
-function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy, cliente) {
+function verificarEnDrive(identificadorReporte, fechaHoy, cliente) {
+  if (!BASE_FOLDER_ID) {
+    throw new Error("DRIVE_AVISO_BASE_FOLDER_ID no está configurado en las propiedades del script.");
+  }
+  
   const diaStr  = Utilities.formatDate(fechaHoy, Session.getScriptTimeZone(), "yyyyMMdd");
-  const cacheKey = idCarpetaRaiz + "_" + diaStr + "_" + cliente;
+  const cacheKey = diaStr + "_" + cliente;
 
   if (!CACHE_ARCHIVOS_CARPETA[cacheKey]) {
     try {
-      let raiz = DriveApp.getFolderById(idCarpetaRaiz);
+      const raiz = DriveApp.getFolderById(BASE_FOLDER_ID);
       
-      // Si la raíz no tiene la carpeta del día, buscamos si hay una carpeta con el nombre del cliente
-      let carpetasDia = raiz.getFoldersByName(diaStr);
-      if (!carpetasDia.hasNext()) {
-        const carpetasCliente = raiz.getFoldersByName(cliente);
-        if (carpetasCliente.hasNext()) {
-          raiz = carpetasCliente.next();
-          carpetasDia = raiz.getFoldersByName(diaStr);
-        }
+      const carpetasCliente = raiz.getFoldersByName(cliente);
+      if (!carpetasCliente.hasNext()) {
+        Logger.log(`❌ ERROR DRIVE: No existe carpeta para el cliente "${cliente}".`);
+        CACHE_ARCHIVOS_CARPETA[cacheKey] = [];
+        return false;
       }
+      const clienteFolder = carpetasCliente.next();
 
+      const carpetasDia = clienteFolder.getFoldersByName(diaStr);
       if (!carpetasDia.hasNext()) {
         Logger.log(`❌ ERROR DRIVE: No existe carpeta del día "${diaStr}" para el cliente "${cliente}".`);
         CACHE_ARCHIVOS_CARPETA[cacheKey] = [];
@@ -140,8 +144,8 @@ function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy, cliente
       Logger.log(`✅ Caché OK: ${cliente}/${diaStr} tiene ${listaNombresArchivos.length} archivos.`);
 
     } catch (e) {
-      Logger.log(`⚠️ EXCEPCIÓN DRIVE (ID Raíz: ${idCarpetaRaiz}, Cliente: ${cliente}): ${e.message}`);
-      throw new Error("Error de acceso a Drive. Verifica permisos e ID.");
+      Logger.log(`⚠️ EXCEPCIÓN DRIVE (Cliente: ${cliente}): ${e.message}`);
+      throw new Error("Error de acceso a Drive. Verifica permisos.");
     }
   }
 
