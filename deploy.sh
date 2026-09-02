@@ -122,6 +122,23 @@ if [ -n "$DUPLICADOS" ]; then
   exit 1
 fi
 echo "Sin declaraciones duplicadas."
+
+# --- 5b. Funciones duplicadas ---------------------------------------------------------
+# Dos `function foo()` en archivos distintos NO rompen la compilación como un const repetido:
+# la que se carga última pisa a la otra, en silencio. Es peor que un error, porque el proyecto
+# sigue andando con la versión equivocada. Así convivieron tres copias de esFeriadoHoy() y tres
+# de findTargetReportTicket() (una disfrazada con el sufijo "Local"), y así una fachada de
+# ApiPublica.js quedó tapando a la implementación real. El chequeo de arriba no las ve porque
+# solo mira const/let/class.
+FUNCIONES_DUP=$(git ls-files -z '*.js' | xargs -0 grep -hoE "^function +[A-Za-z0-9_]+" | sed -E 's/^function +//' | sort | uniq -d || true)
+if [ -n "$FUNCIONES_DUP" ]; then
+  echo ""
+  echo "ERROR: funciones declaradas en más de un archivo. La última en cargarse pisa a las"
+  echo "otras sin avisar. Centralizá y dejá una sola. NO se pusheó nada:"
+  echo "$FUNCIONES_DUP" | sed 's/^/  /'
+  exit 1
+fi
+echo "Sin funciones duplicadas."
 echo ""
 
 # --- 6. Push + versión ----------------------------------------------------------------

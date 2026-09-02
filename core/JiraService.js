@@ -796,6 +796,48 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
 }
 
 /**
+ * Busca el ticket de REPORTE abierto de una operación (no una Tarea Programada).
+ *
+ * Estaba duplicada byte a byte en veeam/VMsEnMasDeUnJob.js y vsphere/OrphanedVMs.js
+ * (AGENTS.md §5). Al unificarla se corrigieron dos cosas de la versión original:
+ *
+ * 1. Armaba el header de autorización a mano en vez de usar getJiraHeaders(), que es el
+ *    punto centralizado para eso.
+ * 2. Pedía maxResults 1 y devolvía ese único resultado sin mirar el summary. Como el
+ *    operador ~ de JQL es difuso, buscar el ticket no-AVS podía devolver el AVS (y al
+ *    revés) — el mismo problema que findExistingJiraTicket. Ahora pide varios y elige el
+ *    del mismo lado con elegirTicketDelMismoLadoAVS().
+ *
+ * @param {string} summary
+ * @param {string} projectKey
+ * @returns {string|null} La clave del ticket, o null si no hay ninguno del lado buscado.
+ */
+function findTargetReportTicket(summary, projectKey) {
+  const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
+  let jql = `summary ~ "${summary.replace(/"/g, '\\"')}" AND statusCategory != "Done"`;
+  if (projectKey) jql += ` AND project = "${projectKey}"`;
+  jql += ` AND issuetype != "Tarea Programada" ORDER BY created DESC`;
+
+  const payload = { "jql": jql, "maxResults": 10, "fields": ["key", "summary"] };
+  const options = {
+    "method": "post", "contentType": "application/json",
+    "headers": getJiraHeaders(),
+    "payload": JSON.stringify(payload), "muteHttpExceptions": true
+  };
+  try {
+    const response = fetchWithRetries(endpoint, options);
+    if (response.getResponseCode() === 200) {
+      const data = JSON.parse(response.getContentText());
+      if (data.issues && data.issues.length > 0) {
+        return elegirTicketDelMismoLadoAVS(data.issues, summary);
+      }
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+
+/**
  * Transiciona un ticket al estado indicado.
  *
  * Los llamadores suelen descartar el resultado, así que cada fallo se loguea con
