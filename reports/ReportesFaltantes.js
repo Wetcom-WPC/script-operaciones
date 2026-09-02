@@ -7,7 +7,7 @@ const SLACK_WEBHOOK_URL_YASC = PropertiesService.getScriptProperties().getProper
 //LOGS:PropertiesService.getScriptProperties().getProperty("SLACK_WEBHOOK_YASC")
 // POD-WPC: https://hooks.slack.com/services/REDACTED
 
-const ID_HOJA_MAESTRA = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU"; // MODO PRUEBA: Prod Index
+const ID_HOJA_MAESTRA = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
 // LOG_SHEET_ID ya está declarada globalmente en el repo (OperationsLogger.gs) — no redeclarar.
 
 const NOMBRE_PESTANA_MAESTRA = "Reportes Faltantes";
