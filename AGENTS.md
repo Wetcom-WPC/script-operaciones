@@ -223,6 +223,47 @@ grep -hoE "^(const|let|class) +[A-Za-z0-9_]+" *.js **/*.js | sort | uniq -d
 
 Si aparece algo, hay una colisión real. Ninguna salida = seguro para pushear.
 
+### El mismo scope global tiene una segunda trampa: las funciones
+
+Dos `function foo()` en archivos distintos **no** rompen la compilación como un
+`const` repetido. Es peor: la que se carga última pisa a la otra **en silencio**,
+y el proyecto sigue andando con la versión equivocada. Nadie ve un error.
+
+Así convivieron tres copias de `esFeriadoHoy()` (una sola logueaba el motivo
+cuando fallaba el calendario; las otras dos devolvían `false` mudas) y tres de
+`findTargetReportTicket()` — dos idénticas más una disfrazada con el sufijo
+`Local` para esquivar la colisión de nombres. También fue así como una fachada de
+`ApiPublica.js` tapaba a la implementación real.
+
+El chequeo del grep de arriba **no las ve**, porque solo mira `const/let/class`:
+
+```bash
+git ls-files -z '*.js' | xargs -0 grep -hoE "^function +[A-Za-z0-9_]+" \
+  | sed -E 's/^function +//' | sort | uniq -d
+```
+
+### El chequeo definitivo: que compile el proyecto ENTERO
+
+Los dos greps de arriba son heurísticas. El único chequeo que reproduce lo que
+hace Apps Script de verdad es juntar TODOS los `.js` en un solo scope y pasarlos
+por el parser:
+
+```bash
+DIR=$(mktemp -d); git ls-files -z '*.js' | sort -z | xargs -0 cat > "$DIR/proyecto.js"
+node --check "$DIR/proyecto.js"; rm -rf "$DIR"
+```
+
+Ojo con el detalle: el archivo temporal **tiene que terminar en `.js`** o
+`node --check` se niega a parsearlo (`ERR_UNKNOWN_FILE_EXTENSION`).
+
+Los tres chequeos ya corren solos en `deploy.sh` y en
+`.github/workflows/ci.yml`. **Enumerar con `git ls-files`, nunca con `find .` ni
+`grep -r .`**: esas dos formas recorren todo lo que cuelgue del directorio,
+incluidas copias del propio repo que no se despliegan (un worktree de git bajo
+`.claude/`, por ejemplo), y cada copia hace que toda declaración aparezca
+"duplicada" contra sí misma. El 02/09/2026 eso hizo que `deploy.sh` reportara 320
+duplicados inexistentes y quedara inutilizable.
+
 ## 5. El otro patrón que rompió cosas dos veces — lógica duplicada
 
 El 27/07/2026 hubo un segundo incidente, distinto: la detección del separador
@@ -248,6 +289,38 @@ llame, no reimplementarla. Los puntos ya centralizados hoy (no reabrirlos):
   y el mapa `COLUMN_ALIASES` en el mismo archivo.
 - **Cabeceras de autenticación de Jira**: `getJiraHeaders()` en
   `core/JiraService.js`.
+- **Frontera AVS / no-AVS**: `esSummaryAVS()`, `esReporteAVS()`,
+  `nombreTareaSegunAVS()` y `elegirTicketDelMismoLadoAVS()` en
+  `core/JiraService.js`.
+- **Feriados**: `esFeriadoHoy()` en `core/Utils.js`.
+
+### La otra cara del mismo problema: llamadas a código que ya no existe
+
+JavaScript no valida una referencia hasta que la ejecuta. En un proyecto donde
+todos los archivos comparten un scope global y nadie compila nada antes de
+desplegar, eso significa que **una llamada a algo inexistente puede vivir meses
+sin que nadie se entere**. El 02/09/2026 aparecieron cuatro casos, todos del
+mismo tipo:
+
+- `core/Main.js` llamaba a `registrarResumenDiario()`, que no existe en ningún
+  archivo. Estaba envuelta en `try { } catch(e) {}`, así que tiraba
+  `ReferenceError` todos los días al cerrar la ventana y el catch vacío se lo
+  tragaba. La migración que la dio de baja hasta había dejado anotado el paso
+  pendiente en su propio encabezado; nunca se hizo.
+- `veeam/EspacioEnRepositorios.js` tenía `processEspacioRepositoriosEmails()`
+  haciendo `new EspacioRepositoriosProcessor()` — falta el "En". Duplicado muerto
+  de `processRepositorySpaceEmails()`, que sí funciona.
+- `core/ApiPublica.js` exponía ocho fachadas que llamaban a funciones
+  `internal_*` inexistentes. Siete "funcionaban" solo porque una función real del
+  mismo nombre las pisaba por orden de carga; la octava, sin gemela, reventaba.
+- `webapp/WebApp.js` usaba `PROP_EJECUCION_MANUAL`, declarada en `core/Main.js`.
+  Un push desde el editor borró la declaración y dejó los usos: el botón del
+  panel pasó a tirar `ReferenceError` sin que nada dejara de compilar.
+
+**Antes de dar por buena una función, verificá que exista lo que llama** — sobre
+todo si la llamada está adentro de un `try/catch` que no loguea, o en una rama
+que corre una vez por día. Un `catch` vacío alrededor de una llamada es una
+bandera roja, no una red de seguridad.
 
 ## 6. El patrón de bug más frecuente de este proyecto — nombres de columna en español vs. inglés
 
@@ -343,6 +416,30 @@ actuar, no asumir que todo lo pendiente hay que resolverlo.
      contra lo que se pusheó, para confirmar que llegó como se esperaba.
 
 El historial de Apps Script y el de GitHub tienen que contar la misma historia:
+### Promover NO es copiar el árbol de Playground
+
+`Ops Playground/` y `Ops Operativo/` **no son el mismo proyecto**: producción no
+tiene `webapp/`, y hay archivos que difieren entre los dos por trabajo que no
+tiene nada que ver con lo que se está promoviendo. Copiar el árbol entero es el
+incidente del 27/07/2026 esperando a repetirse.
+
+El criterio que funcionó el 02/09/2026, archivo por archivo:
+
+1. `clasp pull` de producción a una carpeta limpia y comparar contra el repo. El
+   código productivo **puede estar adelante**: ese día `VMsConSnapshots.js` tenía
+   en producción una regla de negocio que el repo no tenía, y copiar encima la
+   habría borrado.
+2. Para cada archivo a promover, comparar producción contra Playground **antes**
+   de los cambios que se quieren llevar. Si coinciden, copiar aplica exactamente
+   esos cambios y nada más. Si no, hay que mergear a mano.
+3. Antes de pushear, `clasp status` contra el proyecto vivo para confirmar que no
+   se borra ni se agrega ningún archivo por accidente.
+
+Comparar siempre con `diff --strip-trailing-cr`: `clasp` escribe CRLF y git
+guarda LF, así que sin eso parecen diferir los 80 archivos y no se ve cuál
+cambió de verdad.
+
+
 por cada versión creada con `deploy.sh` debería haber un commit equivalente —
 y ahora eso queda garantizado por el propio script (Regla 5), no solo por
 convención.
@@ -359,3 +456,49 @@ agregarla ahí en vez de crear un archivo nuevo suelto.
 `deploy.sh`: los push ahí son `clasp push` directo, sin creación de versión
 (Regla 3) ni sincronización GitHub-primero (Regla 5). Si se les da más uso,
 portarles el mismo script que usan los proyectos Ops en vez de reinventarlo.
+
+## 12. Codificación de caracteres — el bug que no se ve leyendo el código
+
+El 02/09/2026 `custom/HerramientasManuales.js` tenía 245 tramos con **doble
+codificación UTF-8**: texto ya codificado en UTF-8 que alguien volvió a codificar
+como si fuera cp1252. `ó` (bytes `C3 B3`) había quedado como `C3 83 C2 B3`, que
+se lee `Ã³`.
+
+No es solo cosmético. Rompe comparaciones de strings, en silencio:
+
+```js
+const ESTADO_TAREA_CERRABLE = "Pendiente de EjecuciÃ³n";   // nunca matchea
+if (tarea.status !== ESTADO_TAREA_CERRABLE) { /* siempre entra acá */ }
+```
+
+Con eso, `manual_cerrarTareasProgramadas()` (§8) daba TODAS las tareas por "en un
+estado distinto" y no cerraba ninguna. Lo mismo con los encabezados que ese
+archivo escribe en las planillas de excepciones (`"ID de ExcepciÃ³n"`,
+`"VÃ¡lida hasta"`): las pestañas se creaban con los nombres corruptos, y una
+columna que no matchea hace que la regla de excepción **se descarte en silencio**
+(§6).
+
+**Cómo detectarlo.** A ojo no se distingue de un acento mal tipeado. Hay que
+mirar los bytes:
+
+```bash
+grep -n "Ã" archivo.js | head          # sospecha
+sed -n '425p' archivo.js | od -c       # confirmación: C3 83 C2 B3 = doble
+```
+
+`C3 B3` es correcto. `C3 83 C2 B3` es doble codificación.
+
+**Cómo repararlo.** Re-decodificar solo los tramos afectados: `cp1252` primero
+(cubre `€ ‚ ƒ „ … † ‡ ˆ ‰ Š ‹ Œ Ž ' ' " " • – — ˜ ™ š › œ ž Ÿ`) y `latin-1`
+después, porque cp1252 no define `0x81`, `0x8D`, `0x8F`, `0x90` ni `0x9D` — y
+esos bytes aparecen justo en las mayúsculas acentuadas (`Á` = `C3 81`).
+
+**Cómo verificar que la reparación no tocó nada más:** cada línea modificada
+tiene que quedar **idéntica al quitarle los caracteres no-ASCII**. Si eso se
+cumple, el cambio es solo de acentos y no se coló otra cosa.
+
+**Ojo con lo que la reparación destapa.** Al arreglar el encoding quedó a la
+vista `"En Ánalisis"` como nombre de una transición de Jira — que parece un typo
+por `"En Análisis"`, pero puede estar igual de mal escrito del lado de Jira. Un
+nombre de estado o de transición es configuración externa: **verificarlo contra
+Jira antes de "corregirlo"**, no adivinar.
