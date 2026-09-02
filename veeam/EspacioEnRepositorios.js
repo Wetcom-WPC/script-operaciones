@@ -317,6 +317,10 @@ function convertRepoExcelToDataLocal(blob) {
   }
 }
 
-function processEspacioRepositoriosEmails() {
-  new EspacioRepositoriosProcessor().processEmails();
-}
+// Acá vivía processEspacioRepositoriosEmails(), que hacía
+// `new EspacioRepositoriosProcessor()` — una clase que NO EXISTE (la real es
+// EspacioEnRepositoriosProcessor, con el "En"). Cualquier invocación tiraba
+// ReferenceError. Era además un duplicado muerto de processRepositorySpaceEmails(), que
+// está unas líneas más arriba, hace lo mismo con el nombre correcto y es la que figura
+// en el registro de core/Main.js. No la referenciaba nadie: ni el registro, ni otro
+// archivo, ni la documentación. Se elimina.

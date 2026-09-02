@@ -246,7 +246,13 @@ function ejecutarCicloDeOperaciones() {
         // Esa función requiere un opsKey (es por-cliente) y sin él salía de inmediato
         // logueando "Key: undefined" sin hacer nada; además su retorno se descartaba.
         // El reporte de consumo se envía por cliente desde ejecutarReporteVsphere() (EnvioMailTecnologias.js).
-        try { registrarResumenDiario(); } catch(e) {}
+        // Acá se llamaba a registrarResumenDiario(), que NO EXISTE en el proyecto: la
+        // migración al ExecutionLogger la dio de baja y dejó anotado el paso pendiente
+        // ("En Main.gs: eliminar registrarResumenDiario() (ya no existe)", ver el
+        // encabezado de core/ExecutionLogger.js), pero la llamada quedó. Envuelta en un
+        // try/catch vacío, tiraba ReferenceError todos los días al cerrar la ventana y
+        // nadie se enteraba. El resumen diario ya lo registra _registrarEnLog() desde
+        // enviarResumenSlack(), así que no hay nada que reemplazar: se elimina.
         
         lock.releaseLock();
         Logger.log("--- Proceso finalizado por hoy. ---");

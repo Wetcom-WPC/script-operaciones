@@ -49,3 +49,16 @@ jobs:
             echo "$FUNCIONES_DUP"
             exit 1
           fi
+
+      - name: El proyecto entero compila (scope global unico de Apps Script)
+        run: |
+          # El unico chequeo que reproduce lo que hace Apps Script: junta TODOS los .js en un
+          # solo scope y se lo da al parser. Un const repetido entre dos archivos no rompe a
+          # ninguno por separado; rompe el proyecto entero al cargar, y solo se ve asi.
+          DIR_TMP=$(mktemp -d)
+          CONCATENADO="$DIR_TMP/proyecto.js"
+          git ls-files -z '*.js' | sort -z | xargs -0 cat > "$CONCATENADO"
+          if ! node --check "$CONCATENADO"; then
+            echo "::error::Los archivos por separado compilan, pero el proyecto ENTERO no."
+            exit 1
+          fi
