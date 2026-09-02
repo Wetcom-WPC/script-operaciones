@@ -21,6 +21,91 @@ function getJiraHeaders() {
  */
 
 /**
+ * ¿Este texto (summary de un ticket, o nombre de una Tarea Programada) pertenece al lado AVS?
+ *
+ * Existe como función y no como un `.includes('avs')` suelto porque la frontera AVS / no-AVS se
+ * chequea en varios lugares y tenerla escrita distinto en cada uno es exactamente el patrón que
+ * ya rompió cosas antes (AGENTS.md §5). Si algún día el criterio deja de ser "dice AVS", se
+ * cambia acá y no en seis archivos.
+ *
+ * @param {string} texto
+ * @returns {boolean}
+ */
+function esSummaryAVS(texto) {
+  return String(texto || '').toLowerCase().includes('avs');
+}
+
+/**
+ * ¿El reporte que se está procesando es del entorno AVS?
+ *
+ * Mira el asunto del correo y, si hay, el nombre del adjunto — mismo criterio que ya usaba
+ * AlertasDevSphere.js, ahora en un solo lugar.
+ *
+ * @param {string} emailSubject
+ * @param {GoogleAppsScript.Gmail.GmailAttachment} [attachment]
+ * @returns {boolean}
+ */
+function esReporteAVS(emailSubject, attachment) {
+  if (esSummaryAVS(emailSubject)) return true;
+  try {
+    return !!(attachment && esSummaryAVS(attachment.getName()));
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Elige, entre los tickets que devolvió Jira, el que corresponde al MISMO lado AVS que se buscó.
+ *
+ * Es una función aparte y pura (no toca la red) a propósito: acá vivía un bug que solo se veía
+ * con datos reales, y así queda cubierto por la suite de tests (ver tests/TestRunner.js).
+ *
+ * El operador ~ de JQL es difuso: buscar "VMs con snapshots" también devuelve
+ * "AVS - VMs con snapshots". La versión anterior filtraba en una sola dirección (solo cuidaba
+ * el caso no-AVS) y después caía a issues[0] sin filtrar: cuando el ticket del lado buscado no
+ * estaba abierto, devolvía el del lado contrario, y un reporte AVS terminaba cerrando la Tarea
+ * Programada no-AVS. Con "VMs con snapshots" existiendo de los dos lados (OBM-18502 y
+ * OBM-18503) dejó de ser hipotético.
+ *
+ * Si no hay ninguno del lado buscado devuelve null: es preferible no cerrar nada a cerrar el
+ * ticket equivocado.
+ *
+ * @param {Array<{key: string, fields: {summary: string}}>} issues
+ * @param {string} summary Lo que se buscó.
+ * @returns {string|null} La clave del ticket, o null.
+ */
+function elegirTicketDelMismoLadoAVS(issues, summary) {
+  const objetivo = String(summary || '').trim().toLowerCase();
+  const objetivoEsAvs = esSummaryAVS(objetivo);
+
+  const candidatos = (issues || []).filter(function (issue) {
+    return issue && issue.fields && esSummaryAVS(issue.fields.summary) === objetivoEsAvs;
+  });
+  if (candidatos.length === 0) return null;
+
+  const exacto = candidatos.find(function (issue) {
+    return issue.fields.summary.trim().toLowerCase() === objetivo;
+  });
+  if (exacto) return exacto.key;
+
+  return candidatos[0].key;
+}
+
+/**
+ * Nombre de la Tarea Programada a cerrar, respetando el lado AVS del reporte.
+ *
+ * Las tareas del lado AVS se llaman "AVS - <nombre>". Un processor que no marque
+ * `clientConfig.isAVS` cierra siempre la del lado no-AVS, aunque el reporte sea AVS.
+ *
+ * @param {string} taskNameBase
+ * @param {Object} clientConfig
+ * @returns {string}
+ */
+function nombreTareaSegunAVS(taskNameBase, clientConfig) {
+  return (clientConfig && clientConfig.isAVS) ? `AVS - ${taskNameBase}` : taskNameBase;
+}
+
+/**
  * Busca si un ticket de Jira ya tiene un adjunto con un nombre específico.
  * @param {string} issueKey La clave del ticket (ej. "PROJ-123").
  * @param {string} fileName El nombre del archivo a buscar.
@@ -219,9 +304,15 @@ function buscarTareaProgramadaDelDia(fullTaskName, projectKey) {
     // y relajamos la comparación en memoria a un includes() en lugar de un === estricto, 
     // porque si Jira lo devolvió y contiene la frase exacta, es el ticket que buscamos.
     const objetivo = String(fullTaskName).trim().toLowerCase();
+    const objetivoEsAvs = esSummaryAVS(objetivo);
     const issues = JSON.parse(respuesta.getContentText()).issues || [];
     const exacta = issues.find(function (i) {
-      return i.fields.summary && i.fields.summary.trim().toLowerCase().includes(objetivo);
+      if (!i.fields.summary) return false;
+      // Guarda de frontera AVS: "AVS - VMs con snapshots" CONTIENE "VMs con snapshots", así que
+      // el includes() de abajo, por sí solo, haría que un reporte no-AVS diera por encontrada la
+      // tarea AVS (y al revés). Se compara el lado antes de aceptar la coincidencia.
+      if (esSummaryAVS(i.fields.summary) !== objetivoEsAvs) return false;
+      return i.fields.summary.trim().toLowerCase().includes(objetivo);
     });
 
     if (!exacta) return null;
@@ -697,20 +788,7 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
     if (response.getResponseCode() === 200) {
       const data = JSON.parse(response.getContentText());
       if (data.issues && data.issues.length > 0) {
-        const targetSummary = summary.trim().toLowerCase();
-        
-        // 1. Buscamos coincidencia exacta primero
-        const exactMatch = data.issues.find(issue => issue.fields.summary.trim().toLowerCase() === targetSummary);
-        if (exactMatch) return exactMatch.key;
-        
-        // 2. Si buscamos un ticket No-AVS, filtramos para no agarrar por error uno AVS
-        if (!targetSummary.includes('avs')) {
-            const nonAvsMatch = data.issues.find(issue => !issue.fields.summary.toLowerCase().includes('avs'));
-            if (nonAvsMatch) return nonAvsMatch.key;
-        }
-
-        // 3. Fallback al primer resultado
-        return data.issues[0].key;
+        return elegirTicketDelMismoLadoAVS(data.issues, summary);
       }
     }
     return null;

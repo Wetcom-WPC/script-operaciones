@@ -40,7 +40,7 @@ class AffinityRulesProcessor extends MailProcessor {
       
       if (clientConfig) {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).` });
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
         if (typeof clientConfig !== 'undefined' && clientConfig) {
       const nombreArchivo = this.operationName + " - OK.txt";
@@ -58,6 +58,10 @@ class AffinityRulesProcessor extends MailProcessor {
     const subjectLower = emailSubject.toLowerCase();
     this.isDRP = false;
 
+    // Lado AVS del reporte: sin esto el cierre usa el nombre sin prefijo y apunta siempre
+    // a la Tarea Programada no-AVS, aunque el reporte sea del lado AVS.
+    const esAVS = esReporteAVS(emailSubject, attachment);
+
     const drpClientName = extractDRPClientName(emailSubject, "Affinity Rules");
     if (drpClientName) {
       Logger.log(`Modo DRP detectado. Nombre extraído/mapeado: "${drpClientName}"`);
@@ -72,6 +76,7 @@ class AffinityRulesProcessor extends MailProcessor {
       config = getClientConfig(sender, this.operationName);
       this.isDRP = false;
     }
+    if (config) config.isAVS = esAVS;
     return config;
   }
 
@@ -154,7 +159,7 @@ class AffinityRulesProcessor extends MailProcessor {
       }
       
       if (attachmentStatus.status === 'SUCCESS') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: attachmentStatus.status };
 
@@ -183,7 +188,7 @@ class AffinityRulesProcessor extends MailProcessor {
       }
       
       if (creationResult.status !== 'FAILURE' && creationResult.status !== 'HTTP_500') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: creationResult.status };
     }

@@ -497,6 +497,49 @@ function runAllTests() {
     assertTrue(asuntos.every(function (a) { return a && a.trim() !== ""; }), "asuntos: no incluye vacíos (el catch-all quedaría sin correos)");
   } catch(e) { Logger.log("Error en Test registro de processors: " + e.message); }
 
+  // --- TESTS: frontera AVS / no-AVS al cerrar Tareas Programadas ---
+  // Regresión del 02/09/2026: el operador ~ de JQL es difuso y "AVS - VMs con snapshots"
+  // aparece al buscar "VMs con snapshots". La versión anterior filtraba en una sola dirección
+  // y después caía a issues[0] sin filtrar, así que un reporte de un lado podía cerrar la
+  // Tarea Programada del otro. Los dos tickets existen de verdad: OBM-18502 y OBM-18503.
+  Logger.log("--- Test: frontera AVS ---");
+  try {
+    const NO_AVS = { key: "OBM-18502", fields: { summary: "VMs con snapshots" } };
+    const AVS    = { key: "OBM-18503", fields: { summary: "AVS - VMs con snapshots" } };
+
+    assertTrue(esSummaryAVS("AVS - VMs con snapshots"), "esSummaryAVS: reconoce el lado AVS");
+    assertFalse(esSummaryAVS("VMs con snapshots"), "esSummaryAVS: no marca AVS lo que no lo es");
+
+    assertEqual(elegirTicketDelMismoLadoAVS([AVS, NO_AVS], "VMs con snapshots"), "OBM-18502",
+      "frontera AVS: un reporte no-AVS elige la tarea no-AVS aunque la AVS venga primera");
+    assertEqual(elegirTicketDelMismoLadoAVS([AVS, NO_AVS], "AVS - VMs con snapshots"), "OBM-18503",
+      "frontera AVS: un reporte AVS elige la tarea AVS");
+
+    // El caso que rompía: si la del lado buscado no está abierta, NO hay que devolver la otra.
+    assertEqual(elegirTicketDelMismoLadoAVS([NO_AVS], "AVS - VMs con snapshots"), null,
+      "frontera AVS: un reporte AVS NO cierra la tarea no-AVS cuando la suya no está abierta");
+    assertEqual(elegirTicketDelMismoLadoAVS([AVS], "VMs con snapshots"), null,
+      "frontera AVS: un reporte no-AVS NO cierra la tarea AVS cuando la suya no está abierta");
+
+    assertEqual(elegirTicketDelMismoLadoAVS([], "VMs con snapshots"), null,
+      "frontera AVS: sin resultados devuelve null");
+
+    // El nombre de la tarea a cerrar sale del lado del reporte, no del texto suelto.
+    assertEqual(nombreTareaSegunAVS("VMs con snapshots", { isAVS: true }), "AVS - VMs con snapshots",
+      "nombreTareaSegunAVS: antepone el prefijo cuando el reporte es AVS");
+    assertEqual(nombreTareaSegunAVS("VMs con snapshots", { isAVS: false }), "VMs con snapshots",
+      "nombreTareaSegunAVS: sin prefijo cuando no es AVS");
+    assertEqual(nombreTareaSegunAVS("VMs con snapshots", null), "VMs con snapshots",
+      "nombreTareaSegunAVS: tolera clientConfig nulo");
+
+    assertTrue(esReporteAVS("Reporte AVS - VMs con snapshots", null),
+      "esReporteAVS: detecta por asunto");
+    assertFalse(esReporteAVS("Reporte VMs con snapshots", null),
+      "esReporteAVS: no detecta donde no corresponde");
+    assertTrue(esReporteAVS("Reporte VMs con snapshots", { getName: function () { return "avs-reporte.csv"; } }),
+      "esReporteAVS: detecta por nombre de adjunto");
+  } catch(e) { Logger.log("Error en Test frontera AVS: " + e.message); }
+
   Logger.log("=== FIN DE SUITE DE PRUEBAS ===");
   Logger.log(`Resultados: ${passed} Pasaron, ${failed} Fallaron.`);
   
