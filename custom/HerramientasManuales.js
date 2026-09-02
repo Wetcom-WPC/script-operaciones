@@ -777,24 +777,24 @@ function manual_CerrarTicketsTesting() {
 }
 
 // =================================================================
-// HERRAMIENTA: Crear pestaÃ±a "VMs con Snapshots SOP" en planillas de excepciones
+// HERRAMIENTA: Crear pestaña "VMs con Snapshots SOP" en planillas de excepciones
 // =================================================================
 /**
  * Recorre todas las filas del Ãndice Maestro y, para cada cliente que tenga un
- * spreadsheet de excepciones configurado (columna C = row[2]), crea la pestaÃ±a
+ * spreadsheet de excepciones configurado (columna C = row[2]), crea la pestaña
  * "VMs con Snapshots SOP" si aÃºn no existe.
  *
- * Estructura de la pestaÃ±a creada:
- *   A: ID de ExcepciÃ³n
+ * Estructura de la pestaña creada:
+ *   A: ID de Excepción
  *   B: Columna del Reporte
  *   C: Tipo de Coincidencia  (dropdown: exacta / contiene / comienza con / termina con)
  *   D: Valores a Ignorar
- *   E: VÃ¡lida hasta
- *   F: ExcepciÃ³n Activa      (dropdown: SI / NO)
- *   G: AGE (dÃ­as)
+ *   E: Válida hasta
+ *   F: Excepción Activa      (dropdown: SI / NO)
+ *   G: AGE (días)
  *   H: SIZE (GB)
  *   I: QTY (cantidad)
- *   J: TIPO TAMAÃ‘O           (dropdown: Absoluto / Relativo)
+ *   J: TIPO TAMAÑO           (dropdown: Absoluto / Relativo)
  *   K: CRITERIO              (dropdown: Ignorar / Considerar)
  *
  * Ejecutar desde el editor de Apps Script: sin parÃ¡metros, impacta todas las
@@ -803,16 +803,16 @@ function manual_CerrarTicketsTesting() {
 function manual_CrearPestanasSopSnapshots() {
   const TAB_NAME = "VMs con Snapshots SOP";
   const HEADERS  = [
-    "ID de ExcepciÃ³n",
+    "ID de Excepción",
     "Columna del Reporte",
     "Tipo de Coincidencia",
     "Valores a Ignorar",
-    "VÃ¡lida hasta",
-    "ExcepciÃ³n Activa",
+    "Válida hasta",
+    "Excepción Activa",
     "AGE",
     "SIZE",
     "QTY",
-    "TIPO TAMAÃ‘O",
+    "TIPO TAMAÑO",
     "CRITERIO"
   ];
 
@@ -842,12 +842,12 @@ function manual_CrearPestanasSopSnapshots() {
       let sheet   = ss.getSheetByName(TAB_NAME);
 
       if (sheet) {
-        Logger.log(`[Fila ${idx + 1}] "${clientName}" â€” la pestaÃ±a "${TAB_NAME}" ya existe. Se omite.`);
+        Logger.log(`[Fila ${idx + 1}] "${clientName}" â€” la pestaña "${TAB_NAME}" ya existe. Se omite.`);
         existian++;
         return;
       }
 
-      // Crear la pestaÃ±a al final del spreadsheet
+      // Crear la pestaña al final del spreadsheet
       sheet = ss.insertSheet(TAB_NAME);
 
       // --- Encabezados ---
@@ -872,7 +872,7 @@ function manual_CrearPestanasSopSnapshots() {
           .build()
       );
 
-      // F: ExcepciÃ³n Activa
+      // F: Excepción Activa
       sheet.getRange(2, 6, LAST_ROW, 1).setDataValidation(
         SpreadsheetApp.newDataValidation()
           .requireValueInList(["SI", "NO"], true)
@@ -880,7 +880,7 @@ function manual_CrearPestanasSopSnapshots() {
           .build()
       );
 
-      // J: TIPO TAMAÃ‘O
+      // J: TIPO TAMAÑO
       sheet.getRange(2, 10, LAST_ROW, 1).setDataValidation(
         SpreadsheetApp.newDataValidation()
           .requireValueInList(["Absoluto", "Relativo"], true)
@@ -899,7 +899,7 @@ function manual_CrearPestanasSopSnapshots() {
       // Fijar la fila de encabezados
       sheet.setFrozenRows(1);
 
-      Logger.log(`[Fila ${idx + 1}] "${clientName}" â€” pestaÃ±a "${TAB_NAME}" CREADA exitosamente.`);
+      Logger.log(`[Fila ${idx + 1}] "${clientName}" â€” pestaña "${TAB_NAME}" CREADA exitosamente.`);
       creadas++;
 
     } catch (e) {
@@ -911,18 +911,18 @@ function manual_CrearPestanasSopSnapshots() {
   Logger.log(
     `\n=== RESUMEN ===\n` +
     `PestaÃ±as creadas   : ${creadas}\n` +
-    `Ya existÃ­an        : ${existian}\n` +
+    `Ya existían        : ${existian}\n` +
     `Sin planilla       : ${sinPlanilla}\n` +
     `Con error          : ${errores}`
   );
 }
 
 // =================================================================
-// HERRAMIENTA: Actualizar pestaÃ±a "VMs con snapshots" en planillas de excepciones para agregar columnas de umbrales
+// HERRAMIENTA: Actualizar pestaña "VMs con snapshots" en planillas de excepciones para agregar columnas de umbrales
 // =================================================================
 /**
- * Recorre todas las filas del Ãndice Maestro y actualiza la pestaÃ±a "VMs con snapshots"
- * para que tenga el formato exacto de la pestaÃ±a SOP (11 columnas).
+ * Recorre todas las filas del Ãndice Maestro y actualiza la pestaña "VMs con snapshots"
+ * para que tenga el formato exacto de la pestaña SOP (11 columnas).
  * Elimina cualquier dato basura de la columna G en adelante.
  */
 function manual_ActualizarPestanaOpsSnapshots() {
@@ -956,7 +956,7 @@ function manual_ActualizarPestanaOpsSnapshots() {
       if (!sheet) sheet = ss.getSheetByName("VMs con Snapshots");
 
       if (!sheet) {
-        Logger.log(`[Fila ${idx + 1}] "${clientName}" â€” la pestaÃ±a NO EXISTE. Se omite.`);
+        Logger.log(`[Fila ${idx + 1}] "${clientName}" â€” la pestaña NO EXISTE. Se omite.`);
         sinPestana++;
         return;
       }
@@ -971,7 +971,7 @@ function manual_ActualizarPestanaOpsSnapshots() {
       }
 
       // Escribir nuevos encabezados en G-K (igual que SOP)
-      const newHeaders = ["AGE", "SIZE", "QTY", "TIPO TAMAÃ‘O", "CRITERIO"];
+      const newHeaders = ["AGE", "SIZE", "QTY", "TIPO TAMAÑO", "CRITERIO"];
       const headerRange = sheet.getRange(1, 7, 1, 5);
       headerRange.setValues([newHeaders]);
       headerRange.setFontWeight("bold");
@@ -999,7 +999,7 @@ function manual_ActualizarPestanaOpsSnapshots() {
           .build()
       );
 
-      Logger.log(`[Fila ${idx + 1}] "${clientName}" â€” pestaÃ±a ACTUALIZADA exitosamente a formato SOP.`);
+      Logger.log(`[Fila ${idx + 1}] "${clientName}" â€” pestaña ACTUALIZADA exitosamente a formato SOP.`);
       actualizadas++;
 
     } catch (e) {
@@ -1014,7 +1014,7 @@ function manual_ActualizarPestanaOpsSnapshots() {
 ` +
     `PestaÃ±as arregladas   : ${actualizadas}
 ` +
-    `Sin pestaÃ±a (no existe) : ${sinPestana}
+    `Sin pestaña (no existe) : ${sinPestana}
 ` +
     `Sin planilla          : ${sinPlanilla}
 ` +
