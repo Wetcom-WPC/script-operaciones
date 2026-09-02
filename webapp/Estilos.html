@@ -40,6 +40,110 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* --- Logs Table & Tabs --- */
+.tab-btn {
+  background: none;
+  border: none;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #6b7280;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all 0.2s;
+}
+.tab-btn:hover {
+  color: #374151;
+}
+.tab-btn.active {
+  color: #109e58;
+  border-bottom-color: #109e58;
+}
+
+.tabla-logs th {
+  padding: 12px 16px;
+  border-bottom: 2px solid #eee;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+}
+
+.tabla-logs td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #eee;
+  vertical-align: top;
+}
+
+.tabla-logs tbody tr.fila-log:hover {
+  background-color: #f9fafb;
+}
+
+.tabla-logs tbody tr.fila-detalle td {
+  padding: 0;
+}
+
+.detalle-contenido {
+  padding: 16px;
+  background-color: #f3f4f6;
+  border-radius: 6px;
+  margin: 0px 16px 16px 16px;
+  font-size: 13px;
+}
+
+.metadata-badges {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.badge-info {
+  background: #fff;
+  border: 1px solid #d1d5db;
+  color: #4b5563;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.badge-info strong {
+  color: #111827;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.error-formateado {
+  background: #fff;
+  border: 1px solid #fca5a5;
+  border-left: 4px solid #ef4444;
+  padding: 12px;
+  border-radius: 4px;
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  color: #b91c1c;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.error-bloque {
+  line-height: 1.4;
+}
+
+.detalle-contenido pre {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  background-color: #fff;
+  border: 1px solid #e5e7eb;
+  padding: 12px;
+  border-radius: 4px;
+  font-family: Consolas, monospace;
+  margin-top: 8px;
+  margin-bottom: 0;
+}
+
 /* --- Barra superior ---------------------------------------------------------------------- */
 .barra {
   display: flex;
@@ -195,4 +299,77 @@ footer { padding: 0 24px 28px; max-width: 1400px; margin: 0 auto; font-size: 11.
   main, footer { padding-left: 16px; padding-right: 16px; }
   .tarjeta { padding: 16px; }
 }
+.acordeon-item {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.acordeon-header {
+  background-color: #f9fafb;
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 600;
+  color: #111827;
+  user-select: none;
+}
+
+.acordeon-header:hover {
+  background-color: #f3f4f6;
+}
+
+.acordeon-content {
+  padding: 0;
+  display: none;
+  border-top: 1px solid #d1d5db;
+}
+
+.acordeon-content.open {
+  display: block;
+}
+
+.badge-jira {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.badge-jira.blue-gray { background-color: #e5e7eb; color: #374151; }
+.badge-jira.yellow { background-color: #fef08a; color: #854d0e; }
+.badge-jira.green { background-color: #bbf7d0; color: #166534; }
+
+/* --- Sistema de Pestañas Principales --- */
+.vista-seccion {
+  display: none;
+}
+.vista-seccion.active {
+  display: block;
+}
+
+.nav-btn {
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-size: 16px;
+  font-weight: 500;
+  color: #4b5563;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.nav-btn:hover {
+  color: #109E58;
+  background: rgba(16, 158, 88, 0.05);
+}
+.nav-btn.active {
+  color: #109E58;
+  border-bottom: 3px solid #109E58;
+}
+
 </style>

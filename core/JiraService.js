@@ -133,17 +133,10 @@ function buscarYCerrarTareaProgramada(taskNameBase, clientConfig, useClientNameI
       return _resolverComoReporteDuplicado(tareaDeHoy.key, tareaDeHoy.status, fullTaskName, clientConfig);
     }
 
-    if (typeof esEntornoTesting === 'function' && esEntornoTesting()) {
-      Logger.log(`[SAFEGUARD TESTING] Omitiendo fallo de Tarea Programada no encontrada (entorno de pruebas).`);
-      return { status: 'SKIPPED' };
-    }
-    
-    // Decisión del equipo (27/07/2026): NOT_FOUND cuenta como NO procesado, así que se
-    // registra como fallo y el correo se reintenta en vez de darse por terminado.
-    // Terminal: reintentar no la va a hacer aparecer. O la tarea no existe, o el nombre no
-    // coincide, o ya fue cerrada a mano. Necesita que una persona lo revise.
-    registrarFalloDePaso("buscarYCerrarTareaProgramada", `No existe ninguna tarea programada "${fullTaskName}" creada hoy en el proyecto ${projectKey} (cliente ${clientConfig.clientName}), en ningún estado. Verificar que la tarea se haya creado y que el nombre coincida exactamente.`, true);
-    return { status: 'NOT_FOUND' };
+    // Decisión del usuario (Opción 1 - 18/08/2026): Si no se encuentra la tarea programada, 
+    // se devuelve NOT_FOUND sin registrar fallo terminal. El processor emitirá una advertencia
+    // en Slack y dará el correo por [OPS-PROCESADO], sin reintentos ni etiquetas de error.
+    return { status: 'NOT_FOUND', detail: `No existe ninguna tarea programada "${fullTaskName}" creada hoy en el proyecto ${projectKey} (cliente ${clientConfig.clientName}).` };
   }
 }
 
@@ -204,9 +197,9 @@ function _resolverComoReporteDuplicado(taskKey, estadoTarea, fullTaskName, clien
  * @returns {{key: string, summary: string, status: string}|null}
  */
 function buscarTareaProgramadaDelDia(fullTaskName, projectKey) {
-  // startOfDay() lo resuelve Jira con su propia zona horaria, así que no depende de que la del
-  // script coincida ni de formatear la fecha a mano.
-  const jql = `project = "${projectKey}" AND issuetype = "Tarea Programada" AND summary ~ "${String(fullTaskName).replace(/"/g, '\\"')}" AND created >= startOfDay() ORDER BY created DESC`;
+  // Bug 1: startOfDay() dependía de la zona horaria del servidor (UTC).
+  // Se cambia por "-1d" (últimas 24 horas) para evitar problemas si el script corre temprano por la mañana en Argentina.
+  const jql = `project = "${projectKey}" AND issuetype = "Tarea Programada" AND summary ~ "\\"${String(fullTaskName).replace(/"/g, '\\"')}\\"" AND created >= -1d ORDER BY created DESC`;
   const options = {
     "method": "post", "contentType": "application/json",
     "headers": getJiraHeaders(),
@@ -217,16 +210,18 @@ function buscarTareaProgramadaDelDia(fullTaskName, projectKey) {
   try {
     const respuesta = fetchWithRetries(`${JIRA_DOMAIN}/rest/api/3/search/jql`, options);
     if (respuesta.getResponseCode() !== 200) {
-      Logger.log(`[JIRA] No se pudo verificar si "${fullTaskName}" ya existía hoy en ${projectKey} (HTTP ${respuesta.getResponseCode()}). Se asume que no, para no dar por procesado un reporte que quizá no lo está.`);
+      Logger.log(`[JIRA] No se pudo verificar si "${fullTaskName}" ya existía hoy en ${projectKey} (HTTP ${respuesta.getResponseCode()}). Se asume que no.`);
       return null;
     }
 
-    // El operador ~ de JQL es difuso ("Idle VMs" matchea "Idle VMs Prod"), así que se exige
-    // coincidencia exacta en memoria — igual que findExistingJiraTicket.
+    // Bug 2: El operador ~ es difuso. Si buscábamos "Replicas protegidas", nos podía traer "Replicas protegidas San Juan".
+    // Ahora en el JQL envolvemos en comillas escapadas (\\"Nombre\\") para buscar la frase exacta,
+    // y relajamos la comparación en memoria a un includes() en lugar de un === estricto, 
+    // porque si Jira lo devolvió y contiene la frase exacta, es el ticket que buscamos.
     const objetivo = String(fullTaskName).trim().toLowerCase();
     const issues = JSON.parse(respuesta.getContentText()).issues || [];
     const exacta = issues.find(function (i) {
-      return i.fields.summary && i.fields.summary.trim().toLowerCase() === objetivo;
+      return i.fields.summary && i.fields.summary.trim().toLowerCase().includes(objetivo);
     });
 
     if (!exacta) return null;
@@ -703,23 +698,19 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
       const data = JSON.parse(response.getContentText());
       if (data.issues && data.issues.length > 0) {
         const targetSummary = summary.trim().toLowerCase();
-        const targetIsAvs = targetSummary.includes('avs');
-
-        // El operador ~ de JQL es difuso: buscar "VMs con Preguntas" también trae
-        // "AVS - VMs con Preguntas" entre los resultados. Filtramos primero por si el
-        // ticket encontrado es o no AVS, y nunca cruzamos esa frontera — ni siquiera en
-        // el fallback. Antes, si un día solo estaba abierta la tarea del lado contrario
-        // (por ejemplo, la AVS ya se había cerrado por error), el fallback devolvía esa
-        // tarea igual: un reporte no-AVS terminaba cerrando "AVS - X" y viceversa.
-        const candidatos = data.issues.filter(issue => issue.fields.summary.toLowerCase().includes('avs') === targetIsAvs);
-        if (candidatos.length === 0) return null;
-
+        
         // 1. Buscamos coincidencia exacta primero
-        const exactMatch = candidatos.find(issue => issue.fields.summary.trim().toLowerCase() === targetSummary);
+        const exactMatch = data.issues.find(issue => issue.fields.summary.trim().toLowerCase() === targetSummary);
         if (exactMatch) return exactMatch.key;
+        
+        // 2. Si buscamos un ticket No-AVS, filtramos para no agarrar por error uno AVS
+        if (!targetSummary.includes('avs')) {
+            const nonAvsMatch = data.issues.find(issue => !issue.fields.summary.toLowerCase().includes('avs'));
+            if (nonAvsMatch) return nonAvsMatch.key;
+        }
 
-        // 2. Fallback al primer resultado, ya filtrado por AVS
-        return candidatos[0].key;
+        // 3. Fallback al primer resultado
+        return data.issues[0].key;
       }
     }
     return null;

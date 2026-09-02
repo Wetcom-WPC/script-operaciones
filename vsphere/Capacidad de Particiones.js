@@ -58,23 +58,28 @@ class PartitionProcessor extends MailProcessor {
       const { headers, finalAlerts, rowsForExport, reasonsText } = processed;
       const existingTicketKey = this.findExistingTicket(clientConfig);
 
-      if (finalAlerts.length === 0) {
-        if (existingTicketKey) {
-          addCommentToJiraTicket(existingTicketKey, `✅ **El reporte "${attachment.getName()}" no presenta anomalías.**`);
+      if (this.requierePaso('tickets')) {
+        if (finalAlerts.length === 0) {
+          if (existingTicketKey) {
+            addCommentToJiraTicket(existingTicketKey, `✅ **El reporte "${attachment.getName()}" no presenta anomalías.**`);
+          } else {
+            summaryReport.exitos.push({ mensaje: `Reporte ${attachment.getName()} de ${clientConfig.clientName} procesado sin anomalías.` });
+          }
         } else {
-          summaryReport.exitos.push({ mensaje: `Reporte ${attachment.getName()} de ${clientConfig.clientName} procesado sin anomalías.` });
+          const result = this.handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachment.getName());
+          if (result.status !== 'SUCCESS') finalStatus = result.status;
         }
-      } else {
-        const result = this.handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachment.getName());
-        if (result.status !== 'SUCCESS') finalStatus = result.status;
       }
     });
 
     if (finalStatus !== 'FAILURE' && finalStatus !== 'HTTP_500') {
-      if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+      if (this.scheduledTaskName && this.requierePaso('tickets')) {
+        buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+      }
     }
 
-    return { status: finalStatus };
+    // El paso de Drive delega en la función base, que usará la palabra clave 'Capacidad de particiones' para subir los CSVs a Drive.
+    return this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: finalStatus });
   }
 
   processData(parsedData, clientConfig, summaryReport, fileName) {
@@ -120,7 +125,7 @@ class PartitionProcessor extends MailProcessor {
         });
         addCommentToJiraTicket(existingTicketKey, commentText);
       } else {
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
         attStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
         
@@ -142,7 +147,7 @@ class PartitionProcessor extends MailProcessor {
       } else {
         summary = Partition_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Se detectaron ${alertCount} particiones críticas en el reporte **${attachmentName}**. Se adjunta el archivo filtrado.\n\n`;
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       }
       

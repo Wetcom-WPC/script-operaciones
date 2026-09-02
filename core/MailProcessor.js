@@ -37,7 +37,7 @@ class MailProcessor {
    */
   processEmails() {
     const timeGuard = new TimeGuard({ operationName: this.operationName });
-    const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, timeGuard: timeGuard };
+    const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, tareasCerradasDetalle: [], drive: [], timeGuard: timeGuard };
     const threads = fetchAndFilterGlobalThreads(this.emailSubject);
     
     if (threads.length > 0) {
@@ -319,11 +319,10 @@ class MailProcessor {
     const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName, blobsToUpload);
 
     if (resultadoDrive.ok) {
-      if (resultadoDrive.subidos.length > 0) {
-        summaryReport.exitos.push({
-          mensaje: `📁 Se archivaron en Drive ${resultadoDrive.subidos.length} archivo(s) de ${resultadoDrive.cliente}: ${resultadoDrive.subidos.join(", ")}.`
-        });
-      }
+      if (!summaryReport.drive) summaryReport.drive = [];
+      resultadoDrive.subidos.forEach(f => summaryReport.drive.push({ nombre: f, cliente: resultadoDrive.cliente, estado: 'subido' }));
+      resultadoDrive.omitidos.forEach(f => summaryReport.drive.push({ nombre: f, cliente: resultadoDrive.cliente, estado: 'omitido' }));
+
       return resultadoTickets;
     }
 
@@ -446,6 +445,8 @@ class MailProcessor {
 
     if (estado === 'SUCCESS') {
       summaryReport.tareasCerradas++;
+      if (!summaryReport.tareasCerradasDetalle) summaryReport.tareasCerradasDetalle = [];
+      summaryReport.tareasCerradasDetalle.push(`${this.scheduledTaskName} (${clientConfig.clientName})`);
       Logger.log(`[${this.operationName}] Tarea programada "${this.scheduledTaskName}" cerrada para ${clientConfig.clientName}.`);
       return { status: 'SUCCESS' };
     }
@@ -471,17 +472,13 @@ class MailProcessor {
     }
 
     if (estado === 'NOT_FOUND') {
-      // NOT_FOUND cuenta como NO procesado, pero es un fallo TERMINAL: reintentar no hace
-      // aparecer una tarea que no existe. buscarYCerrarTareaProgramada ya lo registró como
-      // terminal, así que el correo termina apartado con [OPS-ERROR] en vez de acumularse.
-      // Llegar acá significa que NO hay ninguna tarea con ese nombre creada hoy, en ningún
-      // estado: el caso "ya la cerró un correo anterior" se resuelve antes, como DUPLICADO.
       summaryReport.advertencias.push({
         cliente: clientConfig.clientName,
-        problema: `No existe ninguna tarea programada "${this.scheduledTaskName}" creada hoy en el proyecto ${clientConfig.jiraProjectKey} (en ningún estado).`,
-        accion: `El correo se aparta con ${OPS_LABEL_ERROR}. Verificar que la tarea se haya creado y que el nombre coincida exactamente.`
+        problema: `No existe ninguna tarea programada "${this.scheduledTaskName}" creada hoy en el proyecto ${clientConfig.jiraProjectKey}.`,
+        accion: `No se bloqueó el correo. Verificar que la tarea se haya creado y que el nombre coincida exactamente.`
       });
-      return { status: 'ERROR_TERMINAL' };
+      // Devolvemos SUCCESS para que el correo se dé por procesado y no se vuelva a reintentar.
+      return { status: 'SUCCESS' };
     }
 
     summaryReport.errores.push({
@@ -498,7 +495,7 @@ class MailProcessor {
     }
     
     const alertCount = finalAlerts.length;
-    const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+    const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
     const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
 
     // convertDataToXlsxBlob() devuelve null si falla (datos mal formados, error de Drive, etc).

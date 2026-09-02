@@ -99,7 +99,50 @@
     else if (!estado.enVentana) pildora(el.contexto, 'Fuera de la ventana automática', 'alerta');
     if (estado.cicloEnCurso) pildora(el.contexto, 'Hay un ciclo corriendo ahora', 'alerta');
 
+    // Renderizar KPIs
+    if (estado.kpis) {
+      document.getElementById('kpiProcesados').textContent = estado.kpis.procesados;
+      document.getElementById('kpiErrores').textContent = estado.kpis.errores;
+      document.getElementById('kpiFaltantes').textContent = estado.kpis.faltantes;
+    }
+
     pintarUltimoLanzamiento();
+
+    // Poblar el filtro de Jira
+    var selectCliente = document.getElementById('filtroClienteJira');
+    if (selectCliente && selectCliente.options.length <= 1 && estado.clientes) {
+      estado.clientes.forEach(function(c) {
+        var opt = document.createElement('option');
+        opt.value = c.key;
+        opt.textContent = c.nombre;
+        selectCliente.appendChild(opt);
+      });
+    }
+
+    // Poblar el filtro de Reportes Analíticos
+    var selectReportes = document.getElementById('filtroClienteReportes');
+    if (selectReportes && selectReportes.options.length <= 1 && estado.clientes) {
+      estado.clientes.forEach(function(c) {
+        var opt = document.createElement('option');
+        opt.value = c.key;
+        opt.textContent = c.nombre;
+        selectReportes.appendChild(opt);
+      });
+      selectReportes.addEventListener('change', function() {
+        document.getElementById('btnCargarReportes').disabled = !this.value;
+      });
+    }
+
+    // Poblar el filtro de Logs
+    var selectLogs = document.getElementById('filtroClienteLogs');
+    if (selectLogs && selectLogs.options.length <= 1 && estado.clientes) {
+      estado.clientes.forEach(function(c) {
+        var opt = document.createElement('option');
+        opt.value = c.nombre.toLowerCase(); // En los logs el cliente viene por nombre
+        opt.textContent = c.nombre;
+        selectLogs.appendChild(opt);
+      });
+    }
   }
 
   function pintarUltimoLanzamiento() {
@@ -156,6 +199,7 @@
         liberar(el.btnActualizar);
         estado.bandeja = datos;
         pintarBandeja();
+        pintarContextoBandeja();
       })
       .withFailureHandler(function (error) {
         liberar(el.btnActualizar);
@@ -201,22 +245,64 @@
       return;
     }
 
+    // Llenar el dropdown de clientes usando la lista oficial de MASTER_INDEX
+    var filtroCli = document.getElementById('filtroCliente');
+    if (filtroCli.options.length <= 1 && estado.clientes) {
+      estado.clientes.forEach(function(c) {
+        var opt = document.createElement('option');
+        opt.value = c.nombre.toLowerCase();
+        opt.textContent = c.nombre;
+        filtroCli.appendChild(opt);
+      });
+      var optOtros = document.createElement('option');
+      optOtros.value = 'otros';
+      optOtros.textContent = 'Otros / No identificados';
+      filtroCli.appendChild(optOtros);
+    }
+
+    var textFiltroCli = filtroCli.value;
+    var textFiltroBuscar = document.getElementById('filtroBuscar').value.toLowerCase();
+
     datos.columnas.forEach(function (columna) {
-      el.columnas.appendChild(pintarColumna(columna, datos.items));
+      el.columnas.appendChild(pintarColumna(columna, datos.items, textFiltroCli, textFiltroBuscar));
     });
   }
 
-  function pintarColumna(columna, items) {
+  function pintarColumna(columna, items, filtroCli, filtroBuscar) {
     var seccion = crear('div', 'columna');
     seccion.dataset.id = columna.id;
+
+    var idsFiltrados = columna.ids.filter(function(id) {
+      var item = items[id];
+      if (!item) return false;
+      var asuntoLower = item.asunto.toLowerCase();
+      
+      if (!item._clienteInferido) {
+         var encontrado = null;
+         if (estado.clientes) {
+           for (var i = 0; i < estado.clientes.length; i++) {
+              if (asuntoLower.indexOf(estado.clientes[i].nombre.toLowerCase()) !== -1) {
+                 encontrado = estado.clientes[i].nombre;
+                 break;
+              }
+           }
+         }
+         item._clienteInferido = encontrado ? encontrado : 'Otros';
+      }
+      
+      if (filtroCli && filtroCli !== 'otros' && item._clienteInferido.toLowerCase() !== filtroCli) return false;
+      if (filtroCli === 'otros' && item._clienteInferido !== 'Otros') return false;
+      if (filtroBuscar && asuntoLower.indexOf(filtroBuscar) === -1) return false;
+      
+      return true;
+    });
 
     var cabecera = crear('header');
     var titulo = crear('div', 'titulo');
     titulo.appendChild(crear('h3', null, columna.titulo));
 
-    // El "+" no es decorativo: cuando la búsqueda llegó al tope, el total es un piso y no un
-    // conteo. Sin esa marca, dos columnas cortadas muestran el mismo número y parece un dato.
-    var cuenta = crear('span', 'cuenta', columna.total + (columna.truncada ? '+' : ''));
+    var cuentaStr = idsFiltrados.length + (columna.truncada ? '+' : '');
+    var cuenta = crear('span', 'cuenta', cuentaStr);
     if (columna.truncada) {
       cuenta.title = 'Hay más correos: la búsqueda se cortó en el tope por columna.';
     }
@@ -225,25 +311,39 @@
     cabecera.appendChild(crear('p', 'sub', columna.descripcion));
     seccion.appendChild(cabecera);
 
-    if (!columna.ids.length) {
+    if (!idsFiltrados.length) {
       seccion.appendChild(crear('p', 'vacio', 'Sin correos'));
       return seccion;
     }
 
     var lista = crear('ul', 'lista');
-    columna.ids.forEach(function (id) {
+    idsFiltrados.forEach(function (id) {
       var item = items[id];
-      if (item) lista.appendChild(pintarCorreo(item, columna.id));
+      lista.appendChild(pintarCorreo(item, columna.id));
     });
     seccion.appendChild(lista);
     return seccion;
   }
 
-  function pintarCorreo(item, columnaId) {
-    var li = crear('li', 'correo');
-    li.appendChild(crear('p', 'asunto', item.asunto));
-
-    var meta = crear('div', 'meta');
+    function pintarCorreo(item, columnaId) {
+      var li = crear('li', 'correo');
+      
+      var pAsunto = crear('p', 'asunto', item.asunto);
+      if (item.reintentos && item.reintentos > 0) {
+        var badgeReintentos = document.createElement('span');
+        badgeReintentos.style.background = '#ef4444';
+        badgeReintentos.style.color = 'white';
+        badgeReintentos.style.fontSize = '10px';
+        badgeReintentos.style.padding = '2px 6px';
+        badgeReintentos.style.borderRadius = '10px';
+        badgeReintentos.style.marginLeft = '8px';
+        badgeReintentos.style.verticalAlign = 'middle';
+        badgeReintentos.textContent = item.reintentos + ' retries';
+        pAsunto.appendChild(badgeReintentos);
+      }
+      li.appendChild(pAsunto);
+  
+      var meta = crear('div', 'meta');
     meta.appendChild(crear('span', 'hora', item.hora));
     var remitente = crear('span', null, item.remitente);
     remitente.title = item.remitenteEmail;
@@ -276,10 +376,596 @@
     return li;
   }
 
+  // --- Logs del Sistema ------------------------------------------------------------------
+  var logsGlobales = null;
+  var logTabActivo = 'estadoFinal';
+  var ordenLogs = { key: null, asc: true };
+
+  function cargarLogs() {
+    var btn = document.getElementById('btnActualizarLogs');
+    ocupar(btn, 'Cargando logs...');
+    document.getElementById('avisoLogs').hidden = true;
+    
+    var sheetId = null;
+    var selectEnv = document.getElementById('filtroEntornoLogs');
+    if (selectEnv) sheetId = selectEnv.value;
+
+    google.script.run
+      .withSuccessHandler(function(logs) {
+        liberar(btn);
+        logsGlobales = logs;
+        pintarTabActivo();
+      })
+      .withFailureHandler(function(error) {
+        liberar(btn);
+        mostrarAviso(document.getElementById('avisoLogs'), 'error', 'No se pudieron cargar los logs: ' + error.message);
+      })
+      .webapp_obtenerLogs(50, sheetId);
+  }
+
+  function cambiarTabLogs(event) {
+    if (!event.target.classList.contains('tab-btn')) return;
+    
+    // Cambiar clase active
+    var botones = document.querySelectorAll('.tab-btn');
+    for (var i = 0; i < botones.length; i++) {
+      botones[i].classList.remove('active');
+    }
+    event.target.classList.add('active');
+    
+    // Setear tab activo, resetear orden y renderizar
+    logTabActivo = event.target.getAttribute('data-tab');
+    ordenLogs = { key: null, asc: true };
+    pintarTabActivo();
+  }
+
+  function pintarTabActivo() {
+    if (!logsGlobales) {
+      document.getElementById('tablaLogs').style.display = 'none';
+      document.getElementById('logsVacio').style.display = 'block';
+      return;
+    }
+
+    var thead = document.getElementById('theadLogs');
+    var tbody = document.getElementById('tbodyLogs');
+    vaciar(thead);
+    vaciar(tbody);
+    
+    var dataRaw = logsGlobales[logTabActivo] || [];
+    
+    var textFiltroCli = document.getElementById('filtroClienteLogs') ? document.getElementById('filtroClienteLogs').value : '';
+    var textFiltroBuscar = document.getElementById('filtroBuscarLogs') ? document.getElementById('filtroBuscarLogs').value.toLowerCase() : '';
+
+    var data = dataRaw.filter(function(log) {
+      if (textFiltroCli && log.cliente && log.cliente.toLowerCase().indexOf(textFiltroCli) === -1) {
+        return false;
+      }
+      if (textFiltroBuscar) {
+        var str = JSON.stringify(log).toLowerCase();
+        if (str.indexOf(textFiltroBuscar) === -1) return false;
+      }
+      return true;
+    });
+
+    if (ordenLogs.key) {
+      data.sort(function(a, b) {
+        var valA = a[ordenLogs.key];
+        var valB = b[ordenLogs.key];
+        
+        // Handle empty values safely
+        if (valA === undefined || valA === null) valA = '';
+        if (valB === undefined || valB === null) valB = '';
+        
+        if (typeof valA === 'string' && typeof valB === 'string') {
+           var r = valA.localeCompare(valB);
+           return ordenLogs.asc ? r : -r;
+        }
+        if (valA > valB) return ordenLogs.asc ? 1 : -1;
+        if (valA < valB) return ordenLogs.asc ? -1 : 1;
+        return 0;
+      });
+    }
+
+    if (data.length === 0) {
+      document.getElementById('tablaLogs').style.display = 'none';
+      document.getElementById('logsVacio').style.display = 'block';
+      return;
+    }
+
+    document.getElementById('tablaLogs').style.display = 'table';
+    document.getElementById('logsVacio').style.display = 'none';
+
+    // Generar cabecera según el tab
+    var trCabecera = crear('tr');
+    trCabecera.style.borderBottom = '2px solid #eee';
+    
+    var cabeceras = [];
+    if (logTabActivo === 'estadoFinal') {
+      cabeceras = [
+        { label: 'Hora', key: 'hora' },
+        { label: 'Operación', key: 'operacion' },
+        { label: 'Cliente', key: 'cliente' },
+        { label: 'Estado', key: 'estado' }
+      ];
+    } else if (logTabActivo === 'erroresScript') {
+      cabeceras = [
+        { label: 'Hora', key: 'hora' },
+        { label: 'Operación', key: 'operacion' },
+        { label: 'Cliente', key: 'cliente' },
+        { label: 'Detalle Error', key: 'error' }
+      ];
+    } else if (logTabActivo === 'envioMails') {
+      cabeceras = [
+        { label: 'Hora', key: 'horaStr' },
+        { label: 'Cliente', key: 'cliente' },
+        { label: 'Tecnología', key: 'tecnologia' },
+        { label: 'POD', key: 'pod' },
+        { label: 'Estado', key: 'estado' },
+        { label: 'Tickets', key: 'totalTickets' },
+        { label: 'Sop.', key: 'soporte' },
+        { label: 'Ops.', key: 'operaciones' }
+      ];
+    } else if (logTabActivo === 'reportesFaltantes') {
+      cabeceras = [
+        { label: 'Fecha', key: 'fecha' },
+        { label: 'Hora', key: 'hora' },
+        { label: 'Operación', key: 'operacion' },
+        { label: 'Cliente', key: 'cliente' }
+      ];
+    }
+    
+    cabeceras.forEach(function(c) {
+      var th = crear('th', null);
+      th.style.cursor = 'pointer';
+      th.style.userSelect = 'none';
+      
+      var texto = c.label;
+      if (ordenLogs.key === c.key) {
+         texto += ordenLogs.asc ? ' ▼' : ' ▲';
+      }
+      th.textContent = texto;
+      
+      th.addEventListener('click', function() {
+         if (ordenLogs.key === c.key) {
+            ordenLogs.asc = !ordenLogs.asc;
+         } else {
+            ordenLogs.key = c.key;
+            ordenLogs.asc = true;
+         }
+         pintarTabActivo();
+      });
+      
+      trCabecera.appendChild(th);
+    });
+    thead.appendChild(trCabecera);
+
+    // Generar filas
+    data.forEach(function(log, i) {
+      var tr = crear('tr', 'fila-log');
+      
+      // Expandir solo si tiene detalles extra
+      var tieneDetalle = false;
+      if (logTabActivo === 'estadoFinal' && (log.origen || log.ultimoError)) tieneDetalle = true;
+      if (logTabActivo === 'erroresScript' && log.error) tieneDetalle = true;
+      
+      if (tieneDetalle) {
+        tr.style.cursor = 'pointer';
+        tr.addEventListener('click', function() {
+          var detalle = document.getElementById('detalle-log-' + i);
+          if (detalle) detalle.style.display = detalle.style.display === 'none' ? 'table-row' : 'none';
+        });
+      }
+
+      if (logTabActivo === 'estadoFinal') {
+        tr.appendChild(crear('td', null, log.hora));
+        tr.appendChild(crear('td', null, log.operacion));
+        tr.appendChild(crear('td', null, log.cliente || '-'));
+        
+        var tdEstado = crear('td');
+        var badge = 'badge-neutral';
+        if (log.estado === 'SUCCESS' || log.estado.indexOf('Resuelto') > -1) badge = 'badge-success';
+        else if (log.estado === 'ADVERTENCIA' || log.estado.indexOf('advertencia') > -1) badge = 'badge-warning';
+        else if (log.estado === 'ERROR' || log.estado.indexOf('No resuelto') > -1) badge = 'badge-error';
+        tdEstado.appendChild(crear('span', badge, log.estado));
+        tr.appendChild(tdEstado);
+      } 
+      else if (logTabActivo === 'erroresScript') {
+        tr.appendChild(crear('td', null, log.hora));
+        tr.appendChild(crear('td', null, log.operacion));
+        tr.appendChild(crear('td', null, log.cliente || '-'));
+        tr.appendChild(crear('td', null, (log.error ? log.error.substring(0, 50) + '...' : '-')));
+      }
+      else if (logTabActivo === 'envioMails') {
+        tr.appendChild(crear('td', null, log.horaStr));
+        tr.appendChild(crear('td', null, log.cliente || '-'));
+        tr.appendChild(crear('td', null, log.tecnologia));
+        tr.appendChild(crear('td', null, log.pod));
+        
+        var tdEstado = crear('td');
+        var badge = 'badge-neutral';
+        if (log.estado === 'Sin Anomalías') badge = 'badge-success';
+        else if (log.estado === 'Con Advertencias') badge = 'badge-warning';
+        else if (log.estado === 'Con Incidencias') badge = 'badge-error';
+        tdEstado.appendChild(crear('span', badge, log.estado));
+        tr.appendChild(tdEstado);
+        
+        tr.appendChild(crear('td', null, log.totalTickets));
+        tr.appendChild(crear('td', null, log.soporte));
+        tr.appendChild(crear('td', null, log.operaciones));
+      }
+      else if (logTabActivo === 'reportesFaltantes') {
+        tr.appendChild(crear('td', null, log.fecha));
+        tr.appendChild(crear('td', null, log.hora));
+        tr.appendChild(crear('td', null, log.operacion));
+        tr.appendChild(crear('td', null, log.cliente || '-'));
+      }
+      
+      tbody.appendChild(tr);
+
+      // Fila de detalle si aplica
+      if (tieneDetalle) {
+        var trDetalle = crear('tr', 'fila-detalle');
+        trDetalle.id = 'detalle-log-' + i;
+        trDetalle.style.display = 'none';
+        
+        var tdWrap = crear('td');
+        tdWrap.colSpan = cabeceras.length;
+        var divDetalle = crear('div', 'detalle-contenido');
+        
+        if (logTabActivo === 'estadoFinal') {
+          var badges = crear('div', 'metadata-badges');
+          
+          var bOrigen = crear('span', 'badge-info');
+          bOrigen.innerHTML = '<strong>Origen:</strong> ' + (log.origen || '-');
+          var bIntentos = crear('span', 'badge-info');
+          bIntentos.innerHTML = '<strong>Intentos:</strong> ' + log.intentos;
+          var bTickets = crear('span', 'badge-info');
+          bTickets.innerHTML = '<strong>Tickets Creados:</strong> ' + log.ticketsCreados;
+          
+          badges.appendChild(bOrigen);
+          badges.appendChild(bIntentos);
+          badges.appendChild(bTickets);
+          divDetalle.appendChild(badges);
+
+          if (log.ultimoError) {
+            var errorWrap = crear('div', 'error-formateado');
+            var partes = log.ultimoError.split(' | ');
+            partes.forEach(function(p) {
+              var lin = crear('div', 'error-bloque', '• ' + p.trim());
+              errorWrap.appendChild(lin);
+            });
+            divDetalle.appendChild(errorWrap);
+          }
+        } else if (logTabActivo === 'erroresScript') {
+          if (log.detalle) {
+            var pre = crear('pre', null, log.detalle);
+            divDetalle.appendChild(pre);
+          }
+        }
+        
+        tdWrap.appendChild(divDetalle);
+        trDetalle.appendChild(tdWrap);
+        tbody.appendChild(trDetalle);
+      }
+    });
+  }
+
+  // --- Gestión de Tickets Jira -------------------------------------------------------------
+  
+  function cargarJira() {
+    var btn = document.getElementById('btnCargarJira');
+    var rango = document.getElementById('filtroTiempoJira').value;
+    var projectKey = document.getElementById('filtroClienteJira').value;
+    ocupar(btn, 'Consultando Jira...');
+    document.getElementById('avisoJira').hidden = true;
+
+    google.script.run
+      .withSuccessHandler(function(datosAgrupados) {
+        liberar(btn);
+        pintarJira(datosAgrupados);
+      })
+      .withFailureHandler(function(error) {
+        liberar(btn);
+        mostrarAviso(document.getElementById('avisoJira'), 'error', 'No se pudieron consultar los tickets: ' + error.message);
+      })
+      .webapp_obtenerTicketsJira(rango, projectKey);
+  }
+
+  function pintarJira(datosAgrupados) {
+    var contenedor = document.getElementById('contenedorTicketsJira');
+    var vacio = document.getElementById('contenedorJiraVacio');
+    vaciar(contenedor);
+
+    if (!datosAgrupados || datosAgrupados.length === 0) {
+      vacio.textContent = 'No se encontraron tickets creados por el bot en el rango seleccionado.';
+      vacio.style.display = 'block';
+      return;
+    }
+    
+    vacio.style.display = 'none';
+
+    datosAgrupados.forEach(function(grupo, gIndex) {
+      // Crear Item de Acordeón
+      var item = crear('div', 'acordeon-item');
+      
+      // Cabecera
+      var header = crear('div', 'acordeon-header');
+      var titulo = crear('div', null, grupo.cliente + ' (' + grupo.tickets.length + ' tickets)');
+      var icono = crear('div', null, '▼');
+      header.appendChild(titulo);
+      header.appendChild(icono);
+      
+      // Contenido (Tabla)
+      var content = crear('div', 'acordeon-content');
+      var tabla = crear('table', 'tabla-logs');
+      tabla.style.width = '100%';
+      tabla.style.borderCollapse = 'collapse';
+      
+      // Thead
+      var thead = crear('thead');
+      var trHead = crear('tr');
+      ['Clave', 'Resumen', 'Estado', 'Creado'].forEach(function(c) {
+        trHead.appendChild(crear('th', null, c));
+      });
+      thead.appendChild(trHead);
+      tabla.appendChild(thead);
+      
+      // Tbody
+      var tbody = crear('tbody');
+      grupo.tickets.forEach(function(ticket) {
+        var tr = crear('tr', 'fila-log');
+        
+        // Key con enlace
+        var tdKey = crear('td');
+        var aKey = crear('a');
+        aKey.href = 'https://wetcom.atlassian.net/browse/' + ticket.key;
+        aKey.target = '_blank';
+        aKey.textContent = ticket.key;
+        aKey.style.color = '#2563eb';
+        aKey.style.textDecoration = 'none';
+        aKey.style.fontWeight = '600';
+        tdKey.appendChild(aKey);
+        tr.appendChild(tdKey);
+        
+        // Summary
+        tr.appendChild(crear('td', null, ticket.summary));
+        
+        // Status Badge
+        var tdStatus = crear('td');
+        var colorClase = 'blue-gray';
+        if (ticket.statusCategory === 'yellow') colorClase = 'yellow';
+        else if (ticket.statusCategory === 'green') colorClase = 'green';
+        tdStatus.appendChild(crear('span', 'badge-jira ' + colorClase, ticket.status));
+        tr.appendChild(tdStatus);
+        
+        // Created Date
+        var d = new Date(ticket.created);
+        var fFecha = ('0' + d.getDate()).slice(-2) + '/' + ('0' + (d.getMonth() + 1)).slice(-2) + ' ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+        tr.appendChild(crear('td', null, fFecha));
+        
+        tbody.appendChild(tr);
+      });
+      tabla.appendChild(tbody);
+      
+      // Envolver tabla en un div con overflow
+      var overflowDiv = crear('div');
+      overflowDiv.style.overflowX = 'auto';
+      overflowDiv.appendChild(tabla);
+      content.appendChild(overflowDiv);
+      
+      item.appendChild(header);
+      item.appendChild(content);
+      
+      // Lógica de colapso
+      header.addEventListener('click', function() {
+        var isOpen = content.classList.contains('open');
+        content.classList.toggle('open');
+        icono.textContent = isOpen ? '▼' : '▲';
+      });
+      
+      // Expandir el primer acordeón por defecto
+      if (gIndex === 0) {
+        content.classList.add('open');
+        icono.textContent = '▲';
+      }
+      
+      contenedor.appendChild(item);
+    });
+  }
+
   // --- Arranque -----------------------------------------------------------------------------
 
   el.btnCiclo.addEventListener('click', function () { lanzarCiclo(false); });
   el.btnActualizar.addEventListener('click', actualizarBandeja);
+  
+  // Listeners para filtros
+  document.getElementById('filtroCliente').addEventListener('change', pintarBandeja);
+  document.getElementById('filtroBuscar').addEventListener('keyup', pintarBandeja);
+  
+  if (document.getElementById('filtroClienteLogs')) {
+    document.getElementById('filtroClienteLogs').addEventListener('change', pintarTabActivo);
+    document.getElementById('filtroBuscarLogs').addEventListener('keyup', pintarTabActivo);
+  }
+  
+  if (document.getElementById('filtroEntornoLogs')) {
+    document.getElementById('filtroEntornoLogs').addEventListener('change', cargarLogs);
+  }
+
+  // Listener logs y tabs
+  document.getElementById('btnActualizarLogs').addEventListener('click', cargarLogs);
+  var tabButtons = document.querySelectorAll('.tab-btn');
+  for (var k = 0; k < tabButtons.length; k++) {
+    tabButtons[k].addEventListener('click', cambiarTabLogs);
+  }
+  
+  // --- Navegación Principal ------------------------------------------------------------------
+  
+  function cambiarSeccionPrincipal(e) {
+    var targetId = e.currentTarget.getAttribute('data-seccion');
+    
+    // Ocultar todas las secciones
+    var vistas = document.querySelectorAll('.vista-seccion');
+    for (var i = 0; i < vistas.length; i++) {
+      vistas[i].classList.remove('active');
+    }
+    
+    // Desmarcar todos los botones
+    var navBtns = document.querySelectorAll('.nav-btn');
+    for (var j = 0; j < navBtns.length; j++) {
+      navBtns[j].classList.remove('active');
+    }
+    
+    // Mostrar la sección objetivo y marcar el botón
+    document.getElementById(targetId).classList.add('active');
+    e.currentTarget.classList.add('active');
+  }
+
+  var mainNavButtons = document.querySelectorAll('.nav-btn');
+  for (var m = 0; m < mainNavButtons.length; m++) {
+    mainNavButtons[m].addEventListener('click', cambiarSeccionPrincipal);
+  }
+
+  // Listener Jira
+  document.getElementById('btnCargarJira').addEventListener('click', cargarJira);
+
+  // --- Reportes Analíticos ------------------------------------------------------------------
+  
+  google.charts.load('current', {'packages':['corechart', 'bar']});
+  
+  document.getElementById('btnCargarReportes').addEventListener('click', function() {
+    var btn = this;
+    var projectKey = document.getElementById('filtroClienteReportes').value;
+    var rango = document.getElementById('filtroTiempoReportes').value;
+    
+    ocupar(btn, 'Consultando...');
+    document.getElementById('avisoReportes').hidden = true;
+    document.getElementById('contenedorReportesVacio').style.display = 'none';
+    document.getElementById('contenedorReportesDatos').style.display = 'none';
+    
+    google.script.run
+      .withSuccessHandler(function(datos) {
+        liberar(btn);
+        pintarReportesAnaliticos(datos);
+      })
+      .withFailureHandler(function(error) {
+        liberar(btn);
+        mostrarAviso(document.getElementById('avisoReportes'), 'error', 'No se pudieron consultar los reportes: ' + error.message);
+      })
+      .webapp_obtenerDatosGraficosJira(projectKey, rango);
+  });
+
+  function pintarReportesAnaliticos(datos) {
+    document.getElementById('contenedorReportesDatos').style.display = 'block';
+    
+    // Torta: Ops vs Soporte
+    var dataPie = google.visualization.arrayToDataTable([
+      ['Tipo', 'Cantidad'],
+      ['Operaciones', datos.stats.totalOps],
+      ['Soporte', datos.stats.totalSop]
+    ]);
+    var optionsPie = {
+      pieHole: 0.4,
+      colors: ['#109E58', '#3b82f6'],
+      legend: { position: 'bottom' },
+      chartArea: { width: '90%', height: '80%' }
+    };
+    var chartPie = new google.visualization.PieChart(document.getElementById('piechart_div'));
+    chartPie.draw(dataPie, optionsPie);
+    
+    // Barras: Por tecnología
+    var arrBarras = [['Tecnología', 'Operaciones', 'Soporte']];
+    datos.stats.barras.forEach(function(b) {
+      arrBarras.push([b.tecnologia, b.ops, b.sop]);
+    });
+    var dataBar = google.visualization.arrayToDataTable(arrBarras);
+    var optionsBar = {
+      bars: 'vertical',
+      colors: ['#109E58', '#3b82f6'],
+      legend: { position: 'top' },
+      chartArea: { width: '80%', height: '70%' },
+      hAxis: { title: 'Tecnología' },
+      vAxis: { title: 'Tickets' }
+    };
+    var chartBar = new google.charts.Bar(document.getElementById('barchart_div'));
+    chartBar.draw(dataBar, google.charts.Bar.convertOptions(optionsBar));
+
+    // Tablas
+    document.getElementById('countOps').textContent = datos.ticketsOps.length;
+    renderPaginatedTable(datos.ticketsOps, 'tbodyOps', 'paginacionOps', 1, 8);
+
+    document.getElementById('countSop').textContent = datos.ticketsSop.length;
+    renderPaginatedTable(datos.ticketsSop, 'tbodySop', 'paginacionSop', 1, 8);
+  }
+
+  function renderPaginatedTable(tickets, tbodyId, paginacionId, pagina, itemsPorPagina) {
+    var tbody = document.getElementById(tbodyId);
+    var paginacion = document.getElementById(paginacionId);
+    vaciar(tbody);
+    vaciar(paginacion);
+
+    var totalPaginas = Math.ceil(tickets.length / itemsPorPagina);
+    if (totalPaginas === 0) totalPaginas = 1;
+    if (pagina > totalPaginas) pagina = totalPaginas;
+
+    var inicio = (pagina - 1) * itemsPorPagina;
+    var fin = inicio + itemsPorPagina;
+    var itemsPagina = tickets.slice(inicio, fin);
+
+    itemsPagina.forEach(function(t) {
+      var colorClase = 'blue-gray';
+      if (t.statusCategory === 'yellow') colorClase = 'yellow';
+      else if (t.statusCategory === 'green') colorClase = 'green';
+      
+      var badgeHtml = '<span class="badge-jira ' + colorClase + '">' + t.status + '</span>';
+      
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td><a href="https://wetcom.atlassian.net/browse/' + t.key + '" target="_blank" style="color:#2563eb;">' + t.key + '</a></td><td>' + t.summary + '</td><td>' + badgeHtml + '</td><td>' + new Date(t.created).toLocaleDateString() + '</td>';
+      tbody.appendChild(tr);
+    });
+
+    if (totalPaginas > 1) {
+      var createBtn = function(texto, pageNum, isActive, isDisabled) {
+        var btn = document.createElement('button');
+        btn.innerHTML = texto;
+        btn.style.padding = '4px 8px';
+        btn.style.border = '1px solid #d1d5db';
+        btn.style.background = isActive ? '#109E58' : (isDisabled ? '#f3f4f6' : 'white');
+        btn.style.color = isActive ? 'white' : (isDisabled ? '#9ca3af' : '#374151');
+        btn.style.borderRadius = '4px';
+        btn.style.cursor = isDisabled ? 'default' : 'pointer';
+        if (!isDisabled && !isActive) {
+          btn.addEventListener('click', function() {
+            renderPaginatedTable(tickets, tbodyId, paginacionId, pageNum, itemsPorPagina);
+          });
+        }
+        paginacion.appendChild(btn);
+      };
+
+      createBtn('&laquo;', pagina - 1, false, pagina === 1);
+      
+      var pages = [];
+      for (var i = 1; i <= totalPaginas; i++) {
+        if (i === 1 || i === totalPaginas || (i >= pagina - 1 && i <= pagina + 1)) {
+          pages.push(i);
+        }
+      }
+      
+      var lastP = 0;
+      pages.forEach(function(p) {
+        if (lastP + 1 < p) {
+          var span = document.createElement('span');
+          span.innerHTML = '&hellip;';
+          span.style.padding = '4px 4px';
+          span.style.color = '#6b7280';
+          paginacion.appendChild(span);
+        }
+        createBtn(p, p, p === pagina, false);
+        lastP = p;
+      });
+
+      createBtn('&raquo;', pagina + 1, false, pagina === totalPaginas);
+    }
+  }
 
   pintarEncabezado();
   pintarBandeja();

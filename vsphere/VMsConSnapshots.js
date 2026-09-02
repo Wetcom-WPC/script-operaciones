@@ -12,9 +12,15 @@ const SNAPSHOTS_ROW_LIMIT_FOR_TABLE = 5;
 const SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE = "Se detectaron VMs con Snapshots";
 const SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT = "Se detectaron VMs con Snapshots";
 
-const AGE_MAX = 7;      // Días
-const SIZE_MAX = 300;   // GB
-const CANTIDAD_MAX = 3; // Unidades
+const AGE_MAX = 7;      // Días (umbral Ops)
+const SIZE_MAX = 300;   // GB   (umbral Ops)
+const CANTIDAD_MAX = 3; // Unidades (umbral Ops)
+
+// Umbrales globales de Soporte (buenas prácticas): se aplican a VMs que no matchean
+// ninguna regla en la planilla SOP pero superan estos límites más graves.
+const SOP_AGE_MAX = 14;     // Días
+const SOP_SIZE_MAX = 1024;  // GB
+const SOP_CANTIDAD_MAX = 7; // Unidades
 
 class VMsConSnapshotsProcessor extends MailProcessor {
   constructor() {
@@ -54,6 +60,9 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     Logger.log("HEADERS ENCONTRADOS: " + JSON.stringify(headers));
     
     if (clientConfig && !clientConfig.exceptions) clientConfig.exceptions = [];
+    Logger.log('[DEBUG EXCEPCIONES] Excepciones globales (Ops): ' + JSON.stringify(clientConfig.exceptions));
+    Logger.log('[DEBUG EXCEPCIONES] Excepciones globales cargadas de la planilla: ' + JSON.stringify(clientConfig.exceptions));
+    Logger.log('[DEBUG EXCEPCIONES] Excepciones globales cargadas de la planilla: ' + JSON.stringify(clientConfig.exceptions));
 
     const findCol = (namePart) => headers.findIndex(h => h.toLowerCase().includes(namePart.toLowerCase()));
     
@@ -81,18 +90,23 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     const parseSeguro = (val) => {
       if (!val) return 0;
       let clean = val.toString().trim();
-      if (clean.includes('.') && clean.includes(',')) clean = clean.replace(/\./g, '');
-      clean = clean.replace(',', '.');
+      let lastDot = clean.lastIndexOf('.');
+      let lastComma = clean.lastIndexOf(',');
+      if (lastDot > lastComma) { clean = clean.replace(/,/g, ''); }
+      else if (lastComma > lastDot) { clean = clean.replace(/\./g, '').replace(/,/g, '.'); }
+      else { clean = clean.replace(/,/g, '.'); }
       return parseFloat(clean) || 0;
     };
 
     const parseSpaceToGB = (val) => {
       if (!val) return 0;
       let str = val.toString().trim().toUpperCase();
-      let clean = str;
-      if (clean.includes('.') && clean.includes(',')) clean = clean.replace(/\./g, '');
-      clean = clean.replace(/[^\d.,-]/g, '').trim();
-      clean = clean.replace(',', '.');
+      let clean = str.replace(/[^\d.,-]/g, '').trim();
+      let lastDot = clean.lastIndexOf('.');
+      let lastComma = clean.lastIndexOf(',');
+      if (lastDot > lastComma) { clean = clean.replace(/,/g, ''); }
+      else if (lastComma > lastDot) { clean = clean.replace(/\./g, '').replace(/,/g, '.'); }
+      else { clean = clean.replace(/,/g, '.'); }
       let num = parseFloat(clean) || 0;
       if (str.includes('TB')) return num * 1024;
       if (str.includes('MB')) return num / 1024;
@@ -141,23 +155,24 @@ class VMsConSnapshotsProcessor extends MailProcessor {
         row.push(usedPercent > 0 ? usedPercent.toFixed(2) + "%" : "0.00%");
       }
       
-      if (isRowExcepted(row, headers, clientConfig.exceptions)) return;
-
-      const matchedRule = findMatchingSopRule(row, headers, sopRules);
-      if (matchedRule) {
-         Logger.log("[DEBUG SOPORTE] VM MATCH. Valores regla: AGE=" + matchedRule.age + ", SIZE=" + matchedRule.size + ", QTY=" + matchedRule.qty + ". Valores reales: AGE=" + age + ", SIZE=" + space + ", QTY=" + count);
+      // PASO 1: SOP siempre tiene prioridad
+      const matchedSopRule = findMatchingSopRule(row, headers, sopRules);
+      if (matchedSopRule) {
+         Logger.log('[DEBUG SOPORTE] VM MATCH SOP: criterio=' + matchedSopRule.criterio + ' VM=' + vmName);
       }
-      
-      if (matchedRule) {
-         let sizeLimit = matchedRule.size > 0 ? matchedRule.size : Infinity;
-         let ageLimit = matchedRule.age > 0 ? matchedRule.age : Infinity;
-         let qtyLimit = matchedRule.qty > 0 ? matchedRule.qty : Infinity;
+
+      if (matchedSopRule && matchedSopRule.criterio === 'considerar') {
+         // → Ticket SOPORTE con umbrales personalizados
+         let sizeLimit = matchedSopRule.size > 0 ? matchedSopRule.size : Infinity;
+         let ageLimit = matchedSopRule.age > 0 ? matchedSopRule.age : Infinity;
+         let qtyLimit = matchedSopRule.qty > 0 ? matchedSopRule.qty : Infinity;
          
          let rowBreaksRule = false;
          if (age >= ageLimit) { detectedReasonsSoporte.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
          if (count >= qtyLimit) { detectedReasonsSoporte.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
          
-         if (matchedRule.sizeType === 'relativo') {
+         const esRelativo = matchedSopRule.sizeType === 'porcentaje' || matchedSopRule.sizeType === 'relativo';
+         if (esRelativo) {
             if (usedPercent >= sizeLimit && sizeLimit !== Infinity) {
                detectedReasonsSoporte.add(`Tamaño Relativo >= ${sizeLimit}%`); 
                rowBreaksRule = true;
@@ -169,13 +184,78 @@ class VMsConSnapshotsProcessor extends MailProcessor {
             }
          }
          if (rowBreaksRule) soporteAlerts.push(row);
+
       } else {
-         let rowBreaksRule = false;
-         if (age >= AGE_MAX) { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
-         if (space >= SIZE_MAX) { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
-         if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+         // Si es 'exceptuar' de SOP o si no hay regla SOP
+         let fallsToOps = false;
          
-         if (rowBreaksRule) opsAlerts.push(row);
+         if (matchedSopRule && matchedSopRule.criterio === 'exceptuar') {
+            // Está exceptuada de SOP explícitamente -> pasamos directo a evaluar OPS
+            fallsToOps = true;
+         } else {
+            // PASO 2: Evaluar umbrales SOP Hardcodeados (Safety net)
+            let sopBreaksRule = false;
+            if (age >= SOP_AGE_MAX) { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
+            if (space >= SOP_SIZE_MAX) { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB`); sopBreaksRule = true; }
+            if (count >= SOP_CANTIDAD_MAX) { detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`); sopBreaksRule = true; }
+            
+            if (sopBreaksRule) {
+               Logger.log('[DEBUG EVAL] -> VM asignada a SOPORTE por umbrales hardcodeados: ' + vmName);
+               soporteAlerts.push(row);
+            } else {
+               fallsToOps = true;
+            }
+         }
+
+         if (fallsToOps) {
+            // PASO 3: Evaluar OPS
+            const matchedOpsRule = findMatchingSopRule(row, headers, clientConfig.exceptions);
+            if (matchedOpsRule) {
+               Logger.log('[DEBUG OPS] VM MATCH OPS: criterio=' + matchedOpsRule.criterio + ' VM=' + vmName);
+            }
+
+            if (matchedOpsRule && matchedOpsRule.criterio === 'considerar') {
+               // Umbrales OPS personalizados
+               let sizeLimit = matchedOpsRule.size > 0 ? matchedOpsRule.size : Infinity;
+               let ageLimit  = matchedOpsRule.age  > 0 ? matchedOpsRule.age  : Infinity;
+               let qtyLimit  = matchedOpsRule.qty  > 0 ? matchedOpsRule.qty  : Infinity;
+               
+               let rowBreaksRule = false;
+               if (age   >= ageLimit) { detectedReasonsOps.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
+               if (count >= qtyLimit) { detectedReasonsOps.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
+               
+               const esRelativo = matchedOpsRule.sizeType === 'porcentaje' || matchedOpsRule.sizeType === 'relativo';
+               if (esRelativo) {
+                  if (usedPercent >= sizeLimit && sizeLimit !== Infinity) { 
+                     detectedReasonsOps.add(`Tamaño Relativo >= ${sizeLimit}%`); 
+                     rowBreaksRule = true; 
+                  }
+               } else {
+                  if (space >= sizeLimit && sizeLimit !== Infinity) { 
+                     detectedReasonsOps.add(`Tamaño Absoluto >= ${sizeLimit} GB`); 
+                     rowBreaksRule = true; 
+                  }
+               }
+               if (rowBreaksRule) {
+                  Logger.log('[DEBUG EVAL] -> VM asignada a OPS por regla personalizada: ' + vmName);
+                  opsAlerts.push(row);
+               }
+            } else if (matchedOpsRule) {
+               // criterio = 'ignorar' o vacío
+               Logger.log('[DEBUG EVAL] -> VM IGNORADA por regla OPS (criterio=' + matchedOpsRule.criterio + '): ' + vmName);
+            } else {
+               // PASO 4: Evaluar umbrales OPS Hardcodeados
+               let rowBreaksRule = false;
+               if (age >= AGE_MAX) { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
+               if (space >= SIZE_MAX) { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
+               if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+               
+               if (rowBreaksRule) {
+                  Logger.log('[DEBUG EVAL] -> VM asignada a OPS (umbrales hardcodeados): ' + vmName);
+                  opsAlerts.push(row);
+               }
+            }
+         }
       }
     });
 
@@ -216,7 +296,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
                                    findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps.jiraProjectKey);
                                const rowsExp = [...this.opsAlerts];
         
-        const nombreReporteOps = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-OPS.xlsx";
+        const nombreReporteOps = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "") + "-OPS.xlsx";
         const xlsxBlobOps = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporteOps);
         if (xlsxBlobOps) {
             this.extractedBlobs = this.extractedBlobs || [];
@@ -227,10 +307,12 @@ class VMsConSnapshotsProcessor extends MailProcessor {
           if (!haSidoActualizadoHoy(existingTicketKeyOps, "ALERTA-SNAPSHOTS-OPS")) {
             let commentText = `⏳ **El problema persiste.** [HU-ALERTA-SNAPSHOTS-OPS]\n\nSe detectaron ${this.opsAlerts.length} VMs fuera de norma:\n${this.opsReasonsText}\n\n`;
             if (this.opsAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-              commentText += `|| ${headers.join(" || ")} ||\n`;
-              this.opsAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+              if (xlsxBlobOps) {
+                addAttachmentToJiraTicket(existingTicketKeyOps, xlsxBlobOps);
+                commentText += "Se adjunta reporte detallado.\n";
+              }
               addCommentToJiraTicket(existingTicketKeyOps, commentText);
-              summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con tabla.` });
+              summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con comentario y adjunto.` });
             } else {
               if (xlsxBlobOps) {
                 const attStatus = addAttachmentToJiraTicket(existingTicketKeyOps, xlsxBlobOps);
@@ -256,7 +338,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
             summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
             description += `|| ${headers.join(" || ")} ||\n`;
             this.opsAlerts.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
-            const creationResult = createTicketAndNotify(summary, description, null, clientConfigOps, this.operationName);
+            const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfigOps, this.operationName);
             if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
             else globalStatus = 'FAILURE';
           } else {
@@ -286,7 +368,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
                                    findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT + " (Soporte)", clientConfigSop.jiraProjectKeySop);
                            const rowsExp = [...this.soporteAlerts];
         
-        const nombreReporteSop = attachmentName.replace(/\.xlsx$|\.csv$/i, "") + "-SOP.xlsx";
+        const nombreReporteSop = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "") + "-SOP.xlsx";
         const xlsxBlobSop = convertDataToXlsxBlob([headers, ...rowsExp], nombreReporteSop);
         if (xlsxBlobSop) {
             this.extractedBlobs = this.extractedBlobs || [];
@@ -297,10 +379,12 @@ class VMsConSnapshotsProcessor extends MailProcessor {
           if (!haSidoActualizadoHoy(existingTicketKeySop, "ALERTA-SNAPSHOTS-SOP")) {
             let commentText = `⏳ **El problema persiste.** [HU-ALERTA-SNAPSHOTS-SOP]\n\nSe detectaron ${this.soporteAlerts.length} VMs fuera de norma:\n${this.soporteReasonsText}\n\n`;
             if (this.soporteAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-              commentText += `|| ${headers.join(" || ")} ||\n`;
-              this.soporteAlerts.forEach(row => commentText += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
+              if (xlsxBlobSop) {
+                addAttachmentToJiraTicket(existingTicketKeySop, xlsxBlobSop);
+                commentText += "Se adjunta reporte detallado.\n";
+              }
               addCommentToJiraTicket(existingTicketKeySop, commentText);
-              summaryReport.exitos.push({ mensaje: `Ticket SOPORTE ${existingTicketKeySop} actualizado con tabla.` });
+              summaryReport.exitos.push({ mensaje: `Ticket SOPORTE ${existingTicketKeySop} actualizado con comentario y adjunto.` });
             } else {
               if (xlsxBlobSop) {
                 const attStatus = addAttachmentToJiraTicket(existingTicketKeySop, xlsxBlobSop);
@@ -321,14 +405,14 @@ class VMsConSnapshotsProcessor extends MailProcessor {
           let summary, description;
           description = `Se detectaron ${this.soporteAlerts.length} VMs con snapshots fuera del estándar (Soporte):\n${this.soporteReasonsText}\n\n`;
           if (this.soporteAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE + " (Soporte)";
             description += `|| ${headers.join(" || ")} ||\n`;
             this.soporteAlerts.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
-            const creationResult = createTicketAndNotifySoporte(summary, description, null, clientConfigSop);
+            const creationResult = createTicketAndNotifySoporte(summary, description, xlsxBlobSop, clientConfigSop);
             if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Soporte: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
             else globalStatus = 'FAILURE';
           } else {
-            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT;
+            summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT + " (Soporte)";
             description += `Debido a la cantidad de registros, se adjunta el reporte.`;
             const creationResult = createTicketAndNotifySoporte(summary, description, xlsxBlobSop, clientConfigSop);
             if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Soporte: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
@@ -357,9 +441,6 @@ function findMatchingSopRule(reportRow, headers, exceptions) {
   });
   for (const exceptionId in exceptions) {
     const ruleGroup = exceptions[exceptionId];
-    // Solo procesar grupos marcados como 'considerar'
-    const hasConsiderar = ruleGroup.some(c => (c.criterio || '').toLowerCase() === 'considerar');
-    if (!hasConsiderar) continue;
 
     const allConditionsMet = ruleGroup.every(condition => {
       let nCol = condition.column.trim().toLowerCase();
@@ -379,9 +460,8 @@ function findMatchingSopRule(reportRow, headers, exceptions) {
     });
 
     if (allConditionsMet) {
-      // Devolver la primera condición del grupo que tenga límites definidos
-      const c = ruleGroup.find(r => r.ageLimit != null || r.sizeLimit != null || r.qtyLimit != null);
-      if (c) return { age: c.ageLimit, size: c.sizeLimit, qty: c.qtyLimit, sizeType: c.sizeType || '' };
+      const c = ruleGroup[0];
+      if (c) return { age: c.ageLimit, size: c.sizeLimit, qty: c.qtyLimit, sizeType: c.sizeType || '', criterio: (c.criterio || '').toLowerCase() };
     }
   }
   return null;

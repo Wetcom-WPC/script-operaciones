@@ -147,7 +147,7 @@ class OrphanedVMsProcessor extends MailProcessor {
   handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
     const alertCount = reasonsText;
     
-    const baseName = attachmentName.replace(/\.(xlsx|csv|zip)$/i, "");
+    const baseName = attachmentName.replace(/\.(xlsx|csv|xls|json|zip)$/i, "");
     const newFileName = `${baseName} - FILTRADO.xlsx`;
     const xlsxBlob = generateStyledReportBlob(finalAlerts, newFileName, [], "VMs");
     

@@ -27,36 +27,19 @@ class VMsConPreguntasProcessor extends MailProcessor {
     const emailSubject = message.getSubject();
     if (emailSubject.toLowerCase().includes("success")) {
       const senderEmail = message.getFrom();
-      let clientConfig = getClientConfig(senderEmail, this.operationName);
-      clientConfig = this.resolveClientConfig(clientConfig, senderEmail, null, message, summaryReport);
+      const clientConfig = getClientConfig(senderEmail, this.operationName);
       if (clientConfig) {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).` });
-        if (this.scheduledTaskName) {
-          const taskNameToClose = clientConfig.isAVS ? "AVS - " + this.scheduledTaskName : this.scheduledTaskName;
-          buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
-        }
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       }
-      return { status: 'SUCCESS' };
+        if (typeof clientConfig !== 'undefined' && clientConfig) {
+      const nombreArchivo = this.operationName + " - OK.txt";
+      this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+      this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+    }
+    return { status: 'SUCCESS' };
     }
     return super.processSingleMessage(message, summaryReport);
-  }
-
-  resolveClientConfig(config, sender, attachment, message, summaryReport) {
-    const emailSubject = message.getSubject();
-    const subjectLower = emailSubject.toLowerCase();
-
-    // isAVS: mismo criterio que AlertasDevSphere.js y Affinity Rules.js — sin esto, el
-    // cierre de la Tarea Programada usa el nombre sin prefijo y puede terminar cerrando
-    // (o buscando) la tarea del lado equivocado (AVS vs. no-AVS).
-    const isAVS = subjectLower.includes('avs') || (attachment && attachment.getName().toLowerCase().includes('avs'));
-
-    if (!config) {
-      config = getClientConfig(sender, this.operationName);
-    }
-    if (config) {
-      config.isAVS = isAVS;
-    }
-    return config;
   }
 
   parseAttachment(attachment, summaryReport) {
@@ -110,7 +93,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
       } else {
-        const newFileName = attachmentName.replace(/\.json$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
         attachmentStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
 
@@ -126,10 +109,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
       }
       
       if (attachmentStatus.status === 'SUCCESS') {
-        if (this.scheduledTaskName) {
-          const taskNameToClose = clientConfig.isAVS ? "AVS - " + this.scheduledTaskName : this.scheduledTaskName;
-          buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
-        }
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       }
       return { status: attachmentStatus.status };
     } else {
@@ -143,7 +123,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
       } else {
         summary = Q_VM_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Se encontraron ${alertCount} VMs con preguntas pendientes. Se adjunta el reporte filtrado.`;
-        const newFileName = attachmentName.replace(/\.json$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       }
       const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, this.operationName);
@@ -157,10 +137,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
       }
       
       if (creationResult.status !== 'FAILURE' && creationResult.status !== 'HTTP_500') {
-        if (this.scheduledTaskName) {
-          const taskNameToClose = clientConfig.isAVS ? "AVS - " + this.scheduledTaskName : this.scheduledTaskName;
-          buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
-        }
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
       }
       return { status: creationResult.status };
     }

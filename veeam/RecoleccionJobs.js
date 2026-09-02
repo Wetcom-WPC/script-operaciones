@@ -7,6 +7,13 @@ function enviarMailRecoleccionDiarios() {
     borrarActivadorTemporal(); // Super importante para cortar la cadena de triggers
     return;
   }
+
+  // ---> NUEVO: FILTRO DE FINES DE SEMANA <---
+  const diaDeHoy = new Date().getDay();
+  if (diaDeHoy === 0 || diaDeHoy === 6) { // 0 es Domingo, 6 es Sábado
+    Logger.log("EJECUCIÓN OMITIDA: Es fin de semana (sábado o domingo).");
+    return;
+  }
   
   // === CONFIGURACIÓN ===
   const destinatario = "mara.cannella@comafi.com.ar,ulises.nunez@comafi.com.ar,Gustavo.Rodriguez@comafi.com.ar,emiliano.chiarini@comafi.com.ar";
@@ -51,7 +58,9 @@ Ante cualquier duda o consulta estamos a su disposición.`;
   // === BUSCAR LA CARPETA DEL DÍA ===
   const carpetas = carpetaRaiz.getFoldersByName(nombreCarpeta);
   if (!carpetas.hasNext()) {
-    throw new Error(`❌ No existe la carpeta del día ${nombreCarpeta} dentro de la raíz.`);
+    Logger.log(`⚠️ La carpeta del día ${nombreCarpeta} aún no existe.`);
+    programarReintentoRecoleccion();
+    return;
   }
 
   const carpetaDia = carpetas.next();
@@ -72,8 +81,19 @@ Ante cualquier duda o consulta estamos a su disposición.`;
 
   // === VALIDAR PRESENCIA DEL ARCHIVO ===
   if (adjuntos.length === 0) {
-    Logger.log(`❌ ERROR: No se encontró el archivo ${nombreArchivoEsperado} en la carpeta ${nombreCarpeta}. Mail NO enviado.`);
-    return; // <-- Detiene y NO envía nada
+    Logger.log(`⚠️ No se encontró el archivo ${nombreArchivoEsperado} en la carpeta ${nombreCarpeta}.`);
+    programarReintentoRecoleccion();
+    return;
+  }
+
+  // === VALIDAR ARCHIVO VACÍO ===
+  // Chequeamos el tamaño del archivo adjunto
+  const archivoBlob = adjuntos[0];
+  if (archivoBlob.getBytes().length === 0) {
+    const msjError = `El archivo ${nombreArchivoEsperado} llegó completamente vacío (0 bytes). Se cancela el envío del correo al cliente.`;
+    Logger.log(`🚨 ${msjError}`);
+    enviarAlertaCriticaSlack("Reporte de Comafi Vacío", msjError);
+    return;
   }
 
   // === ENVIAR EL MAIL ===
@@ -105,8 +125,33 @@ function crearTriggerDiario() {
   ScriptApp.newTrigger("enviarMailRecoleccionDiarios")
     .timeBased()
     .everyDays(1) // Se ejecuta cada día
-    .atHour(9)    // En la franja de 9:00 a.m. a 10:00 a.m.
+    .atHour(8)    // En la franja de 9:00 a.m. a 10:00 a.m.
     .create();
     
   Logger.log("¡Activador creado con éxito para ejecutarse diariamente entre las 9:00 y las 10:00 a.m.!");
+}
+
+// ==========================================
+// FUNCIONES DE REINTENTO AUTOMÁTICO (NUEVO)
+// ==========================================
+function programarReintentoRecoleccion() {
+  Logger.log("⏳ Programando un reintento automático para dentro de 15 minutos...");
+  ScriptApp.newTrigger("reintentoRecoleccionDiarios")
+    .timeBased()
+    .after(15 * 60 * 1000) // 15 minutos en milisegundos
+    .create();
+}
+
+function reintentoRecoleccionDiarios() {
+  // 1. Limpiar el trigger actual para no acumular basura en el proyecto
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => {
+    if (t.getHandlerFunction() === "reintentoRecoleccionDiarios") {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+  
+  // 2. Volver a intentar el envío normal
+  Logger.log("🔄 Iniciando ejecución de reintento...");
+  enviarMailRecoleccionDiarios();
 }

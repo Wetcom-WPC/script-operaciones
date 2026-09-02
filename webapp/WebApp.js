@@ -135,6 +135,191 @@ function webapp_exigirAutorizacion(usuario) {
  *
  * @returns {Object}
  */
+function webapp_listaClientes() {
+  const lista = [];
+  try {
+    const PROD_INDEX_ID = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
+    const spreadsheet = SpreadsheetApp.openById(PROD_INDEX_ID);
+    const sheet = spreadsheet.getSheets()[0];
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const cli = data[i][1]; // Index 1 is Client Name
+      const pkey = data[i][3]; // Index 3 is Project Key
+      if (cli && typeof cli === 'string') {
+        lista.push({ nombre: cli.trim(), key: (pkey || '').toString().toUpperCase().trim() });
+      }
+    }
+  } catch (e) {
+    Logger.log('[WebApp] Error leyendo clientes desde PROD_INDEX: ' + e.message);
+  }
+  return lista.sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+/**
+ * Extrae los nombres de los miembros del equipo WPC para usarlos en queries JQL.
+ * @returns {Array<string>} Lista de nombres formateados para JQL (incluye "currentUser()")
+ */
+function webapp_obtenerEquipoWPC() {
+  let creadores = ["currentUser()"];
+  try {
+    const wpcSheetId = "14-l10On3DeGAhNPQu0qDI2bUHFmrkxlBYlG0Q1bSDZw";
+    const sheetWPC = SpreadsheetApp.openById(wpcSheetId).getSheetByName("Equipo");
+    if (sheetWPC) {
+      const dataWPC = sheetWPC.getRange("A2:A").getValues();
+      dataWPC.forEach(row => {
+        const nombre = row[0];
+        if (nombre && typeof nombre === 'string' && nombre.trim() !== '') {
+          creadores.push(`"${nombre.trim()}"`);
+        }
+      });
+    }
+  } catch(e) {
+    Logger.log("Error leyendo planilla Equipo WPC: " + e.message);
+  }
+  return creadores;
+}
+
+/**
+ * Obtiene los datos de Jira para armar los gráficos interactivos.
+ * @param {string} projectKey La clave del proyecto (Ops) del cliente.
+ * @param {string} rango El filtro de tiempo (ej: 'mes_actual')
+ */
+function webapp_obtenerDatosGraficosJira(projectKey, rango) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+
+  if (!projectKey || projectKey === 'ALL') {
+    throw new Error("Debe seleccionar un cliente específico.");
+  }
+
+  // 1. Obtener claves de proyectos (Ops y Soporte) del Índice Maestro PROD
+  const PROD_INDEX_ID = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
+  let keyOps = projectKey;
+  let keySop = null;
+
+  try {
+    const sheet = SpreadsheetApp.openById(PROD_INDEX_ID).getSheets()[0];
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      const pkey = data[i][3]; // Columna D: Jira Project Key (Ops)
+      const pkeySop = data[i][13]; // Columna N: Jira Project Key (Soporte)
+      if (pkey && pkey.toString().toUpperCase().trim() === projectKey.toUpperCase()) {
+        if (pkeySop) {
+          keySop = pkeySop.toString().toUpperCase().trim();
+        }
+        break;
+      }
+    }
+  } catch(e) {
+    Logger.log("Error leyendo indice PROD para gráficos: " + e.message);
+  }
+
+  // 2. Construir JQL
+  let jqlRango = `created >= startOfMonth()`; // default este mes
+  if (rango === 'mes_pasado') {
+    jqlRango = `created >= startOfMonth(-1) AND created < startOfMonth()`;
+  } else if (rango === '30dias') {
+    jqlRango = `created >= "-30d"`;
+  } else if (rango === '7dias') {
+    jqlRango = `created >= "-7d"`;
+  }
+
+  let proyectosStr = `"${keyOps}"`;
+  if (keySop) proyectosStr += `, "${keySop}"`;
+
+  // 3. Obtener nombres del equipo WPC
+  const creadoresStr = webapp_obtenerEquipoWPC().join(", ");
+  const jql = `project IN (${proyectosStr}) AND creator IN (${creadoresStr}) AND ${jqlRango} ORDER BY created DESC`;
+
+  let allTickets = [];
+  let nextPageToken = null;
+  const maxResults = 100;
+
+  try {
+    while (true) {
+      const payload = {
+        "jql": jql,
+        "maxResults": maxResults,
+        "fields": ["key", "summary", "status", "created", "project", "customfield_12316"] 
+      };
+      
+      if (nextPageToken) payload.nextPageToken = nextPageToken;
+
+      const options = {
+        "method": "post", 
+        "contentType": "application/json",
+        "headers": getJiraHeaders(),
+        "payload": JSON.stringify(payload),
+        "muteHttpExceptions": true
+      };
+
+      const respuesta = fetchWithRetries(`${JIRA_DOMAIN}/rest/api/3/search/jql`, options);
+      if (respuesta.getResponseCode() !== 200) {
+        Logger.log("Error consultando gráficos Jira: " + respuesta.getContentText());
+        break;
+      }
+      
+      const data = JSON.parse(respuesta.getContentText());
+      if (data.issues) allTickets = allTickets.concat(data.issues);
+      if (!data.nextPageToken) break;
+      nextPageToken = data.nextPageToken;
+    }
+  } catch (e) {
+    Logger.log('Error Jira Graficos: ' + e.message);
+  }
+
+  // 3. Procesar datos
+  let ticketsOps = [];
+  let ticketsSop = [];
+  let tecMap = {};
+
+  allTickets.forEach(issue => {
+    const projKey = issue.fields.project.key.toUpperCase();
+    const isOps = projKey === keyOps.toUpperCase();
+    
+    // Extraer tecnología
+    let tec = "Desconocida / Sin asignar";
+    if (issue.fields.customfield_12316 && issue.fields.customfield_12316.value) {
+      tec = issue.fields.customfield_12316.value;
+    }
+
+    const t = {
+      key: issue.key,
+      summary: issue.fields.summary,
+      status: issue.fields.status.name,
+      statusCategory: issue.fields.status.statusCategory.colorName,
+      created: issue.fields.created,
+      tecnologia: tec
+    };
+
+    if (isOps) ticketsOps.push(t);
+    else ticketsSop.push(t);
+
+    if (!tecMap[tec]) tecMap[tec] = { ops: 0, sop: 0 };
+    if (isOps) tecMap[tec].ops++;
+    else tecMap[tec].sop++;
+  });
+
+  let seriesBarras = [];
+  for (let tec in tecMap) {
+    seriesBarras.push({
+      tecnologia: tec,
+      ops: tecMap[tec].ops,
+      sop: tecMap[tec].sop
+    });
+  }
+
+  return {
+    ticketsOps,
+    ticketsSop,
+    stats: {
+      totalOps: ticketsOps.length,
+      totalSop: ticketsSop.length,
+      barras: seriesBarras
+    }
+  };
+}
+
 function webapp_estado() {
   const usuario = webapp_usuarioActual();
   webapp_exigirAutorizacion(usuario);
@@ -149,11 +334,26 @@ function webapp_estado() {
     Logger.log('[WebApp] No se pudo consultar el calendario de feriados: ' + e.message);
   }
 
+  const hoyStr = Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
+  
+  let procesadosHoy = 0;
+  let erroresHoy = 0;
+  let faltantesHoy = 0;
+  try {
+    const logs = webapp_obtenerLogs(100); // 100 rows is enough for a single day usually
+    const hoyCorto = hoyStr.substring(0,5); // dd/MM
+    procesadosHoy = logs.estadoFinal.filter(l => l.fecha === hoyStr && l.estado === 'Éxito').length;
+    erroresHoy = logs.erroresScript.filter(l => l.hora.startsWith(hoyCorto)).length; 
+    faltantesHoy = logs.reportesFaltantes.filter(l => l.fecha === hoyStr).length;
+  } catch(e) {
+    Logger.log("Error calculando KPIs de salud: " + e.message);
+  }
+
   return {
     usuario: usuario,
     cuenta: webapp_cuentaEfectiva(),
     testing: esEntornoTesting(),
-    fecha: Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy'),
+    fecha: hoyStr,
     hora: Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'HH:mm'),
     ventana: { inicio: HORA_INICIO, fin: HORA_FIN },
     enVentana: ahora.getHours() >= HORA_INICIO && ahora.getHours() < HORA_FIN,
@@ -161,7 +361,13 @@ function webapp_estado() {
     feriado: feriado,
     cicloEnCurso: webapp_hayCicloEnCurso(),
     ultimoLanzamiento: webapp_leerUltimoLanzamiento(),
-    bandeja: webapp_cacheLeer()
+    bandeja: webapp_cacheLeer(),
+    clientes: webapp_listaClientes(),
+    kpis: {
+      procesados: procesadosHoy,
+      errores: erroresHoy,
+      faltantes: faltantesHoy
+    }
   };
 }
 
@@ -335,4 +541,243 @@ function manual_probarWebApp() {
   datos.columnas.forEach(function (c) {
     Logger.log('  ' + c.titulo + ': ' + c.total);
   });
+}
+
+/**
+ * Obtiene las ejecuciones recientes de todas las hojas de Logs.
+ * @param {number} limite Cantidad máxima de logs a devolver por pestaña.
+ * @returns {Object} Objeto con listas de logs para cada pestaña.
+ */
+function webapp_obtenerLogs(limite, overrideSheetId) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+  
+  if (!limite) limite = 50;
+  
+  const resultados = {
+    estadoFinal: [],
+    erroresScript: [],
+    envioMails: [],
+    reportesFaltantes: []
+  };
+  
+  try {
+    const logSheetId = overrideSheetId || PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID") || (typeof LOG_SHEET_ID !== 'undefined' ? LOG_SHEET_ID : null);
+    if (!logSheetId) return resultados;
+    
+    const ss = SpreadsheetApp.openById(logSheetId);
+    
+    // Función auxiliar para leer y formatear una hoja
+    function procesarHoja(nombreHoja, mapeador) {
+      const sheet = ss.getSheetByName(nombreHoja);
+      if (!sheet) return [];
+      const data = sheet.getDataRange().getValues();
+      if (data.length <= 1) return [];
+      
+      const rows = data.slice(1);
+      // Ordenar por la primera columna (Fecha/Timestamp) descendente
+      rows.sort(function(a, b) {
+        const d1 = new Date(a[0]).getTime();
+        const d2 = new Date(b[0]).getTime();
+        return (isNaN(d2) ? 0 : d2) - (isNaN(d1) ? 0 : d1);
+      });
+      
+      const limiteReal = Math.min(rows.length, limite);
+      const procesados = [];
+      for (let i = 0; i < limiteReal; i++) {
+        procesados.push(mapeador(rows[i]));
+      }
+      return procesados;
+    }
+
+    // 1. Estado Final
+    resultados.estadoFinal = procesarHoja("Estado Final", function(r) {
+      let d = r[11] ? new Date(r[11]) : (r[0] ? new Date(r[0]) : new Date());
+      return {
+        hora: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'HH:mm'),
+        fecha: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy'),
+        operacion: r[1] || "",
+        origen: r[2] || "",
+        cliente: r[3] || "",
+        pod: r[4] || "",
+        intentos: r[5] || 0,
+        estado: r[6] || "",
+        ticketsCreados: r[7] || 0,
+        ultimoError: r[10] || ""
+      };
+    });
+
+    // 2. Errores del Script
+    resultados.erroresScript = procesarHoja("Errores del Script", function(r) {
+      let d = r[0] ? new Date(r[0]) : new Date();
+      return {
+        hora: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'dd/MM HH:mm'),
+        operacion: r[2] || "",
+        origen: r[3] || "",
+        cliente: r[4] || "",
+        error: r[5] || "",
+        detalle: r[6] || ""
+      };
+    });
+
+    // 3. Envío de Mails
+    resultados.envioMails = procesarHoja("Envío de Mails", function(r) {
+      let horaStr = r[1];
+      if (r[1] instanceof Date) {
+        horaStr = Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, 'HH:mm:ss');
+      }
+      return {
+        horaStr: horaStr || "-",
+        cliente: r[3] || "-",
+        tecnologia: r[4] || "-",
+        pod: r[5] || "-",
+        estado: r[6] || "Desconocido",
+        totalTickets: r[7] !== "" ? r[7] : 0,
+        soporte: r[8] !== "" ? r[8] : 0,
+        operaciones: r[9] !== "" ? r[9] : 0
+      };
+    });
+
+    // 4. Reportes Faltantes
+    resultados.reportesFaltantes = procesarHoja("Logs Reportes Faltantes", function(r) {
+      // Fecha en col 0, Hora en col 1
+      return {
+        fecha: r[0] ? Utilities.formatDate(new Date(r[0]), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy') : "-",
+        hora: r[1] ? Utilities.formatDate(new Date(r[1]), HORARIO_OPERATIVO_TZ, 'HH:mm') : "-",
+        cliente: r[2] || "",
+        pod: r[3] || "",
+        tecnologia: r[4] || "",
+        operacion: r[5] || ""
+      };
+    });
+
+  } catch (e) {
+    Logger.log('[WebApp] Error obteniendo logs globales: ' + e.message);
+  }
+  
+  return resultados;
+}
+
+/**
+ * Consulta Jira para obtener los tickets del bot.
+ * @param {string} rango "hoy" o "7dias"
+ * @returns {Array<Object>} Lista de clientes con sus respectivos tickets
+ */
+function webapp_obtenerTicketsJira(rango, projectKey) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+
+  let jqlRango = `created >= "-24h"`; // default hoy
+  if (rango === "7dias") {
+    jqlRango = `created >= "-7d"`;
+  } else if (rango === "mes_actual") {
+    jqlRango = `created >= startOfMonth()`;
+  } else if (rango === "mes_pasado") {
+    jqlRango = `created >= startOfMonth(-1) AND created < startOfMonth()`;
+  }
+
+  const creadoresStr = webapp_obtenerEquipoWPC().join(", ");
+  let jql = `creator IN (${creadoresStr}) AND ${jqlRango}`;
+
+  if (projectKey && projectKey !== "ALL") {
+    jql += ` AND project = "${projectKey}"`;
+  }
+  
+  jql += ` ORDER BY created DESC`;
+
+  // 1. Ejecutar consulta JQL
+  let allTickets = [];
+  let nextPageToken = null;
+  const maxResults = 100;
+  
+  try {
+    while (true) {
+      const payload = {
+        "jql": jql,
+        "maxResults": maxResults,
+        "fields": ["key", "summary", "status", "created", "project"] 
+      };
+      
+      if (nextPageToken) {
+        payload.nextPageToken = nextPageToken;
+      }
+
+      const options = {
+        "method": "post", 
+        "contentType": "application/json",
+        "headers": getJiraHeaders(),
+        "payload": JSON.stringify(payload),
+        "muteHttpExceptions": true
+      };
+
+      const respuesta = fetchWithRetries(`${JIRA_DOMAIN}/rest/api/3/search/jql`, options);
+      const httpCode = respuesta.getResponseCode();
+      
+      if (httpCode !== 200) {
+        Logger.log(`[JIRA] Error al buscar tickets en dashboard (HTTP ${httpCode}). Response: ${respuesta.getContentText()}`);
+        break;
+      }
+      
+      const data = JSON.parse(respuesta.getContentText());
+      
+      if (data.issues && data.issues.length > 0) {
+        allTickets = allTickets.concat(data.issues);
+      }
+      
+      if (!data.nextPageToken) {
+        break; // ya trajimos todos
+      }
+      nextPageToken = data.nextPageToken;
+    }
+  } catch (e) {
+    Logger.log('[WebApp] Error consultando tickets de Jira: ' + e.message);
+  }
+
+  // 2. Mapear Project Keys a Nombres de Clientes leyendo MASTER_INDEX
+  const mapaClientes = {};
+  try {
+    const MASTER_INDEX_SHEET_ID = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID");
+    if (MASTER_INDEX_SHEET_ID) {
+      const sheetData = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID).getSheets()[0].getDataRange().getValues();
+      for (let i = 1; i < sheetData.length; i++) {
+        const r = sheetData[i];
+        const clienteNombre = r[1] ? r[1].toString().trim() : "";
+        const opsKey = r[3] ? r[3].toString().trim().toUpperCase() : "";
+        const sopKey = r[13] ? r[13].toString().trim().toUpperCase() : "";
+        if (clienteNombre) {
+          if (opsKey) mapaClientes[opsKey] = clienteNombre;
+          if (sopKey) mapaClientes[sopKey] = clienteNombre;
+        }
+      }
+    }
+  } catch(e) {
+    Logger.log("[WebApp] Error al leer Master Index para Jira: " + e.message);
+  }
+
+  // 3. Agrupar tickets por cliente
+  const agrupado = {};
+  allTickets.forEach(function(issue) {
+    const pKey = issue.fields.project.key.toUpperCase();
+    const clienteName = mapaClientes[pKey] || pKey; // fallback al project key si no está mapeado
+
+    if (!agrupado[clienteName]) {
+      agrupado[clienteName] = { cliente: clienteName, tickets: [] };
+    }
+    
+    agrupado[clienteName].tickets.push({
+      key: issue.key,
+      summary: issue.fields.summary,
+      status: issue.fields.status.name,
+      statusCategory: issue.fields.status.statusCategory.colorName,
+      created: issue.fields.created
+    });
+  });
+
+  // Convertir a array y ordenar por nombre
+  const resultados = Object.keys(agrupado).map(function(k) { return agrupado[k]; });
+  resultados.sort(function(a, b) {
+    return a.cliente.localeCompare(b.cliente);
+  });
+
+  return resultados;
 }

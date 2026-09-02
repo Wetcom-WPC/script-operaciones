@@ -24,13 +24,22 @@ const COL = {
 let CACHE_ARCHIVOS_CARPETA = {};
 
 /**
+ * Función para ejecutar la auditoría de forma segura (solo logs, sin enviar mensajes a Slack ni escribir en la hoja)
+ */
+function probarAuditoria() {
+  Logger.log("=== INICIANDO AUDITORÍA EN MODO PRUEBA ===");
+  ejecutarAuditoriaDiaria(true);
+  Logger.log("=== FIN DE MODO PRUEBA ===");
+}
+
+/**
  * ======================================================================
  * FUNCIÓN PRINCIPAL (TRIGGER DIARIO)
  * ======================================================================
  */
-function ejecutarAuditoriaDiaria() {
+function ejecutarAuditoriaDiaria(modoPrueba = false) {
   // FRENO DE FERIADOS — Usa la función centralizada del repo
-  if (esFeriadoHoy()) {
+  if (!modoPrueba && esFeriadoHoy()) {
     Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el calendario de Alarmas Wetcom.");
     return;
   }
@@ -75,16 +84,19 @@ function ejecutarAuditoriaDiaria() {
     try {
       if (debeLlegarHoy(frecuencia, fechaOrigen, hoy)) {
         Logger.log(`[Fila ${numFilaExcel}] Revisando: ${cliente} - "${idReporte}"`);
-        const llego = verificarEnDrive(idCarpetaRaiz, idReporte, hoy);
+        const llego = verificarEnDrive(idCarpetaRaiz, idReporte, hoy, cliente);
 
         if (!llego) {
           if (!reportesFaltantes[cliente]) reportesFaltantes[cliente] = [];
           reportesFaltantes[cliente].push(idReporte);
           totalFaltantes++;
           Logger.log(`❌ FALTANTE: ${cliente} - ${idReporte}`);
-          // Usa la función centralizada del repo (OperationsLogger.gs)
-          // que ya tiene el nombre correcto de pestaña: LOG_FALTANTES_TAB_NAME = "Logs Reportes Faltantes"
-          logReporteFaltante(cliente, idReporte, hoy);
+          
+          if (!modoPrueba) {
+            // Usa la función centralizada del repo (OperationsLogger.gs)
+            // que ya tiene el nombre correcto de pestaña: LOG_FALTANTES_TAB_NAME = "Logs Reportes Faltantes"
+            logReporteFaltante(cliente, idReporte, hoy);
+          }
         } else {
           Logger.log(`✅ RECIBIDO: ${cliente} - ${idReporte}`);
         }
@@ -98,7 +110,12 @@ function ejecutarAuditoriaDiaria() {
   }
 
   Logger.log(`Auditoría finalizada. Faltantes: ${totalFaltantes}.`);
-  enviarNotificacionSlack(reportesFaltantes, totalFaltantes, hoy);
+  
+  if (!modoPrueba) {
+    enviarNotificacionSlack(reportesFaltantes, totalFaltantes, hoy);
+  } else {
+    Logger.log("MODO PRUEBA: Se omitió el envío de mensajes a Slack.");
+  }
 }
 
 /**
@@ -106,17 +123,26 @@ function ejecutarAuditoriaDiaria() {
  * LÓGICA DE NEGOCIO: VERIFICACIÓN EN DRIVE
  * ======================================================================
  */
-function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy) {
+function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy, cliente) {
   const diaStr  = Utilities.formatDate(fechaHoy, Session.getScriptTimeZone(), "yyyyMMdd");
-  const cacheKey = idCarpetaRaiz + "_" + diaStr;
+  const cacheKey = idCarpetaRaiz + "_" + diaStr + "_" + cliente;
 
   if (!CACHE_ARCHIVOS_CARPETA[cacheKey]) {
     try {
-      const raiz = DriveApp.getFolderById(idCarpetaRaiz);
-      const carpetasDia = raiz.getFoldersByName(diaStr);
+      let raiz = DriveApp.getFolderById(idCarpetaRaiz);
+      
+      // Si la raíz no tiene la carpeta del día, buscamos si hay una carpeta con el nombre del cliente
+      let carpetasDia = raiz.getFoldersByName(diaStr);
+      if (!carpetasDia.hasNext()) {
+        const carpetasCliente = raiz.getFoldersByName(cliente);
+        if (carpetasCliente.hasNext()) {
+          raiz = carpetasCliente.next();
+          carpetasDia = raiz.getFoldersByName(diaStr);
+        }
+      }
 
       if (!carpetasDia.hasNext()) {
-        Logger.log(`❌ ERROR DRIVE: No existe carpeta del día "${diaStr}" en la raíz.`);
+        Logger.log(`❌ ERROR DRIVE: No existe carpeta del día "${diaStr}" para el cliente "${cliente}".`);
         CACHE_ARCHIVOS_CARPETA[cacheKey] = [];
         return false;
       }
@@ -128,16 +154,17 @@ function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy) {
         listaNombresArchivos.push(archivos.next().getName());
       }
       CACHE_ARCHIVOS_CARPETA[cacheKey] = listaNombresArchivos;
-      Logger.log(`📂 Caché OK: ${diaStr} tiene ${listaNombresArchivos.length} archivos.`);
+      Logger.log(`✅ Caché OK: ${cliente}/${diaStr} tiene ${listaNombresArchivos.length} archivos.`);
 
     } catch (e) {
-      Logger.log(`🔥 EXCEPCIÓN DRIVE (ID Raíz: ${idCarpetaRaiz}): ${e.message}`);
+      Logger.log(`⚠️ EXCEPCIÓN DRIVE (ID Raíz: ${idCarpetaRaiz}, Cliente: ${cliente}): ${e.message}`);
       throw new Error("Error de acceso a Drive. Verifica permisos e ID.");
     }
   }
 
   const archivosEnCarpeta = CACHE_ARCHIVOS_CARPETA[cacheKey];
-  return archivosEnCarpeta.some(nombreReal => nombreReal.includes(identificadorReporte));
+  const target = identificadorReporte.toLowerCase();
+  return archivosEnCarpeta.some(nombreReal => nombreReal.toLowerCase().includes(target));
 }
 
 /**
@@ -193,36 +220,88 @@ function enviarNotificacionSlack(reportesFaltantes, totalFaltantes, fechaHoy) {
     return;
   }
 
+  const MAX_CHARS_SECCION = 2900; // Slack rechaza secciones de más de 3000; dejamos margen.
+  const MAX_BLOCKS        = 50;   // Límite duro de blocks por mensaje.
+
   const fechaStr = Utilities.formatDate(fechaHoy, Session.getScriptTimeZone(), "dd/MM/yyyy");
-  let payload = {};
+  const linkRegistro = "https://docs.google.com/spreadsheets/d/"
+    + PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID")
+    + "/edit?gid=577353825#gid=577353825";
+
+  let blocks;
 
   if (totalFaltantes > 0) {
     const numClientesAfectados = Object.keys(reportesFaltantes).length;
-    let mensajePrincipal = `El día de la fecha no recibimos *${totalFaltantes} reportes* de *${numClientesAfectados} clientes*.`;
-    let detalles = "";
+    const mensajePrincipal = `El día de la fecha no recibimos *${totalFaltantes} reportes* de *${numClientesAfectados} clientes*.`;
+
+    const lineas = [];
     for (const cliente in reportesFaltantes) {
-      detalles += `• *${cliente}*:\n`;
-      reportesFaltantes[cliente].forEach(reporte => { detalles += `   - ${reporte}\n`; });
+      lineas.push(`• *${cliente}*:\n`);
+      reportesFaltantes[cliente].forEach(reporte => { lineas.push(`   - ${reporte}\n`); });
     }
-    payload = { "blocks": [
+
+    blocks = [
       { "type": "header",  "text": { "type": "plain_text", "text": "🚨 Alerta: Reportes no recibidos", "emoji": true } },
       { "type": "section", "text": { "type": "mrkdwn", "text": `*Fecha:* ${fechaStr}\n${mensajePrincipal}` } },
-      { "type": "section", "text": { "type": "mrkdwn", "text": "🔗 *Links útiles:*\n  <https://docs.google.com/spreadsheets/d/" + PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID") + "/edit?gid=577353825#gid=577353825| Registro de Reportes Faltantes>" } },
-      { "type": "divider" },
-      { "type": "section", "text": { "type": "mrkdwn", "text": detalles } }
-    ]};
+      { "type": "section", "text": { "type": "mrkdwn", "text": `🔗 *Links útiles:*\n  <${linkRegistro}| Registro de Reportes Faltantes>` } },
+      { "type": "divider" }
+    ];
+
+    // El detalle va en varias secciones: mandarlo en una sola supera los 3000
+    // caracteres que admite Slack y la API responde 400 invalid_blocks.
+    const trozos = _dividirEnBloquesDeTexto(lineas, MAX_CHARS_SECCION);
+    const espacioDisponible = MAX_BLOCKS - blocks.length - 1; // -1 reservado para el aviso de truncado
+
+    trozos.slice(0, espacioDisponible).forEach(trozo => {
+      blocks.push({ "type": "section", "text": { "type": "mrkdwn", "text": trozo } });
+    });
+
+    if (trozos.length > espacioDisponible) {
+      blocks.push({ "type": "section", "text": { "type": "mrkdwn", "text": `_Detalle truncado por los límites de Slack. Lista completa en <${linkRegistro}|el registro>._` } });
+    }
   } else {
-    payload = { "blocks": [
+    blocks = [
       { "type": "section", "text": { "type": "mrkdwn", "text": `✅ *Reportes Completos - ${fechaStr}*\nConfirmado: Todos los reportes han llegado correctamente.` } }
-    ]};
+    ];
   }
 
-  try {
-    UrlFetchApp.fetch(SLACK_WEBHOOK_URL_YASC, { "method": "post", "contentType": "application/json", "payload": JSON.stringify(payload) });
+  // sendSlackMessage ya trae reintentos y muteHttpExceptions, y loguea el cuerpo
+  // real de la respuesta de Slack (con UrlFetchApp directo llegaba truncada).
+  if (sendSlackMessage(SLACK_WEBHOOK_URL_YASC, { "blocks": blocks })) {
     Logger.log("✅ Notificación Slack enviada.");
-  } catch (e) {
-    Logger.log("❌ Error Slack: " + e.message);
+  } else {
+    Logger.log("❌ Error Slack: no se pudo enviar la notificación de reportes faltantes.");
   }
+}
+
+/**
+ * Reparte una lista de líneas en trozos de texto que no superen `maxChars`,
+ * sin cortar una línea al medio salvo que la línea sola ya exceda el máximo.
+ * @param {string[]} lineas Líneas ya terminadas en salto de línea.
+ * @param {number} maxChars Tamaño máximo de cada trozo.
+ * @returns {string[]} Trozos listos para usar como texto de un block de Slack.
+ */
+function _dividirEnBloquesDeTexto(lineas, maxChars) {
+  const trozos = [];
+  let actual = "";
+
+  lineas.forEach(linea => {
+    if (linea.length > maxChars) {
+      if (actual) { trozos.push(actual); actual = ""; }
+      for (let i = 0; i < linea.length; i += maxChars) {
+        trozos.push(linea.substring(i, i + maxChars));
+      }
+      return;
+    }
+    if (actual.length + linea.length > maxChars) {
+      trozos.push(actual);
+      actual = "";
+    }
+    actual += linea;
+  });
+
+  if (actual) trozos.push(actual);
+  return trozos;
 }
 
 /**

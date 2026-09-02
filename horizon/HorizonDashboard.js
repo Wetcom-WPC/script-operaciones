@@ -96,7 +96,7 @@ class HorizonDashboardProcessor extends MailProcessor {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
       } else {
-        const newFileName = attachmentName.replace(/\.json$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const matrixData = [headers].concat(finalAlerts.map(r => [r.object, r.alarm, r.severity, r.time, r.vcenter]));
         const xlsxBlob = convertDataToXlsxBlob(matrixData, newFileName);
         
@@ -133,7 +133,7 @@ class HorizonDashboardProcessor extends MailProcessor {
       } else {
         summary = HZ_DASH_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Informamos que se detectaron ${alertCount} alertas en la infraestructura de Horizon. Por la cantidad de registros, se adjunta el reporte detallado en formato Excel (excepciones ya filtradas).`;
-        const newFileName = attachmentName.replace(/\.json$/i, ".xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, ".xlsx");
         const matrixData = [headers].concat(finalAlerts.map(r => [r.object, r.alarm, r.severity, r.time, r.vcenter]));
         xlsxBlob = convertDataToXlsxBlob(matrixData, newFileName);
       }
