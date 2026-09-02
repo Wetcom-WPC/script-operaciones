@@ -1,0 +1,51 @@
+# Qué NO se sube a Apps Script.
+#
+# POR QUÉ EXISTE
+# `clasp` recorre TODO lo que cuelgue de rootDir (acá, la raíz del repo) y no sabe nada de
+# .gitignore. El 26/08/2026 apareció en el checkout un worktree de git bajo `.claude/`, que es
+# una copia entera del repo: clasp empezó a ver dos `appsscript.json` y 72 `.js` repetidos, y
+# todo `clasp push` moría con
+#
+#   A file with this name already exists in the current project: appsscript
+#
+# Con `deploy.sh` inutilizable, el equipo pasó a editar directo en el editor del navegador y el
+# proyecto vivo se fue separando del repo: para el 02/09/2026 había ~2900 líneas que no estaban
+# en git y dos fixes ya commiteados habían quedado pisados. Este archivo es lo que evita que eso
+# se repita.
+#
+# Ojo: acá van SOLO directorios que no forman parte del proyecto de Apps Script. Excluir código
+# real de acá lo BORRA del proyecto en el próximo push, porque clasp sincroniza el conjunto de
+# archivos, no solo los que cambiaron.
+
+# Worktrees y estado de agentes: copias del propio repo.
+.claude/**
+
+# Metadata de git.
+.git/**
+
+# Dependencias de Node, si algún día se agregan.
+node_modules/**
+
+# --------------------------------------------------------------------------------------------
+# EXCLUSIONES TEMPORALES — revisar al reconciliar el repo con el proyecto vivo (02/09/2026)
+#
+# Estos dos archivos están en git pero NO están en el proyecto de Apps Script de Playground
+# (se verificó con `clasp pull`: el core/ vivo tiene 15 archivos y ninguno es éstos). No se los
+# excluye por ser basura: se los excluye para que el despliegue del arreglo del panel no METIERA
+# archivos nuevos en un proyecto compartido, que es más de lo que ese arreglo debía tocar.
+#
+# Hay que decidir, para cada uno, si van al proyecto o si salen del repo:
+#
+# - core/ApiPublica.js: AGENTS.md lo describe como la fachada que consume Índice Playground, así
+#   que en principio DEBERÍA estar desplegado. No lo está, y encima sus 8 fachadas llaman a
+#   funciones `internal_*` que no existen en ningún archivo del árbol (en el proyecto vivo no hay
+#   una sola referencia a `internal_`). Subirlo tal cual haría que cada fachada dependa del orden
+#   de carga para no tapar a la implementación real. Ojo: el mismo archivo sí puede estar
+#   desplegado en Ops Operativo, donde el riesgo sería real — verificar allá.
+#
+# - core/Calendario.js: solo define esFeriadoHoy(), byte a byte igual a la copia que ya vive en
+#   core/Main.js. Subirlo suma una tercera declaración de la misma función.
+#
+# Cuando se resuelva, sacar estas dos líneas (y desplegar) o borrar los archivos del repo.
+core/ApiPublica.js
+core/Calendario.js
