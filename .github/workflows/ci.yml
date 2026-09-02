@@ -19,7 +19,7 @@ jobs:
               echo "::error file=${ARCHIVO}::Error de sintaxis"
               ERRORES=$((ERRORES + 1))
             fi
-          done < <(find . -name "*.js" -not -path "./.git/*" -print0)
+          done < <(git ls-files -z '*.js')
           if [ "$ERRORES" -gt 0 ]; then
             echo "Se encontraron ${ERRORES} archivo(s) con errores de sintaxis."
             exit 1
@@ -27,9 +27,38 @@ jobs:
 
       - name: Declaraciones duplicadas en el scope global (ver AGENTS.md §4)
         run: |
-          DUPLICADOS=$(grep -rhoE "^(const|let|class) +[A-Za-z0-9_]+" --include=*.js . | sort | uniq -d || true)
+          # Se enumera con `git ls-files` y no con `grep -r .`: esa forma recorre todo lo que
+          # cuelgue del directorio, incluidas copias del propio repo que no se despliegan (un
+          # worktree de git ignorado, por ejemplo), y cada copia hace que toda declaración
+          # aparezca "duplicada" contra sí misma. Mismo criterio que deploy.sh.
+          DUPLICADOS=$(git ls-files -z '*.js' | xargs -0 grep -hoE "^(const|let|class) +[A-Za-z0-9_]+" | sort | uniq -d || true)
           if [ -n "$DUPLICADOS" ]; then
             echo "Declaraciones duplicadas en el scope global (rompen el proyecto ENTERO en Apps Script):"
             echo "$DUPLICADOS"
+            exit 1
+          fi
+
+      - name: Funciones duplicadas entre archivos
+        run: |
+          # Dos `function foo()` en archivos distintos no rompen la compilación: la última en
+          # cargarse pisa a la otra en silencio, y el proyecto sigue andando con la versión
+          # equivocada. El chequeo de arriba solo mira const/let/class y no las ve.
+          FUNCIONES_DUP=$(git ls-files -z '*.js' | xargs -0 grep -hoE "^function +[A-Za-z0-9_]+" | sed -E 's/^function +//' | sort | uniq -d || true)
+          if [ -n "$FUNCIONES_DUP" ]; then
+            echo "Funciones declaradas en más de un archivo (la última pisa a las otras):"
+            echo "$FUNCIONES_DUP"
+            exit 1
+          fi
+
+      - name: El proyecto entero compila (scope global unico de Apps Script)
+        run: |
+          # El unico chequeo que reproduce lo que hace Apps Script: junta TODOS los .js en un
+          # solo scope y se lo da al parser. Un const repetido entre dos archivos no rompe a
+          # ninguno por separado; rompe el proyecto entero al cargar, y solo se ve asi.
+          DIR_TMP=$(mktemp -d)
+          CONCATENADO="$DIR_TMP/proyecto.js"
+          git ls-files -z '*.js' | sort -z | xargs -0 cat > "$CONCATENADO"
+          if ! node --check "$CONCATENADO"; then
+            echo "::error::Los archivos por separado compilan, pero el proyecto ENTERO no."
             exit 1
           fi

@@ -139,6 +139,31 @@ if [ -n "$FUNCIONES_DUP" ]; then
   exit 1
 fi
 echo "Sin funciones duplicadas."
+
+# --- 5c. El proyecto ENTERO compila -----------------------------------------------------
+# Los chequeos de arriba miran archivo por archivo y por patrones. Este es el único que
+# reproduce lo que hace Apps Script de verdad: junta TODOS los .js en un solo scope y se lo
+# da al parser. Un `const` repetido entre dos archivos no rompe a ninguno de los dos por
+# separado — rompe el proyecto entero al cargar, y solo se ve así.
+#
+# El 02/09/2026 Playground quedó sin compilar durante horas por exactamente esto: alguien
+# duplicó un archivo entero y las cuatro constantes repetidas tumbaron todo. Cada función
+# seguía siendo válida por su cuenta; el proyecto no.
+if command -v node >/dev/null 2>&1; then
+  DIR_TMP=$(mktemp -d)
+  CONCATENADO="$DIR_TMP/proyecto.js"
+  git ls-files -z '*.js' | sort -z | xargs -0 cat > "$CONCATENADO"
+  if ! node --check "$CONCATENADO" 2>/tmp/concat_error.txt; then
+    echo ""
+    echo "ERROR: los archivos por separado compilan, pero el proyecto ENTERO no."
+    echo "En Apps Script todos comparten un scope global, así que esto no arranca. NO se pusheó nada:"
+    sed 's/^/  /' /tmp/concat_error.txt | head -5
+    rm -rf "$DIR_TMP"
+    exit 1
+  fi
+  rm -rf "$DIR_TMP"
+  echo "El proyecto entero compila."
+fi
 echo ""
 
 # --- 6. Push + versión ----------------------------------------------------------------
