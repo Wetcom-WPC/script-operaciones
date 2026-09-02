@@ -540,6 +540,50 @@ function runAllTests() {
       "esReporteAVS: detecta por nombre de adjunto");
   } catch(e) { Logger.log("Error en Test frontera AVS: " + e.message); }
 
+  // --- TESTS: Tecnología de los tickets de Soporte ---
+  // Regresión del 02/09/2026 (ticket SCB-403): createJiraTicketForSoporte mandaba
+  // "Veeam Backup & Replication" hardcodeado para TODOS los tickets de Soporte. Servía cuando
+  // el único que usaba esa ruta era Jobs Veeam, pero cuando VMs con snapshots empezó a crear
+  // tickets de Soporte salieron con tecnología Veeam siendo reportes de vSphere.
+  Logger.log("--- Test: Tecnología en tickets de Soporte ---");
+  try {
+    const _fetchWithRetriesOriginal = fetchWithRetries;
+    let payloadCapturado = null;
+
+    // Se intercepta la llamada HTTP para leer el payload sin tocar Jira.
+    fetchWithRetries = function (url, options) {
+      payloadCapturado = JSON.parse(options.payload);
+      return {
+        getResponseCode: function () { return 201; },
+        getContentText: function () { return JSON.stringify({ issueKey: "TEST-1" }); }
+      };
+    };
+
+    try {
+      const CAMPO_TECNOLOGIA = "customfield_12316";
+
+      // Un reporte de vSphere que va al proyecto de Soporte: debe viajar como vSphere.
+      createJiraTicketForSoporte("Se detectaron VMs con Snapshots (Soporte)", "desc", {
+        serviceDeskIdSop: "1", requestTypeIdSop: "2", tecnologia: "VMware vSphere"
+      });
+      const tecVsphere = payloadCapturado && payloadCapturado.requestFieldValues
+        ? payloadCapturado.requestFieldValues[CAMPO_TECNOLOGIA] : null;
+      assertEqual(tecVsphere ? tecVsphere.value : null, "VMware vSphere",
+        "Soporte: la Tecnología sale de clientConfig y no de un literal Veeam (SCB-403)");
+
+      // Y los de Veeam siguen viajando como Veeam: el fix no debe invertir el problema.
+      createJiraTicketForSoporte("Jobs de Veeam (Soporte)", "desc", {
+        serviceDeskIdSop: "1", requestTypeIdSop: "2", tecnologia: "Veeam Backup & Replication"
+      });
+      const tecVeeam = payloadCapturado && payloadCapturado.requestFieldValues
+        ? payloadCapturado.requestFieldValues[CAMPO_TECNOLOGIA] : null;
+      assertEqual(tecVeeam ? tecVeeam.value : null, "Veeam Backup & Replication",
+        "Soporte: los reportes de Veeam siguen mandando su propia tecnología");
+    } finally {
+      fetchWithRetries = _fetchWithRetriesOriginal;
+    }
+  } catch(e) { Logger.log("Error en Test Tecnología Soporte: " + e.message); }
+
   Logger.log("=== FIN DE SUITE DE PRUEBAS ===");
   Logger.log(`Resultados: ${passed} Pasaron, ${failed} Fallaron.`);
   

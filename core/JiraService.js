@@ -738,7 +738,16 @@ function createJiraTicketForSoporte(summary, description, clientConfig) {
     "requestFieldValues": {
       "summary": summary, 
       "description": description,
-      [TECNOLOGIA_FIELD_ID]: { "value": "Veeam Backup & Replication" },
+      // La Tecnología sale de la config del cliente, igual que en los tickets de Ops.
+      //
+      // Hasta el 02/09/2026 acá había un literal "Veeam Backup & Replication" para TODOS los
+      // tickets de Soporte. Tenía sentido cuando el único que usaba esta ruta era Jobs Veeam,
+      // pero cuando VMs con snapshots empezó a crear tickets de Soporte quedaron saliendo con
+      // tecnología Veeam siendo reportes de vSphere (ej. SCB-403).
+      //
+      // Los processors de Veeam siguen forzando su tecnología en resolveClientConfig(), que es
+      // donde corresponde: depende del REPORTE, no del cliente.
+      [TECNOLOGIA_FIELD_ID]: { "value": clientConfig.tecnologia },
       
       // 2. Agregamos el objeto de prioridad.
       // Se espera que clientConfig.priority sea el ID numérico (ej: "4" para Baja)
