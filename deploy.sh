@@ -90,7 +90,7 @@ if command -v node >/dev/null 2>&1; then
       echo "ERROR DE SINTAXIS: ${ARCHIVO}"
       ERRORES=$((ERRORES + 1))
     fi
-  done < <(find . -name "*.js" -not -path "./.git/*" -print0)
+  done < <(git ls-files -z '*.js')
 
   if [ "$ERRORES" -gt 0 ]; then
     echo ""
@@ -106,7 +106,15 @@ fi
 # En Apps Script todos los archivos comparten un scope global: un const/let/class repetido
 # entre dos archivos rompe el proyecto ENTERO al cargar, no sólo el archivo culpable
 # (ver AGENTS.md §4). Es barato chequearlo y caro descubrirlo en producción.
-DUPLICADOS=$(grep -rhoE "^(const|let|class) +[A-Za-z0-9_]+" --include=*.js . | sort | uniq -d || true)
+#
+# Se enumera con `git ls-files` y no con `grep -r .` / `find .` a propósito: esas dos formas
+# recorren TODO lo que cuelgue del directorio, incluidas copias del propio repo que no se
+# despliegan (por ejemplo `.claude/worktrees/`, un worktree de git ignorado). Cada archivo
+# copiado hacía que toda declaración apareciera "duplicada" contra sí misma: el 02/09/2026
+# este chequeo reportaba 320 duplicados inexistentes y dejaba `deploy.sh` inutilizable.
+# `git ls-files` lista exactamente los archivos versionados, que son los que `clasp push`
+# sube; y como arriba ya se exige el árbol limpio, coincide con lo que hay en disco.
+DUPLICADOS=$(git ls-files -z '*.js' | xargs -0 grep -hoE "^(const|let|class) +[A-Za-z0-9_]+" | sort | uniq -d || true)
 if [ -n "$DUPLICADOS" ]; then
   echo ""
   echo "ERROR: declaraciones duplicadas en el scope global. NO se pusheó nada:"
