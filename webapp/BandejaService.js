@@ -62,6 +62,17 @@ const WEBAPP_CACHE_CHUNK = 30000;
  * entra sin leer, queda PENDIENTE mientras se reintenta, y termina en PROCESADO o en ERROR.
  * @returns {Array<{id: string, titulo: string, descripcion: string, query: string}>}
  */
+/**
+ * Convierte un nombre de etiqueta como "[OPS-PROCESADO]" al formato que GmailApp.search()
+ * entiende: los corchetes se reemplazan por guiones porque así los almacena Gmail internamente.
+ * @param {string} labelName
+ * @returns {string}
+ */
+function webapp_labelQuery(labelName) {
+  // Gmail almacena "[OPS-PROCESADO]" como "-OPS-PROCESADO-" para búsquedas
+  return 'label:' + labelName.replace(/\[/g, '').replace(/\]/g, '').replace(/\s+/g, '-');
+}
+
 function webapp_definicionDeColumnas() {
   return [
     {
@@ -74,19 +85,19 @@ function webapp_definicionDeColumnas() {
       id: 'ERROR',
       titulo: 'Error',
       descripcion: 'Apartados para revisión manual: reintentar no los arregla.',
-      query: 'label:' + OPS_LABEL_ERROR
+      query: webapp_labelQuery(OPS_LABEL_ERROR)
     },
     {
       id: 'PENDIENTE',
       titulo: 'Pendiente',
       descripcion: 'Falló algo transitorio; se reintentan en el próximo ciclo.',
-      query: 'label:' + OPS_LABEL_PENDIENTE
+      query: webapp_labelQuery(OPS_LABEL_PENDIENTE)
     },
     {
       id: 'PROCESADO',
       titulo: 'Procesado',
       descripcion: 'Terminados: ticket gestionado y archivo en Drive.',
-      query: 'label:' + OPS_LABEL_PROCESADO
+      query: webapp_labelQuery(OPS_LABEL_PROCESADO)
     }
   ];
 }
