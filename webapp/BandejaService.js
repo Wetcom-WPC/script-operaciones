@@ -64,15 +64,8 @@ const WEBAPP_CACHE_CHUNK = 30000;
  */
 /**
  * Convierte un nombre de etiqueta como "[OPS-PROCESADO]" al formato que GmailApp.search()
- * entiende: los corchetes se reemplazan por guiones porque así los almacena Gmail internamente.
- * @param {string} labelName
- * @returns {string}
+ * @returns {Array<{id: string, titulo: string, descripcion: string, query?: string, labelName?: string}>}
  */
-function webapp_labelQuery(labelName) {
-  // Gmail almacena "[OPS-PROCESADO]" como "-OPS-PROCESADO-" para búsquedas
-  return 'label:' + labelName.replace(/\[/g, '').replace(/\]/g, '').replace(/\s+/g, '-');
-}
-
 function webapp_definicionDeColumnas() {
   return [
     {
@@ -85,19 +78,19 @@ function webapp_definicionDeColumnas() {
       id: 'ERROR',
       titulo: 'Error',
       descripcion: 'Apartados para revisión manual: reintentar no los arregla.',
-      query: webapp_labelQuery(OPS_LABEL_ERROR)
+      labelName: OPS_LABEL_ERROR
     },
     {
       id: 'PENDIENTE',
       titulo: 'Pendiente',
       descripcion: 'Falló algo transitorio; se reintentan en el próximo ciclo.',
-      query: webapp_labelQuery(OPS_LABEL_PENDIENTE)
+      labelName: OPS_LABEL_PENDIENTE
     },
     {
       id: 'PROCESADO',
       titulo: 'Procesado',
       descripcion: 'Terminados: ticket gestionado y archivo en Drive.',
-      query: webapp_labelQuery(OPS_LABEL_PROCESADO)
+      labelName: OPS_LABEL_PROCESADO
     }
   ];
 }
@@ -141,12 +134,22 @@ function webapp_escanearBandeja() {
   let truncado = false;
 
   webapp_definicionDeColumnas().forEach(function (columna) {
-    const consulta = columna.query + ' after:' + hoyStr;
     let hilos = [];
     try {
-      hilos = GmailApp.search(consulta, 0, tope);
+      if (columna.labelName) {
+        // Búsqueda por objeto Label nativo — evita el bug de Gmail con corchetes en query strings
+        const etiqueta = GmailApp.getUserLabelByName(columna.labelName);
+        if (etiqueta) {
+          hilos = etiqueta.getThreads(0, tope);
+        } else {
+          Logger.log('[WebApp] Etiqueta no encontrada: ' + columna.labelName);
+        }
+      } else {
+        const consulta = columna.query + ' after:' + hoyStr;
+        hilos = GmailApp.search(consulta, 0, tope);
+      }
     } catch (e) {
-      Logger.log('[WebApp] Falló la búsqueda "' + consulta + '": ' + e.message);
+      Logger.log('[WebApp] Falló la búsqueda "' + columna.id + '": ' + e.message);
     }
 
     // Si la búsqueda vuelve justo con el tope, Gmail cortó el resultado: el total de esta
