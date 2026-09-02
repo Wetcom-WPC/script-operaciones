@@ -497,6 +497,93 @@ function runAllTests() {
     assertTrue(asuntos.every(function (a) { return a && a.trim() !== ""; }), "asuntos: no incluye vacíos (el catch-all quedaría sin correos)");
   } catch(e) { Logger.log("Error en Test registro de processors: " + e.message); }
 
+  // --- TESTS: frontera AVS / no-AVS al cerrar Tareas Programadas ---
+  // Regresión del 02/09/2026: el operador ~ de JQL es difuso y "AVS - VMs con snapshots"
+  // aparece al buscar "VMs con snapshots". La versión anterior filtraba en una sola dirección
+  // y después caía a issues[0] sin filtrar, así que un reporte de un lado podía cerrar la
+  // Tarea Programada del otro. Los dos tickets existen de verdad: OBM-18502 y OBM-18503.
+  Logger.log("--- Test: frontera AVS ---");
+  try {
+    const NO_AVS = { key: "OBM-18502", fields: { summary: "VMs con snapshots" } };
+    const AVS    = { key: "OBM-18503", fields: { summary: "AVS - VMs con snapshots" } };
+
+    assertTrue(esSummaryAVS("AVS - VMs con snapshots"), "esSummaryAVS: reconoce el lado AVS");
+    assertFalse(esSummaryAVS("VMs con snapshots"), "esSummaryAVS: no marca AVS lo que no lo es");
+
+    assertEqual(elegirTicketDelMismoLadoAVS([AVS, NO_AVS], "VMs con snapshots"), "OBM-18502",
+      "frontera AVS: un reporte no-AVS elige la tarea no-AVS aunque la AVS venga primera");
+    assertEqual(elegirTicketDelMismoLadoAVS([AVS, NO_AVS], "AVS - VMs con snapshots"), "OBM-18503",
+      "frontera AVS: un reporte AVS elige la tarea AVS");
+
+    // El caso que rompía: si la del lado buscado no está abierta, NO hay que devolver la otra.
+    assertEqual(elegirTicketDelMismoLadoAVS([NO_AVS], "AVS - VMs con snapshots"), null,
+      "frontera AVS: un reporte AVS NO cierra la tarea no-AVS cuando la suya no está abierta");
+    assertEqual(elegirTicketDelMismoLadoAVS([AVS], "VMs con snapshots"), null,
+      "frontera AVS: un reporte no-AVS NO cierra la tarea AVS cuando la suya no está abierta");
+
+    assertEqual(elegirTicketDelMismoLadoAVS([], "VMs con snapshots"), null,
+      "frontera AVS: sin resultados devuelve null");
+
+    // El nombre de la tarea a cerrar sale del lado del reporte, no del texto suelto.
+    assertEqual(nombreTareaSegunAVS("VMs con snapshots", { isAVS: true }), "AVS - VMs con snapshots",
+      "nombreTareaSegunAVS: antepone el prefijo cuando el reporte es AVS");
+    assertEqual(nombreTareaSegunAVS("VMs con snapshots", { isAVS: false }), "VMs con snapshots",
+      "nombreTareaSegunAVS: sin prefijo cuando no es AVS");
+    assertEqual(nombreTareaSegunAVS("VMs con snapshots", null), "VMs con snapshots",
+      "nombreTareaSegunAVS: tolera clientConfig nulo");
+
+    assertTrue(esReporteAVS("Reporte AVS - VMs con snapshots", null),
+      "esReporteAVS: detecta por asunto");
+    assertFalse(esReporteAVS("Reporte VMs con snapshots", null),
+      "esReporteAVS: no detecta donde no corresponde");
+    assertTrue(esReporteAVS("Reporte VMs con snapshots", { getName: function () { return "avs-reporte.csv"; } }),
+      "esReporteAVS: detecta por nombre de adjunto");
+  } catch(e) { Logger.log("Error en Test frontera AVS: " + e.message); }
+
+  // --- TESTS: Tecnología de los tickets de Soporte ---
+  // Regresión del 02/09/2026 (ticket SCB-403): createJiraTicketForSoporte mandaba
+  // "Veeam Backup & Replication" hardcodeado para TODOS los tickets de Soporte. Servía cuando
+  // el único que usaba esa ruta era Jobs Veeam, pero cuando VMs con snapshots empezó a crear
+  // tickets de Soporte salieron con tecnología Veeam siendo reportes de vSphere.
+  Logger.log("--- Test: Tecnología en tickets de Soporte ---");
+  try {
+    const _fetchWithRetriesOriginal = fetchWithRetries;
+    let payloadCapturado = null;
+
+    // Se intercepta la llamada HTTP para leer el payload sin tocar Jira.
+    fetchWithRetries = function (url, options) {
+      payloadCapturado = JSON.parse(options.payload);
+      return {
+        getResponseCode: function () { return 201; },
+        getContentText: function () { return JSON.stringify({ issueKey: "TEST-1" }); }
+      };
+    };
+
+    try {
+      const CAMPO_TECNOLOGIA = "customfield_12316";
+
+      // Un reporte de vSphere que va al proyecto de Soporte: debe viajar como vSphere.
+      createJiraTicketForSoporte("Se detectaron VMs con Snapshots (Soporte)", "desc", {
+        serviceDeskIdSop: "1", requestTypeIdSop: "2", tecnologia: "VMware vSphere"
+      });
+      const tecVsphere = payloadCapturado && payloadCapturado.requestFieldValues
+        ? payloadCapturado.requestFieldValues[CAMPO_TECNOLOGIA] : null;
+      assertEqual(tecVsphere ? tecVsphere.value : null, "VMware vSphere",
+        "Soporte: la Tecnología sale de clientConfig y no de un literal Veeam (SCB-403)");
+
+      // Y los de Veeam siguen viajando como Veeam: el fix no debe invertir el problema.
+      createJiraTicketForSoporte("Jobs de Veeam (Soporte)", "desc", {
+        serviceDeskIdSop: "1", requestTypeIdSop: "2", tecnologia: "Veeam Backup & Replication"
+      });
+      const tecVeeam = payloadCapturado && payloadCapturado.requestFieldValues
+        ? payloadCapturado.requestFieldValues[CAMPO_TECNOLOGIA] : null;
+      assertEqual(tecVeeam ? tecVeeam.value : null, "Veeam Backup & Replication",
+        "Soporte: los reportes de Veeam siguen mandando su propia tecnología");
+    } finally {
+      fetchWithRetries = _fetchWithRetriesOriginal;
+    }
+  } catch(e) { Logger.log("Error en Test Tecnología Soporte: " + e.message); }
+
   Logger.log("=== FIN DE SUITE DE PRUEBAS ===");
   Logger.log(`Resultados: ${passed} Pasaron, ${failed} Fallaron.`);
   

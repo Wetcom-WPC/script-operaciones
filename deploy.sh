@@ -90,7 +90,7 @@ if command -v node >/dev/null 2>&1; then
       echo "ERROR DE SINTAXIS: ${ARCHIVO}"
       ERRORES=$((ERRORES + 1))
     fi
-  done < <(find . -name "*.js" -not -path "./.git/*" -print0)
+  done < <(git ls-files -z '*.js')
 
   if [ "$ERRORES" -gt 0 ]; then
     echo ""
@@ -106,7 +106,15 @@ fi
 # En Apps Script todos los archivos comparten un scope global: un const/let/class repetido
 # entre dos archivos rompe el proyecto ENTERO al cargar, no sólo el archivo culpable
 # (ver AGENTS.md §4). Es barato chequearlo y caro descubrirlo en producción.
-DUPLICADOS=$(grep -rhoE "^(const|let|class) +[A-Za-z0-9_]+" --include=*.js . | sort | uniq -d || true)
+#
+# Se enumera con `git ls-files` y no con `grep -r .` / `find .` a propósito: esas dos formas
+# recorren TODO lo que cuelgue del directorio, incluidas copias del propio repo que no se
+# despliegan (por ejemplo `.claude/worktrees/`, un worktree de git ignorado). Cada archivo
+# copiado hacía que toda declaración apareciera "duplicada" contra sí misma: el 02/09/2026
+# este chequeo reportaba 320 duplicados inexistentes y dejaba `deploy.sh` inutilizable.
+# `git ls-files` lista exactamente los archivos versionados, que son los que `clasp push`
+# sube; y como arriba ya se exige el árbol limpio, coincide con lo que hay en disco.
+DUPLICADOS=$(git ls-files -z '*.js' | xargs -0 grep -hoE "^(const|let|class) +[A-Za-z0-9_]+" | sort | uniq -d || true)
 if [ -n "$DUPLICADOS" ]; then
   echo ""
   echo "ERROR: declaraciones duplicadas en el scope global. NO se pusheó nada:"
@@ -114,6 +122,23 @@ if [ -n "$DUPLICADOS" ]; then
   exit 1
 fi
 echo "Sin declaraciones duplicadas."
+
+# --- 5b. Funciones duplicadas ---------------------------------------------------------
+# Dos `function foo()` en archivos distintos NO rompen la compilación como un const repetido:
+# la que se carga última pisa a la otra, en silencio. Es peor que un error, porque el proyecto
+# sigue andando con la versión equivocada. Así convivieron tres copias de esFeriadoHoy() y tres
+# de findTargetReportTicket() (una disfrazada con el sufijo "Local"), y así una fachada de
+# ApiPublica.js quedó tapando a la implementación real. El chequeo de arriba no las ve porque
+# solo mira const/let/class.
+FUNCIONES_DUP=$(git ls-files -z '*.js' | xargs -0 grep -hoE "^function +[A-Za-z0-9_]+" | sed -E 's/^function +//' | sort | uniq -d || true)
+if [ -n "$FUNCIONES_DUP" ]; then
+  echo ""
+  echo "ERROR: funciones declaradas en más de un archivo. La última en cargarse pisa a las"
+  echo "otras sin avisar. Centralizá y dejá una sola. NO se pusheó nada:"
+  echo "$FUNCIONES_DUP" | sed 's/^/  /'
+  exit 1
+fi
+echo "Sin funciones duplicadas."
 echo ""
 
 # --- 6. Push + versión ----------------------------------------------------------------

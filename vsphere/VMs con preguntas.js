@@ -23,14 +23,30 @@ class VMsConPreguntasProcessor extends MailProcessor {
     });
   }
 
+  /**
+   * Marca el lado AVS del reporte sobre la config del cliente.
+   *
+   * Esta clase no tenia resolveClientConfig, asi que clientConfig.isAVS nunca se seteaba y el
+   * cierre de la Tarea Programada usaba siempre "VMs con Preguntas" (sin prefijo). Como el
+   * operador ~ de JQL es difuso, un reporte AVS podia terminar cerrando la tarea no-AVS.
+   */
+  resolveClientConfig(config, sender, attachment, message, summaryReport) {
+    if (!config) config = getClientConfig(sender, this.operationName);
+    if (config) {
+      config.isAVS = esReporteAVS(message ? message.getSubject() : '', attachment);
+    }
+    return config;
+  }
+
   processSingleMessage(message, summaryReport) {
     const emailSubject = message.getSubject();
     if (emailSubject.toLowerCase().includes("success")) {
       const senderEmail = message.getFrom();
-      const clientConfig = getClientConfig(senderEmail, this.operationName);
+      // Sin adjunto en esta rama: el lado AVS se deduce del asunto.
+      const clientConfig = this.resolveClientConfig(null, senderEmail, null, message, summaryReport);
       if (clientConfig) {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).` });
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
         if (typeof clientConfig !== 'undefined' && clientConfig) {
       const nombreArchivo = this.operationName + " - OK.txt";
@@ -109,7 +125,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
       }
       
       if (attachmentStatus.status === 'SUCCESS') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: attachmentStatus.status };
     } else {
@@ -137,7 +153,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
       }
       
       if (creationResult.status !== 'FAILURE' && creationResult.status !== 'HTTP_500') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: creationResult.status };
     }

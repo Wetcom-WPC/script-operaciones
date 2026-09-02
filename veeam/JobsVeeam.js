@@ -135,6 +135,15 @@ class JobsVeeamProcessor extends MailProcessor {
   handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
     let finalStatus = 'SUCCESS';
     const clientConfigSop = getClientConfig(this._currentSenderEmail, this.operationName, true);
+    // Mismo override que hace resolveClientConfig() para la config de Ops (más arriba en este
+    // archivo): este SÍ es un reporte de Veeam, vaya el ticket a Ops o a Soporte, y la columna
+    // de Tecnología del Índice Maestro es por cliente, no por reporte.
+    //
+    // Hace falta repetirlo acá porque esta línea llama a getClientConfig() directo y no pasa por
+    // resolveClientConfig(), así que el override de arriba no la alcanza. Antes esto no se
+    // notaba: la ruta de Soporte mandaba "Veeam Backup & Replication" hardcodeado para todos,
+    // lo que tapaba la omisión acá y a la vez rompía a los reportes que NO son de Veeam.
+    if (clientConfigSop) clientConfigSop.tecnologia = "Veeam Backup & Replication";
 
     for (const alertGroup of finalAlerts) {
       const { errorKey: mainError, affectedJobs } = alertGroup;

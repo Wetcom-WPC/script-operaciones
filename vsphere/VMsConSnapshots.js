@@ -38,6 +38,11 @@ class VMsConSnapshotsProcessor extends MailProcessor {
   }
 
   resolveClientConfig(config, sender, attachment, message, summaryReport) {
+    // Lado AVS del reporte. Sin esto, un reporte AVS cierra la Tarea Programada
+    // "VMs con snapshots" en vez de "AVS - VMs con snapshots": los dos tickets existen
+    // y el nombre sin prefijo apunta siempre al no-AVS.
+    const esAVS = esReporteAVS(message ? message.getSubject() : '', attachment);
+
     if (config) {
       config.senderEmail = sender;
     }
@@ -57,6 +62,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     } else if (!config || !config.clientName || config.clientName.toUpperCase().includes("DESCONOCIDO")) {
       return null;
     }
+    if (config) config.isAVS = esAVS;
     return config;
   }
 
@@ -442,7 +448,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     }
 
     if (globalStatus === 'SUCCESS' && this.scheduledTaskName) {
-       buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig_Ignored, false);
+       buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig_Ignored), clientConfig_Ignored, false);
     }
     return { status: globalStatus };
   }
