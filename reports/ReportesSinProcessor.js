@@ -45,18 +45,27 @@ class ReportesSinProcessorProcessor extends MailProcessor {
         break;
       }
 
-      const message = thread.getMessages()[thread.getMessageCount() - 1];
-      try {
-        Logger.log(`[${this.operationName}] Archivando correo sin processor: "${message.getSubject()}" (de ${message.getFrom()}).`);
-        const result = this.processSingleMessage(message, summaryReport);
-        etiquetarYMarcarProcesado(thread, result ? result.status : 'ERROR');
-      } catch (e) {
-        summaryReport.errores.push({
-          error: `Error Crítico en Script: ${e.message}`,
-          detalle: `Correo: "${message.getSubject()}" | Stack: ${e.stack}`
-        });
-        etiquetarYMarcarProcesado(thread, 'ERROR');
+      const mensajesDelHilo = thread.getMessages();
+      let estadoFinalHilo = 'SUCCESS';
+
+      for (const message of mensajesDelHilo) {
+        try {
+          Logger.log(`[${this.operationName}] Archivando correo sin processor: "${message.getSubject()}" (de ${message.getFrom()}).`);
+          const result = this.processSingleMessage(message, summaryReport);
+          
+          if (!result || result.status !== 'SUCCESS') {
+            estadoFinalHilo = 'ERROR';
+          }
+        } catch (e) {
+          summaryReport.errores.push({
+            error: `Error Crítico en Script: ${e.message}`,
+            detalle: `Correo: "${message.getSubject()}" | Stack: ${e.stack}`
+          });
+          estadoFinalHilo = 'ERROR';
+        }
       }
+
+      etiquetarYMarcarProcesado(thread, estadoFinalHilo);
     }
 
     enviarResumenSlack(this.operationName, summaryReport);
