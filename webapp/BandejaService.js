@@ -33,7 +33,7 @@ const WEBAPP_CACHE_TTL_SEG = 21600;
  * Configurable en caliente vía la Script Property "WEBAPP_MAX_HILOS_COLUMNA", sin volver a
  * desplegar. Subirlo hace el botón "Actualizar" más lento; el techo útil ronda los 500.
  */
-const WEBAPP_MAX_HILOS_POR_COLUMNA_DEFAULT = 1000;
+const WEBAPP_MAX_HILOS_POR_COLUMNA_DEFAULT = 500;
 
 /** @returns {number} Tope vigente (Script Property, o el default si no está seteada). */
 function webapp_maxHilosPorColumna() {
