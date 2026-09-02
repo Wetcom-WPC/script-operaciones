@@ -21,6 +21,16 @@ function getJiraHeaders() {
  */
 
 /**
+ * Campo "Tecnología" de Jira (lista desplegable: "VMware vSphere", "Veeam Backup & Replication",
+ * "VMware vSan"...). Lo escriben las tres funciones que crean tickets y lo lee el test E2E de
+ * tests/E2ETecnologiaSoporteTest.js.
+ *
+ * Estaba declarado tres veces, una dentro de cada función que lo usaba. Un id de campo repetido
+ * a mano es de las cosas que se cambian en un lado y no en los otros (AGENTS.md §5).
+ */
+const TECNOLOGIA_FIELD_ID = "customfield_12316";
+
+/**
  * ¿Este texto (summary de un ticket, o nombre de una Tarea Programada) pertenece al lado AVS?
  *
  * Existe como función y no como un `.includes('avs')` suelto porque la frontera AVS / no-AVS se
@@ -528,7 +538,6 @@ function createTicketCOMAFI(summary, description, attachmentBlob, clientConfig) 
 }
 function createJiraTicketForCOM(summary, description, clientConfig) {
   const ORIGEN_FIELD_ID = "customfield_12305"; 
-  const TECNOLOGIA_FIELD_ID = "customfield_12316";
   const DUEDATE_FIELD_ID = "duedate";
   
   const today = new Date();
@@ -610,7 +619,6 @@ function createTicketAndNotifySoporte(summary, description, attachmentBlob, clie
 
 function createJiraTicketForVM(summary, description, clientConfig) {
   const ORIGEN_FIELD_ID = "customfield_12305"; 
-  const TECNOLOGIA_FIELD_ID = "customfield_12316";
   const DUEDATE_FIELD_ID = "duedate";
   const today = new Date();
   today.setDate(today.getDate() + 7);
@@ -724,7 +732,6 @@ function ticketInformativo(issueKey, accountId, timeGuard = null) {
 
 function createJiraTicketForSoporte(summary, description, clientConfig) {
   const ORIGEN_FIELD_ID = "customfield_12305"; 
-  const TECNOLOGIA_FIELD_ID = "customfield_12316";
   
   // 1. Definimos el ID del campo de sistema para prioridad
   const PRIORITY_FIELD_ID = "priority"; 
