@@ -38,15 +38,15 @@ class VMsConSnapshotsProcessor extends MailProcessor {
   }
 
   resolveClientConfig(config, sender, attachment, message, summaryReport) {
-    // Lado AVS del reporte. Sin esto, un reporte AVS cierra la Tarea Programada
-    // "VMs con snapshots" en vez de "AVS - VMs con snapshots": los dos tickets existen
-    // y el nombre sin prefijo apunta siempre al no-AVS.
-    const esAVS = esReporteAVS(message ? message.getSubject() : '', attachment);
-
     if (config) {
       config.senderEmail = sender;
     }
     this._currentSenderEmail = sender;
+    // Lado AVS del reporte. Sin esto, un reporte AVS cierra la Tarea Programada
+    // "VMs con snapshots" en vez de "AVS - VMs con snapshots": los dos tickets existen
+    // (OBM-18502 y OBM-18503) y el nombre sin prefijo apunta siempre al no-AVS.
+    const esAVS = esReporteAVS(message ? message.getSubject() : '', attachment);
+
     const fileNameUpper = attachment.getName().toUpperCase();
     const clientNameUpper = (config && config.clientName) ? config.clientName.toUpperCase() : "";
     
@@ -139,16 +139,19 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     // Las reglas de soporte vienen de la misma planilla de Excepciones (columnas AGE/SIZE/QTY/CRITERIO)
     let sopRules = {};
     if (typeof getClientConfig === "function") {
-      const emailParaSoporte = (clientConfig && clientConfig.senderEmail) ? clientConfig.senderEmail : "alarmas@wetcom.com";
-      const configSop = getClientConfig(emailParaSoporte, this.operationName + " SOP", true);
-      if (configSop && configSop.exceptions) sopRules = configSop.exceptions;
+      const emailParaSoporte = (clientConfig && clientConfig.senderEmail) ? clientConfig.senderEmail : this._currentSenderEmail;
+      if (emailParaSoporte) {
+        const configSop = getClientConfig(emailParaSoporte, this.operationName + " SOP", true);
+        if (configSop && configSop.exceptions) sopRules = configSop.exceptions;
+      }
     }
 
     reportRows.forEach(row => {
       if (row.length < idxAge || row.join('').trim() === '') return;
       
       const vmName = (row[idxName] || "").trim();
-      if (vmName.toLowerCase().includes("replica")) return;
+      const vmNameLower = vmName.toLowerCase();
+      if (vmNameLower.includes("replica")) return;
       
       const age = parseSeguro(row[idxAge]);
       
@@ -158,6 +161,17 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       if (idxSnapshotName !== -1) {
          const snapName = (row[idxSnapshotName] || "").toString().toLowerCase();
          if (snapName.includes("restore point") || snapName.includes("restore_point")) return;
+
+         // PUNTO 3: Ignorar snapshots de plantillas / templates (ej. vm-template-snapshot)
+         if (snapName.includes("vm-template-snapshot") || snapName.includes("template")) return;
+
+         // PUNTO 2: Snapshots temporales de Veeam: se ignoran si tienen menos de 48 horas (age < 2)
+         if (snapName.includes("veeam backup temporary snapshot") && age < 2) return;
+      }
+
+      if (vmNameLower.includes("template") && idxSnapshotName !== -1) {
+         const snapName = (row[idxSnapshotName] || "").toString().toLowerCase();
+         if (snapName.includes("snapshot") || snapName.includes("template")) return;
       }
       
       const space = parseSpaceToGB(row[idxSpace]);
@@ -190,13 +204,15 @@ class VMsConSnapshotsProcessor extends MailProcessor {
          
          const esRelativo = matchedSopRule.sizeType === 'porcentaje' || matchedSopRule.sizeType === 'relativo';
          if (esRelativo) {
-            if (usedPercent >= sizeLimit && sizeLimit !== Infinity) {
-               detectedReasonsSoporte.add(`Tamaño Relativo >= ${sizeLimit}%`); 
+            // PUNTO 1: Para tamaño en Soporte exigir al menos 24 hrs de vida (age >= 1)
+            if (usedPercent >= sizeLimit && sizeLimit !== Infinity && age >= 1) {
+               detectedReasonsSoporte.add(`Tamaño Relativo >= ${sizeLimit}% (Antigüedad >= 1 día)`); 
                rowBreaksRule = true;
             }
          } else {
-            if (space >= sizeLimit && sizeLimit !== Infinity) {
-               detectedReasonsSoporte.add(`Tamaño Absoluto >= ${sizeLimit} GB`); 
+            // PUNTO 1: Para tamaño en Soporte exigir al menos 24 hrs de vida (age >= 1)
+            if (space >= sizeLimit && sizeLimit !== Infinity && age >= 1) {
+               detectedReasonsSoporte.add(`Tamaño Absoluto >= ${sizeLimit} GB (Antigüedad >= 1 día)`); 
                rowBreaksRule = true;
             }
          }
@@ -213,7 +229,8 @@ class VMsConSnapshotsProcessor extends MailProcessor {
             // PASO 2: Evaluar umbrales SOP Hardcodeados (Safety net)
             let sopBreaksRule = false;
             if (age >= SOP_AGE_MAX) { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
-            if (space >= SOP_SIZE_MAX) { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB`); sopBreaksRule = true; }
+            // PUNTO 1: Solo alertar por tamaño en Soporte si tiene al menos 24 horas de vida (age >= 1)
+            if (space >= SOP_SIZE_MAX && age >= 1) { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB (Antigüedad >= 1 día)`); sopBreaksRule = true; }
             if (count >= SOP_CANTIDAD_MAX) { detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`); sopBreaksRule = true; }
             
             if (sopBreaksRule) {
@@ -328,6 +345,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     if (opsAlertsFinal.length > 0) {
       huboAlertaOps = true;
       const clientConfigOps = getClientConfigByName(clientConfig_Ignored.clientName, this.operationName) || clientConfig_Ignored;
+      if (clientConfig_Ignored.isAVS) clientConfigOps.isAVS = true;
       const existingTicketKeyOps = findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfigOps.jiraProjectKey) ||
                                    findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps.jiraProjectKey);
       const rowsExp = [...opsAlertsFinal];
