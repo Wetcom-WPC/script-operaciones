@@ -178,6 +178,25 @@ function extractDRPClientName(emailSubject, baseSubject = "") {
 }
 
 /**
+ * Extrae el nombre corto del banco para reportes DRP (ej: "BERSA", "Santa Cruz", "San Juan", "Santa Fe").
+ */
+function extractDRPBankSuffix(emailSubject, clientName = "") {
+  const subjUpper = String(emailSubject || '').toUpperCase();
+  if (subjUpper.includes("BERSA")) return "BERSA";
+  if (subjUpper.includes("SANTA CRUZ")) return "Santa Cruz";
+  if (subjUpper.includes("SAN JUAN")) return "San Juan";
+  if (subjUpper.includes("SANTA FE")) return "Santa Fe";
+
+  const clientUpper = String(clientName || '').toUpperCase();
+  if (clientUpper.includes("ENTRE RIOS") || clientUpper.includes("BERSA")) return "BERSA";
+  if (clientUpper.includes("SANTA CRUZ")) return "Santa Cruz";
+  if (clientUpper.includes("SAN JUAN")) return "San Juan";
+  if (clientUpper.includes("SANTA FE")) return "Santa Fe";
+
+  return "";
+}
+
+/**
  * Resuelve la configuración de un cliente por su NOMBRE (columna B del Índice Maestro).
  *
  * Es el único resolutor por nombre del proyecto, así que la red de seguridad de TESTING vive
