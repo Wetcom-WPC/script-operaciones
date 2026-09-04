@@ -331,7 +331,7 @@ function webapp_estado() {
   try {
     feriado = esFeriadoHoy();
   } catch (e) {
-    Logger.log('[WebApp] No se pudo consultar el calendario de feriados: ' + e.message);
+    Logger.log('[WebApp] No se pudo consultar el API de feriados: ' + e.message);
   }
 
   const hoyStr = Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
@@ -400,7 +400,7 @@ function webapp_lanzarCiclo(forzar) {
   try {
     feriado = esFeriadoHoy();
   } catch (e) {
-    Logger.log('[WebApp] No se pudo consultar el calendario de feriados: ' + e.message);
+    Logger.log('[WebApp] No se pudo consultar el API de feriados: ' + e.message);
   }
 
   // El ciclo se omite solo los fines de semana y feriados. Antes de gastar un activador en una

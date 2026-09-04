@@ -54,12 +54,16 @@ class VsphereAlertsProcessor extends MailProcessor {
           if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
         }
       }
-        if (typeof clientConfig !== 'undefined' && clientConfig) {
-      const nombreArchivo = this.operationName + " - OK.txt";
-      this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
-      this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
-    }
-    return { status: 'SUCCESS' };
+      if (typeof clientConfig !== 'undefined' && clientConfig) {
+        let nombreArchivo = this.operationName + " - OK.txt";
+        if (clientConfig.isDRP) {
+          const banco = extractDRPBankSuffix(emailSubject, clientConfig.clientName);
+          nombreArchivo = `DRP - ${this.operationName}${banco ? " " + banco : ""} - OK.txt`;
+        }
+        this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+        this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+      }
+      return { status: 'SUCCESS' };
     }
     
     return super.processSingleMessage(message, summaryReport);

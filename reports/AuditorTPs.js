@@ -25,7 +25,7 @@ function alertarTareasNoCerradasJira() {
 
   // 2. FRENO DE FERIADOS
   if (esFeriadoHoy()) {
-    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el calendario de Alarmas Wetcom.");
+    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el API de feriados.");
     return;
   }
 

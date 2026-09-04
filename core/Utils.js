@@ -166,39 +166,81 @@ const HORARIO_OPERATIVO_FIN = 15;     // exclusive (hasta las 14:59)
 const HORARIO_OPERATIVO_TZ = "America/Argentina/Buenos_Aires";
 
 /**
- * ¿Hoy es feriado según el calendario de Alarmas WETCOM?
+ * ¿Hoy es feriado según la API pública de feriados argentinos?
  *
- * Vive acá, al lado de estaEnHorarioOperativo(), porque hasta el 02/09/2026 estaba
- * COPIADA en tres archivos (core/Main.js, reports/AuditorTPs.js y
- * reports/AuditorMailyRVTools.js). Las tres hacían lo mismo, pero solo una logueaba el
- * motivo cuando el calendario no respondía: arreglar una y no las otras era cuestión de
- * tiempo, que es el patrón de lógica duplicada de AGENTS.md §5.
+ * Consulta https://api.argentinadatos.com/v1/feriados/{año} con UN reintento
+ * ante falla de red o HTTP ≠ 200. Si ambos intentos fallan, se asume día hábil
+ * (fail-safe: para no interrumpir el procesamiento normal) y se avisa por Slack.
  *
- * Ante cualquier problema devuelve false —y lo deja logueado, nunca en silencio (§7)—:
- * frenar la operación de todo un día porque no se pudo leer un calendario es peor que
- * procesar de más en un feriado.
+ * Ante cualquier problema siempre loguea el motivo (§7 de AGENTS.md).
  *
- * El ID del calendario sale de la Script Property HOLIDAYS_CALENDAR_ID.
- *
+ * @param {Date} [fecha] Fecha a evaluar. Por defecto, hoy.
  * @returns {boolean}
  */
-function esFeriadoHoy() {
-  const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID");
-  if (!calendarId) {
-    Logger.log("⚠️ No está configurada la Script Property HOLIDAYS_CALENDAR_ID: se asume que hoy NO es feriado.");
-    return false;
-  }
-  try {
-    const calendario = CalendarApp.getCalendarById(calendarId);
-    if (!calendario) {
-      Logger.log(`⚠️ No se pudo acceder al calendario de feriados (${calendarId}). Revisar el ID y los permisos. Se asume que hoy NO es feriado.`);
-      return false;
+function esFeriadoHoy(fecha) {
+  const hoy = fecha instanceof Date ? fecha : new Date();
+  const feriados = _consultarFeriados(hoy.getFullYear());
+
+  if (feriados === null) {
+    const aviso =
+      `No se pudo consultar la API de feriados (se reintentó una vez). ` +
+      `Se asume día hábil para no interrumpir el procesamiento de reportes.`;
+    Logger.log(`⚠️ ${aviso}`);
+    if (typeof sendSlackMessage === "function") {
+      const webhook = PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_GENERAL');
+      if (webhook) sendSlackMessage(webhook, `⚠️ ${aviso}`);
     }
-    return calendario.getEventsForDay(new Date()).length > 0;
-  } catch (error) {
-    Logger.log(`⚠️ Error consultando el calendario de feriados: ${error.message}. Se asume que hoy NO es feriado.`);
     return false;
   }
+
+  const mes    = String(hoy.getMonth() + 1).padStart(2, '0');
+  const dia    = String(hoy.getDate()).padStart(2, '0');
+  const fechaBuscada = `${hoy.getFullYear()}-${mes}-${dia}`;
+
+  const esFeriado = feriados.some(f => f.fecha === fechaBuscada);
+  if (esFeriado) Logger.log(`Hoy (${fechaBuscada}) es feriado en Argentina.`);
+  return esFeriado;
+}
+
+let _feriadosCacheado = null;
+let _feriadosAñoCacheado = null;
+
+/**
+ * Consulta el listado de feriados del año dado a la API pública.
+ * Reintenta una vez ante error de red o HTTP ≠ 200.
+ * Usa una variable global como caché de memoria para no llamar repetidamente
+ * a la API si varios triggers corren durante la misma ejecución.
+ * Devuelve null si los dos intentos fallan.
+ *
+ * @param {number} año
+ * @returns {Array|null}
+ */
+function _consultarFeriados(año) {
+  if (_feriadosCacheado !== null && _feriadosAñoCacheado === año) {
+    return _feriadosCacheado;
+  }
+
+  const url = `https://api.argentinadatos.com/v1/feriados/${año}`;
+  let ultimoError;
+
+  for (let intento = 1; intento <= 2; intento++) {
+    try {
+      const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+      if (response.getResponseCode() !== 200) {
+        throw new Error(`HTTP ${response.getResponseCode()}`);
+      }
+      Logger.log(`API de feriados consultada para el año ${año}.`);
+      _feriadosCacheado = JSON.parse(response.getContentText());
+      _feriadosAñoCacheado = año;
+      return _feriadosCacheado;
+    } catch (e) {
+      ultimoError = e;
+      Logger.log(`Error consultando feriados (intento ${intento}/2): ${e.message}`);
+    }
+  }
+
+  Logger.log(`Falló la consulta de feriados para ${año} tras 2 intentos: ${ultimoError.message}`);
+  return null;
 }
 
 /**

@@ -37,7 +37,7 @@ function auditarMailsOperaciones() {
 
    // ---> NUEVO: EL PATOVICA DE FERIADOS <---
   if (esFeriadoHoy()) {
-    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el calendario de Alarmas Wetcom.");
+    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el API de feriados.");
     borrarActivadorTemporal(); // Super importante para cortar la cadena de triggers
     return;
   }
@@ -325,7 +325,7 @@ function auditarCarpetasRVTools(opciones) {
   const fecha  = config.fecha instanceof Date ? config.fecha : new Date();
 
   if (esFeriadoHoy()) {
-    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el calendario de Alarmas Wetcom.");
+    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el API de feriados.");
     return;
   }
 

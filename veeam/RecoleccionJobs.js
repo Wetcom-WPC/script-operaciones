@@ -3,7 +3,7 @@ const RECOLECCION_SCHEDULED_TASK_NAME_TO_CLOSE = "Automatizacion de recoleccion 
 function enviarMailRecoleccionDiarios() {
   // ---> NUEVO: EL PATOVICA DE FERIADOS <---
   if (esFeriadoHoy()) {
-    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el calendario de Alarmas Wetcom.");
+    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el API de feriados.");
     borrarActivadorTemporal(); // Super importante para cortar la cadena de triggers
     return;
   }
