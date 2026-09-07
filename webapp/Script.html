@@ -1079,6 +1079,18 @@
       return true;
     });
 
+    // Ordenar PRIMERO por POD y luego alfabéticamente por cliente
+    filtrados.sort(function (a, b) {
+      var podA = (a.pod || '').toUpperCase();
+      var podB = (b.pod || '').toUpperCase();
+      if (podA !== podB) {
+        if (podA === '-') return 1;
+        if (podB === '-') return -1;
+        return podA.localeCompare(podB);
+      }
+      return a.nombre.localeCompare(b.nombre);
+    });
+
     if (elCantFilas) {
       elCantFilas.textContent = filtrados.length + ' de ' + datosIndiceGlobal.clientes.length + ' clientes mostrados';
     }
@@ -1141,6 +1153,12 @@
           return td;
         }
 
+        var divWrapper = document.createElement('div');
+        divWrapper.style.display = 'flex';
+        divWrapper.style.flexDirection = 'column';
+        divWrapper.style.alignItems = 'center';
+        divWrapper.style.justifyContent = 'center';
+
         var btnToggle = document.createElement('button');
         btnToggle.className = 'toggle-switch ' + claseTech;
         btnToggle.setAttribute('role', 'switch');
@@ -1184,7 +1202,18 @@
             .webapp_marcarCheckboxIndice(c.fila, tecInfo.col, nuevoEstado);
         });
 
-        td.appendChild(btnToggle);
+        divWrapper.appendChild(btnToggle);
+
+        // Si ya fue enviado hoy (Col V, W o X en TRUE)
+        if (tecInfo.enviado) {
+          var spanEnviado = document.createElement('span');
+          spanEnviado.className = 'badge-enviado-ok';
+          spanEnviado.textContent = 'Enviado ✓';
+          spanEnviado.title = 'El reporte de ' + labelTech + ' ya fue enviado con éxito hoy';
+          divWrapper.appendChild(spanEnviado);
+        }
+
+        td.appendChild(divWrapper);
         return td;
       }
 

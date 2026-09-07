@@ -849,8 +849,8 @@ function webapp_obtenerEstadoIndice() {
     const lastRow = sheet.getLastRow();
 
     if (lastRow > 1) {
-      // Tomamos desde la fila 2 hasta la última, hasta la columna 22 (V)
-      const data = sheet.getRange(2, 1, lastRow - 1, 22).getValues();
+      // Tomamos desde la fila 2 hasta la última, hasta la columna 24 (X: Mail Nutanix Enviado)
+      const data = sheet.getRange(2, 1, lastRow - 1, 24).getValues();
 
       for (let i = 0; i < data.length; i++) {
         const row = data[i];
@@ -858,13 +858,13 @@ function webapp_obtenerEstadoIndice() {
 
         const nombreOps     = row[1]  ? row[1].toString().trim()  : "";
         const opsKey        = row[3]  ? row[3].toString().trim().toUpperCase() : "";
-        const podEmail      = row[8]  ? row[8].toString().trim()  : "";
+        const podVal        = row[8]  ? row[8].toString().trim()  : "";
         const nombreEmpresa = row[11] ? row[11].toString().trim() : "";
         const servicios     = row[12] ? row[12].toString().toLowerCase() : "";
         const soporteKey    = row[13] ? row[13].toString().trim().toUpperCase() : "";
 
         // Omitir filas sin nombre o pruebas internas vacías
-        if (!nombreOps || nombreOps.toLowerCase().includes("testing") || nombreOps.toLowerCase().includes("wpc -")) {
+        if (!nombreOps || nombreOps.toLowerCase().includes("testing") || nombreOps.toLowerCase().startsWith("wpc -")) {
           continue;
         }
 
@@ -872,6 +872,11 @@ function webapp_obtenerEstadoIndice() {
         const checkVeeam   = row[18] === true || String(row[18]).toUpperCase() === "TRUE";
         const checkNutanix = row[19] === true || String(row[19]).toUpperCase() === "TRUE";
         const checkRVTools = row[20] === true || String(row[20]).toUpperCase() === "TRUE";
+
+        // Columnas V, W, X (Enviados hoy)
+        const enviadoVsphere = row[21] === true || String(row[21]).toUpperCase() === "TRUE";
+        const enviadoVeeam   = row[22] === true || String(row[22]).toUpperCase() === "TRUE";
+        const enviadoNutanix = row[23] === true || String(row[23]).toUpperCase() === "TRUE";
 
         if (checkVsphere) casillasMarcadas++;
         if (checkVeeam) casillasMarcadas++;
@@ -885,22 +890,27 @@ function webapp_obtenerEstadoIndice() {
         const tieneHorizon = servicios.includes("horizon");
         const tieneRVTools = servicios.includes("rvtools") || tieneVsphere;
 
-        // Pod tag corto (ej: "pod1@wetcom.com" -> "POD 1")
-        let podDisplay = podEmail ? podEmail.split("@")[0].toUpperCase() : "-";
+        // Normalización de POD (ej: "POD1", "pod1@wetcom.com" -> "POD1")
+        let podDisplay = podVal;
+        if (podVal.includes("@")) {
+          podDisplay = podVal.split("@")[0];
+        }
+        podDisplay = podDisplay.replace(/\s+/g, "").toUpperCase();
+        if (!podDisplay) podDisplay = "-";
 
         clientes.push({
           fila: filaNum,
           nombre: nombreOps,
           empresa: nombreEmpresa || nombreOps,
           pod: podDisplay,
-          podEmail: podEmail,
+          podRaw: podVal,
           opsKey: opsKey,
           soporteKey: soporteKey,
           servicios: servicios,
           tecnologias: {
-            vsphere: { habilitado: tieneVsphere, checked: checkVsphere, col: 18 },
-            veeam:   { habilitado: tieneVeeam,   checked: checkVeeam,   col: 19 },
-            nutanix: { habilitado: tieneNutanix, checked: checkNutanix, col: 20 },
+            vsphere: { habilitado: tieneVsphere, checked: checkVsphere, enviado: enviadoVsphere, col: 18 },
+            veeam:   { habilitado: tieneVeeam,   checked: checkVeeam,   enviado: enviadoVeeam,   col: 19 },
+            nutanix: { habilitado: tieneNutanix, checked: checkNutanix, enviado: enviadoNutanix, col: 20 },
             rvtools: { habilitado: tieneRVTools, checked: checkRVTools, col: 21 },
             horizon: { habilitado: tieneHorizon }
           }
@@ -912,7 +922,18 @@ function webapp_obtenerEstadoIndice() {
     throw new Error("No se pudo leer el Índice Operativo: " + err.message);
   }
 
-  clientes.sort((a, b) => a.nombre.localeCompare(b.nombre));
+  // Ordenar PRIMERO por POD y luego alfabéticamente por cliente
+  clientes.sort(function(a, b) {
+    const podA = (a.pod || "").toUpperCase();
+    const podB = (b.pod || "").toUpperCase();
+    if (podA !== podB) {
+      // Dejar los sin POD ("-") al final
+      if (podA === "-") return 1;
+      if (podB === "-") return -1;
+      return podA.localeCompare(podB);
+    }
+    return a.nombre.localeCompare(b.nombre);
+  });
 
   // Datos del próximo envío
   const proximo = webapp_calcularProximoEnvio();
