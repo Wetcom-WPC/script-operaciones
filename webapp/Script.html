@@ -331,8 +331,14 @@
       var pAsunto = crear('p', 'asunto', item.asunto);
       if (item.reintentos && item.reintentos > 0) {
         var badgeReintentos = document.createElement('span');
-        badgeReintentos.className = 'badge-retry';
-        badgeReintentos.textContent = item.reintentos + ' reintentos';
+        badgeReintentos.style.background = '#ef4444';
+        badgeReintentos.style.color = 'white';
+        badgeReintentos.style.fontSize = '10px';
+        badgeReintentos.style.padding = '2px 6px';
+        badgeReintentos.style.borderRadius = '10px';
+        badgeReintentos.style.marginLeft = '8px';
+        badgeReintentos.style.verticalAlign = 'middle';
+        badgeReintentos.textContent = item.reintentos + ' retries';
         pAsunto.appendChild(badgeReintentos);
       }
       li.appendChild(pAsunto);
@@ -375,30 +381,6 @@
   var logTabActivo = 'estadoFinal';
   var ordenLogs = { key: null, asc: true };
 
-  function actualizarContadoresLogs() {
-    if (!logsGlobales) return;
-    var cEF = (logsGlobales.estadoFinal || []).length;
-    var cErr = (logsGlobales.erroresScript || []).length;
-    var cMail = (logsGlobales.envioMails || []).length;
-    var cFalt = (logsGlobales.reportesFaltantes || []).length;
-    
-    var bEF = document.getElementById('badgeCountEstadoFinal');
-    var bErr = document.getElementById('badgeCountErroresScript');
-    var bMail = document.getElementById('badgeCountEnvioMails');
-    var bFalt = document.getElementById('badgeCountReportesFaltantes');
-
-    if (bEF) bEF.textContent = cEF;
-    if (bErr) bErr.textContent = cErr;
-    if (bMail) bMail.textContent = cMail;
-    if (bFalt) bFalt.textContent = cFalt;
-
-    var ts = document.getElementById('tsLogs');
-    if (ts) {
-      var d = new Date();
-      ts.textContent = 'Actualizado ' + ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
-    }
-  }
-
   function cargarLogs() {
     var btn = document.getElementById('btnActualizarLogs');
     ocupar(btn, 'Cargando logs...');
@@ -412,240 +394,29 @@
       .withSuccessHandler(function(logs) {
         liberar(btn);
         logsGlobales = logs;
-        actualizarContadoresLogs();
         pintarTabActivo();
       })
       .withFailureHandler(function(error) {
         liberar(btn);
         mostrarAviso(document.getElementById('avisoLogs'), 'error', 'No se pudieron cargar los logs: ' + error.message);
       })
-      .webapp_obtenerLogs(80, sheetId);
+      .webapp_obtenerLogs(50, sheetId);
   }
 
   function cambiarTabLogs(event) {
-    var target = event.currentTarget || event.target;
-    if (!target.classList.contains('tab-btn')) return;
+    if (!event.target.classList.contains('tab-btn')) return;
     
-    var botones = document.querySelectorAll('#seccion-logs .tab-btn');
+    // Cambiar clase active
+    var botones = document.querySelectorAll('.tab-btn');
     for (var i = 0; i < botones.length; i++) {
       botones[i].classList.remove('active');
-      botones[i].setAttribute('aria-selected', 'false');
     }
-    target.classList.add('active');
-    target.setAttribute('aria-selected', 'true');
+    event.target.classList.add('active');
     
-    logTabActivo = target.getAttribute('data-tab');
+    // Setear tab activo, resetear orden y renderizar
+    logTabActivo = event.target.getAttribute('data-tab');
     ordenLogs = { key: null, asc: true };
     pintarTabActivo();
-  }
-
-  var TECHS_FIJAS = ['Veeam', 'vSphere', 'Horizon', 'Nutanix', 'Tanzu', 'NSX'];
-
-  var POD_COLORES = {
-    'POD1': '#db7b65', 'POD 1': '#db7b65',
-    'POD2': '#a9a4d8', 'POD 2': '#a9a4d8',
-    'POD3': '#90bceb', 'POD 3': '#90bceb',
-    'POD4': '#b6d7a8', 'POD 4': '#b6d7a8',
-    'POD5': '#c27ba0', 'POD 5': '#c27ba0',
-    'Cloud': '#ffe599'
-  };
-
-  function _mapTecnologia(tec) {
-    if (!tec) return 'Otro';
-    var t = tec.toLowerCase();
-    if (t.includes('vro') || t.includes('rvtools')) return 'vSphere';
-    if (t.includes('veeam')) return 'Veeam';
-    if (t.includes('connection')) return 'Horizon';
-    if (t.includes('nutanix')) return 'Nutanix';
-    if (t.includes('tanzu')) return 'Tanzu';
-    if (t.includes('nsx')) return 'NSX';
-    return tec;
-  }
-
-  function _estadoEsPeor(nuevo, actual) {
-    var j = { 'Con Incidencias': 2, 'Con Advertencias': 1, 'ADVERTENCIA': 1, 'Sin Anomalías': 0 };
-    return (j[nuevo] || 0) > (j[actual] || 0);
-  }
-
-  function _pivotarEnvioMails(datos, fechaFiltro) {
-    var hoy = new Date();
-    var target = new Date(hoy);
-    if (fechaFiltro === 'ayer')     { target.setDate(target.getDate()-1); }
-    if (fechaFiltro === 'hace2')    { target.setDate(target.getDate()-2); }
-    if (fechaFiltro === 'hace3')    { target.setDate(target.getDate()-3); }
-    
-    var fechaStr = (target.getDate()+'').padStart(2,'0') + '/' + (target.getMonth()+1+'').padStart(2,'0') + '/' + target.getFullYear();
-
-    var filtrados = datos.filter(function(d) {
-      return d.fecha === fechaStr;
-    });
-
-    var grupos = {}; 
-    filtrados.forEach(function(d) {
-      var pod = d.pod || 'Sin POD';
-      var cli = d.cliente;
-      var tec = _mapTecnologia(d.tecnologia);
-      
-      if (TECHS_FIJAS.indexOf(tec) === -1) return;
-      
-      if (!grupos[pod])             grupos[pod] = {};
-      if (!grupos[pod][cli])        grupos[pod][cli] = {};
-      
-      var actual = grupos[pod][cli][tec];
-      var nuevo  = { estado: d.estado, operaciones: parseInt(d.operaciones) || 0 };
-      
-      if (!actual || _estadoEsPeor(nuevo.estado, actual.estado)) {
-        grupos[pod][cli][tec] = nuevo;
-      }
-    });
-
-    return grupos;
-  }
-
-  function _renderPivotEnvioMails(grupos, thead, tbody) {
-    var trH = crear('tr');
-    trH.style.backgroundColor = '#00c370';
-    trH.style.color = 'white';
-    
-    var thPod = crear('th', null, 'POD');
-    var thCli = crear('th', null, 'Cliente');
-    thPod.style.padding = '8px';
-    thCli.style.padding = '8px';
-    trH.appendChild(thPod);
-    trH.appendChild(thCli);
-    
-    TECHS_FIJAS.forEach(function(t) { 
-        var th = crear('th', null, t);
-        th.style.textAlign = 'center';
-        th.style.padding = '8px';
-        th.style.borderLeft = '1px solid rgba(255,255,255,0.2)';
-        trH.appendChild(th); 
-    });
-    thead.appendChild(trH);
-
-    var podsOrdenados = Object.keys(grupos).sort();
-    podsOrdenados.forEach(function(pod) {
-      var clientes = grupos[pod];
-      var color = POD_COLORES[pod] || '#f9f9f9';
-      var clientesList = Object.keys(clientes).sort();
-      var totalClientes = clientesList.length;
-
-      clientesList.forEach(function(cliente, idx) {
-        var tr = crear('tr');
-
-        if (idx === 0) {
-          var tdPod = crear('td');
-          tdPod.rowSpan = totalClientes;
-          tdPod.textContent = pod;
-          tdPod.style.fontWeight = '700';
-          tdPod.style.textAlign = 'center';
-          tdPod.style.verticalAlign = 'middle';
-          tdPod.style.backgroundColor = color;
-          tdPod.style.border = '1px solid rgba(0,0,0,0.2)';
-          if(pod==='POD4' || pod==='Cloud') tdPod.style.color = '#333';
-          else tdPod.style.color = '#fff';
-          tr.appendChild(tdPod);
-        }
-
-        var tdCli = crear('td', null, cliente);
-        tdCli.style.backgroundColor = color;
-        tdCli.style.border = '1px solid rgba(0,0,0,0.2)';
-        tdCli.style.fontWeight = '600';
-        tdCli.style.padding = '4px 10px';
-        if(pod==='POD4' || pod==='Cloud') tdCli.style.color = '#333';
-        else tdCli.style.color = '#fff';
-        tr.appendChild(tdCli);
-
-        TECHS_FIJAS.forEach(function(tech) {
-          var td = crear('td');
-          td.style.textAlign = 'center';
-          td.style.backgroundColor = '#383838';
-          td.style.border = '1px solid #555';
-          td.style.padding = '4px';
-          
-          var entrada = clientes[cliente][tech];
-          if (!entrada) {
-            td.innerHTML = '<span style="color:#666;font-size:16px">🚫</span>';
-          } else {
-            var emoji, title;
-            if (entrada.estado === 'Sin Anomalías' || entrada.estado === 'SUCCESS') {
-              emoji = '✅'; title = 'Sin anomalías';
-            } else if (entrada.estado === 'Con Advertencias' || entrada.estado === 'ADVERTENCIA') {
-              emoji = '⚠️'; title = 'Con advertencias';
-            } else {
-              emoji = '❌'; title = 'Con incidencias';
-            }
-            td.title = title + (entrada.operaciones > 0 ? ' (' + entrada.operaciones + ' ops)' : '');
-            td.innerHTML = '<span style="font-size:16px;cursor:default">' + emoji + '</span>';
-          }
-          tr.appendChild(td);
-        });
-        tbody.appendChild(tr);
-      });
-    });
-  }
-
-  function obtenerDatosLogsFiltrados() {
-    if (!logsGlobales || !logsGlobales[logTabActivo]) return [];
-    
-    var textFiltroCli = document.getElementById('filtroClienteLogs') ? document.getElementById('filtroClienteLogs').value.toLowerCase().trim() : '';
-    var textFiltroBuscar = document.getElementById('filtroBuscarLogs') ? document.getElementById('filtroBuscarLogs').value.toLowerCase().trim() : '';
-    var valPod = document.getElementById('filtroPodLogs') ? document.getElementById('filtroPodLogs').value.toUpperCase().trim() : '';
-    var valReinc = document.getElementById('filtroReincidenteLogs') ? document.getElementById('filtroReincidenteLogs').value : '';
-
-    var dataRaw = logsGlobales[logTabActivo] || [];
-    
-    return dataRaw.filter(function(log) {
-      if (textFiltroCli && log.cliente && log.cliente.toLowerCase().indexOf(textFiltroCli) === -1) {
-        return false;
-      }
-      if (valPod && log.pod && log.pod.toUpperCase().replace(/\s+/g, '') !== valPod.replace(/\s+/g, '')) {
-        return false;
-      }
-      if (logTabActivo === 'erroresScript' && valReinc === 'reincidente' && !log.reincidente) {
-        return false;
-      }
-      if (textFiltroBuscar) {
-        var str = JSON.stringify(log).toLowerCase();
-        if (str.indexOf(textFiltroBuscar) === -1) return false;
-      }
-      return true;
-    });
-  }
-
-  function exportarCSVActual() {
-    if (!logsGlobales) {
-      mostrarAviso(document.getElementById('avisoLogs'), 'atencion', 'Cargá los logs primero antes de exportar.');
-      return;
-    }
-    var datos = obtenerDatosLogsFiltrados();
-    if (!datos || datos.length === 0) {
-      mostrarAviso(document.getElementById('avisoLogs'), 'atencion', 'No hay datos visibles para exportar con los filtros seleccionados.');
-      return;
-    }
-
-    var headers = Object.keys(datos[0]);
-    var lineas = [];
-    lineas.push(headers.map(function(h) { return '"' + h.replace(/"/g, '""') + '"'; }).join(';'));
-
-    datos.forEach(function(item) {
-      var fila = headers.map(function(h) {
-        var val = item[h];
-        if (val === null || val === undefined) val = '';
-        return '"' + String(val).replace(/"/g, '""') + '"';
-      });
-      lineas.push(fila.join(';'));
-    });
-
-    var csvBlob = new Blob(['\uFEFF' + lineas.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
-    var url = URL.createObjectURL(csvBlob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = 'logs_' + logTabActivo + '_' + new Date().toISOString().slice(0, 10) + '.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   }
 
   function pintarTabActivo() {
@@ -659,37 +430,32 @@
     var tbody = document.getElementById('tbodyLogs');
     vaciar(thead);
     vaciar(tbody);
-
-    // Ajustar visibilidad de controles específicos
-    var filtroFecha = document.getElementById('filtroFechaEnvio');
-    var filtroPod = document.getElementById('filtroPodLogs');
-    var filtroReinc = document.getElementById('filtroReincidenteLogs');
-
-    if (filtroFecha) filtroFecha.style.display = (logTabActivo === 'envioMails') ? 'inline-block' : 'none';
-    if (filtroPod) filtroPod.style.display = (logTabActivo === 'estadoFinal' || logTabActivo === 'envioMails' || logTabActivo === 'reportesFaltantes') ? 'inline-block' : 'none';
-    if (filtroReinc) filtroReinc.style.display = (logTabActivo === 'erroresScript') ? 'inline-block' : 'none';
-
-    if (logTabActivo === 'envioMails') {
-      var dataEnvio = obtenerDatosLogsFiltrados();
-      var grupos = _pivotarEnvioMails(dataEnvio, filtroFecha ? filtroFecha.value : 'hoy');
-      if (Object.keys(grupos).length === 0) {
-        document.getElementById('tablaLogs').style.display = 'none';
-        document.getElementById('logsVacio').style.display = 'block';
-      } else {
-        document.getElementById('tablaLogs').style.display = 'table';
-        document.getElementById('logsVacio').style.display = 'none';
-        _renderPivotEnvioMails(grupos, thead, tbody);
-      }
-      return;
-    }
     
-    var data = obtenerDatosLogsFiltrados();
+    var dataRaw = logsGlobales[logTabActivo] || [];
+    
+    var textFiltroCli = (document.getElementById('filtroClienteLogs') ? document.getElementById('filtroClienteLogs').value : '').trim().toLowerCase();
+    var textFiltroBuscar = (document.getElementById('filtroBuscarLogs') ? document.getElementById('filtroBuscarLogs').value : '').trim().toLowerCase();
+
+    var data = dataRaw.filter(function(log) {
+      if (textFiltroCli) {
+        var cli = (log.cliente || '').toString().trim().toLowerCase();
+        if (!cli || (cli.indexOf(textFiltroCli) === -1 && textFiltroCli.indexOf(cli) === -1)) {
+          return false;
+        }
+      }
+      if (textFiltroBuscar) {
+        var str = JSON.stringify(log).toLowerCase();
+        if (str.indexOf(textFiltroBuscar) === -1) return false;
+      }
+      return true;
+    });
 
     if (ordenLogs.key) {
       data.sort(function(a, b) {
         var valA = a[ordenLogs.key];
         var valB = b[ordenLogs.key];
         
+        // Handle empty values safely
         if (valA === undefined || valA === null) valA = '';
         if (valB === undefined || valB === null) valB = '';
         
@@ -722,7 +488,6 @@
         { label: 'Hora', key: 'hora' },
         { label: 'Operación', key: 'operacion' },
         { label: 'Cliente', key: 'cliente' },
-        { label: 'POD', key: 'pod' },
         { label: 'Estado', key: 'estado' }
       ];
     } else if (logTabActivo === 'erroresScript') {
@@ -730,7 +495,6 @@
         { label: 'Hora', key: 'hora' },
         { label: 'Operación', key: 'operacion' },
         { label: 'Cliente', key: 'cliente' },
-        { label: '¿Reincidente?', key: 'reincidente' },
         { label: 'Detalle Error', key: 'error' }
       ];
     } else if (logTabActivo === 'envioMails') {
@@ -748,10 +512,8 @@
       cabeceras = [
         { label: 'Fecha', key: 'fecha' },
         { label: 'Hora', key: 'hora' },
-        { label: 'Cliente', key: 'cliente' },
-        { label: 'POD', key: 'pod' },
-        { label: 'Tecnología', key: 'tecnologia' },
-        { label: 'Operación', key: 'operacion' }
+        { label: 'Operación', key: 'operacion' },
+        { label: 'Cliente', key: 'cliente' }
       ];
     }
     
@@ -784,29 +546,16 @@
     data.forEach(function(log, i) {
       var tr = crear('tr', 'fila-log');
       
+      // Expandir solo si tiene detalles extra
       var tieneDetalle = false;
-      if (logTabActivo === 'estadoFinal' && (log.origen || log.ultimoError || log.intentos > 1)) tieneDetalle = true;
+      if (logTabActivo === 'estadoFinal' && (log.origen || log.ultimoError)) tieneDetalle = true;
       if (logTabActivo === 'erroresScript' && log.error) tieneDetalle = true;
       
       if (tieneDetalle) {
         tr.style.cursor = 'pointer';
-        tr.setAttribute('tabindex', '0');
-        tr.setAttribute('role', 'button');
-        tr.setAttribute('aria-expanded', 'false');
-        var toggleDetalle = function() {
+        tr.addEventListener('click', function() {
           var detalle = document.getElementById('detalle-log-' + i);
-          if (detalle) {
-            var cerrado = detalle.style.display === 'none';
-            detalle.style.display = cerrado ? 'table-row' : 'none';
-            tr.setAttribute('aria-expanded', cerrado ? 'true' : 'false');
-          }
-        };
-        tr.addEventListener('click', toggleDetalle);
-        tr.addEventListener('keydown', function(e) {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            toggleDetalle();
-          }
+          if (detalle) detalle.style.display = detalle.style.display === 'none' ? 'table-row' : 'none';
         });
       }
 
@@ -815,39 +564,19 @@
         tr.appendChild(crear('td', null, log.operacion));
         tr.appendChild(crear('td', null, log.cliente || '-'));
         
-        var tdPod = crear('td');
-        if (log.pod) {
-          var pild = crear('span', 'pildora', log.pod);
-          pild.style.fontSize = '11px';
-          tdPod.appendChild(pild);
-        } else {
-          tdPod.textContent = '-';
-        }
-        tr.appendChild(tdPod);
-        
         var tdEstado = crear('td');
         var badge = 'badge-neutral';
         if (log.estado === 'SUCCESS' || log.estado.indexOf('Resuelto') > -1) badge = 'badge-success';
         else if (log.estado === 'ADVERTENCIA' || log.estado.indexOf('advertencia') > -1) badge = 'badge-warning';
         else if (log.estado === 'ERROR' || log.estado.indexOf('No resuelto') > -1) badge = 'badge-error';
-        tdEstado.appendChild(crear('span', 'badge ' + badge, log.estado));
+        tdEstado.appendChild(crear('span', badge, log.estado));
         tr.appendChild(tdEstado);
       } 
       else if (logTabActivo === 'erroresScript') {
         tr.appendChild(crear('td', null, log.hora));
         tr.appendChild(crear('td', null, log.operacion));
         tr.appendChild(crear('td', null, log.cliente || '-'));
-        
-        var tdReinc = crear('td');
-        if (log.reincidente) {
-          tdReinc.appendChild(crear('span', 'badge-reincidente', '⚠ SÍ'));
-        } else {
-          tdReinc.textContent = 'No';
-          tdReinc.style.color = '#9ca3af';
-        }
-        tr.appendChild(tdReinc);
-        
-        tr.appendChild(crear('td', null, (log.error ? log.error.substring(0, 55) + '...' : '-')));
+        tr.appendChild(crear('td', null, (log.error ? log.error.substring(0, 50) + '...' : '-')));
       }
       else if (logTabActivo === 'envioMails') {
         tr.appendChild(crear('td', null, log.horaStr));
@@ -860,7 +589,7 @@
         if (log.estado === 'Sin Anomalías') badge = 'badge-success';
         else if (log.estado === 'Con Advertencias') badge = 'badge-warning';
         else if (log.estado === 'Con Incidencias') badge = 'badge-error';
-        tdEstado.appendChild(crear('span', 'badge ' + badge, log.estado));
+        tdEstado.appendChild(crear('span', badge, log.estado));
         tr.appendChild(tdEstado);
         
         tr.appendChild(crear('td', null, log.totalTickets));
@@ -870,15 +599,13 @@
       else if (logTabActivo === 'reportesFaltantes') {
         tr.appendChild(crear('td', null, log.fecha));
         tr.appendChild(crear('td', null, log.hora));
-        tr.appendChild(crear('td', null, log.cliente || '-'));
-        tr.appendChild(crear('td', null, log.pod || '-'));
-        tr.appendChild(crear('td', null, log.tecnologia || '-'));
         tr.appendChild(crear('td', null, log.operacion));
+        tr.appendChild(crear('td', null, log.cliente || '-'));
       }
       
       tbody.appendChild(tr);
 
-      // Fila de detalle expandible
+      // Fila de detalle si aplica
       if (tieneDetalle) {
         var trDetalle = crear('tr', 'fila-detalle');
         trDetalle.id = 'detalle-log-' + i;
@@ -892,27 +619,15 @@
           var badges = crear('div', 'metadata-badges');
           
           var bOrigen = crear('span', 'badge-info');
-          bOrigen.innerHTML = '<strong>Tecnología / Origen:</strong> ' + (log.origen || '-');
+          bOrigen.innerHTML = '<strong>Origen:</strong> ' + (log.origen || '-');
           var bIntentos = crear('span', 'badge-info');
           bIntentos.innerHTML = '<strong>Intentos:</strong> ' + log.intentos;
           var bTickets = crear('span', 'badge-info');
-          bTickets.innerHTML = '<strong>Tickets Creados:</strong> ' + (log.ticketsCreados || 0);
-          var bAct = crear('span', 'badge-info');
-          bAct.innerHTML = '<strong>Tickets Actualizados:</strong> ' + (log.ticketsActualizados || 0);
-          var bTareas = crear('span', 'badge-info');
-          bTareas.innerHTML = '<strong>Tareas Cerradas:</strong> ' + (log.tareasCerradas || 0);
+          bTickets.innerHTML = '<strong>Tickets Creados:</strong> ' + log.ticketsCreados;
           
           badges.appendChild(bOrigen);
           badges.appendChild(bIntentos);
           badges.appendChild(bTickets);
-          badges.appendChild(bAct);
-          badges.appendChild(bTareas);
-
-          if (log.ultimaAct) {
-            var bHoraAct = crear('span', 'badge-info');
-            bHoraAct.innerHTML = '<strong>Última Actualización:</strong> ' + log.ultimaAct;
-            badges.appendChild(bHoraAct);
-          }
           divDetalle.appendChild(badges);
 
           if (log.ultimoError) {
@@ -925,24 +640,9 @@
             divDetalle.appendChild(errorWrap);
           }
         } else if (logTabActivo === 'erroresScript') {
-          if (log.error) {
-            var errorWrap = crear('div', 'error-formateado');
-            
-            if (log.reincidente) {
-              var bReinc = crear('span', 'badge-warning');
-              bReinc.innerHTML = '⚠ <strong>Reincidente</strong> (este error ya ocurrió con anterioridad)';
-              bReinc.style.display = 'inline-block';
-              bReinc.style.marginBottom = '10px';
-              errorWrap.appendChild(bReinc);
-            }
-            
-            var pre = crear('pre', null, log.error);
-            pre.style.whiteSpace = 'pre-wrap';
-            pre.style.wordBreak = 'break-all';
-            pre.style.margin = '0';
-            errorWrap.appendChild(pre);
-            
-            divDetalle.appendChild(errorWrap);
+          if (log.detalle) {
+            var pre = crear('pre', null, log.detalle);
+            divDetalle.appendChild(pre);
           }
         }
         
@@ -951,336 +651,6 @@
         tbody.appendChild(trDetalle);
       }
     });
-  }
-
-  // --- Salud Operativa y Matriz Tecnológica -----------------------------------------------
-  var matrizGlobal = null;
-  var tendenciasGlobal = null;
-  var subtabOperacionesActivo = 'matriz';
-
-  function cambiarSubtabOperaciones(event) {
-    var target = event.currentTarget || event.target;
-    var subtab = target.getAttribute('data-tab-operaciones');
-    if (!subtab) return;
-
-    var botones = document.querySelectorAll('#seccion-operaciones .tab-btn');
-    for (var i = 0; i < botones.length; i++) {
-      botones[i].classList.remove('active');
-      botones[i].setAttribute('aria-selected', 'false');
-    }
-    target.classList.add('active');
-    target.setAttribute('aria-selected', 'true');
-
-    subtabOperacionesActivo = subtab;
-
-    var vMatriz = document.getElementById('vistaSubtabMatriz');
-    var vTendencias = document.getElementById('vistaSubtabTendencias');
-    var controles = document.getElementById('controlesMatriz');
-    var scorecard = document.getElementById('scorecardMatriz');
-
-    if (subtab === 'matriz') {
-      if (vMatriz) vMatriz.style.display = 'block';
-      if (vTendencias) vTendencias.style.display = 'none';
-      if (controles) controles.style.display = 'flex';
-      if (scorecard) scorecard.style.display = 'grid';
-    } else {
-      if (vMatriz) vMatriz.style.display = 'none';
-      if (vTendencias) vTendencias.style.display = 'block';
-      if (controles) controles.style.display = 'none';
-      if (scorecard) scorecard.style.display = 'none';
-      if (!tendenciasGlobal) {
-        cargarTendencias();
-      } else {
-        pintarTendencias();
-      }
-    }
-  }
-
-  function cargarMatrizSalud() {
-    var btn = document.getElementById('btnActualizarMatriz');
-    if (btn) ocupar(btn, 'Actualizando...');
-    var aviso = document.getElementById('avisoMatriz');
-    if (aviso) aviso.hidden = true;
-
-    var periodo = document.getElementById('filtroPeriodoMatriz') ? document.getElementById('filtroPeriodoMatriz').value : 'hoy';
-    var sheetId = null;
-    var selectEnv = document.getElementById('filtroEntornoLogs');
-    if (selectEnv) sheetId = selectEnv.value;
-
-    google.script.run
-      .withSuccessHandler(function(datos) {
-        if (btn) liberar(btn);
-        matrizGlobal = datos;
-        pintarMatrizSalud();
-      })
-      .withFailureHandler(function(err) {
-        if (btn) liberar(btn);
-        mostrarAviso(aviso, 'error', 'No se pudo cargar la matriz de salud: ' + err.message);
-      })
-      .webapp_obtenerMatrizSalud(periodo, sheetId);
-  }
-
-  function pintarMatrizSalud() {
-    if (!matrizGlobal) return;
-
-    var filtroPod = document.getElementById('filtroPodMatriz') ? document.getElementById('filtroPodMatriz').value.toUpperCase().trim() : '';
-    var filtroEstado = document.getElementById('filtroEstadoMatriz') ? document.getElementById('filtroEstadoMatriz').value : '';
-    var filtroBuscar = document.getElementById('filtroBuscarMatriz') ? document.getElementById('filtroBuscarMatriz').value.toLowerCase().trim() : '';
-
-    var clientesFiltrados = (matrizGlobal.clientes || []).filter(function(cli) {
-      if (filtroPod && cli.pod && cli.pod.toUpperCase().replace(/\s+/g, '') !== filtroPod.replace(/\s+/g, '')) return false;
-      if (filtroEstado === 'anomalias' && cli.estadoGeneral === 'OK') return false;
-      if (filtroEstado === 'ok' && cli.estadoGeneral !== 'OK') return false;
-      if (filtroBuscar && cli.cliente.toLowerCase().indexOf(filtroBuscar) === -1) return false;
-      return true;
-    });
-
-    // Actualizar Scorecards
-    var scTot = document.getElementById('scTotalClientes');
-    var scInc = document.getElementById('scConIncidencias');
-    var scAdv = document.getElementById('scConAdvertencias');
-    var scSalud = document.getElementById('scSaludGlobal');
-
-    var r = matrizGlobal.resumen || {};
-    if (scTot) scTot.textContent = r.totalClientes || 0;
-    if (scInc) scInc.textContent = r.conIncidencias || 0;
-    if (scAdv) scAdv.textContent = r.conAdvertencias || 0;
-    if (scSalud) scSalud.textContent = (r.saludGlobalPct !== undefined ? r.saludGlobalPct : 100) + '%';
-
-    var thead = document.getElementById('theadMatriz');
-    var tbody = document.getElementById('tbodyMatriz');
-    var vacio = document.getElementById('matrizVacio');
-    vaciar(thead);
-    vaciar(tbody);
-
-    if (clientesFiltrados.length === 0) {
-      if (vacio) vacio.style.display = 'block';
-      return;
-    }
-    if (vacio) vacio.style.display = 'none';
-
-    // Thead
-    var trHead = crear('tr');
-    var thCli = crear('th', 'th-cliente', 'Cliente');
-    var thPod = crear('th', null, 'POD');
-    trHead.appendChild(thCli);
-    trHead.appendChild(thPod);
-
-    (matrizGlobal.tecnologias || []).forEach(function(tech) {
-      var th = crear('th', null, tech);
-      trHead.appendChild(th);
-    });
-
-    var thGeneral = crear('th', null, 'Estado General');
-    trHead.appendChild(thGeneral);
-    thead.appendChild(trHead);
-
-    // Tbody
-    clientesFiltrados.forEach(function(cli) {
-      var tr = crear('tr', 'matriz-row');
-      tr.setAttribute('tabindex', '0');
-      tr.setAttribute('role', 'button');
-      tr.setAttribute('title', 'Clic para ver el desglose operacional de ' + cli.cliente);
-
-      var tdCli = crear('td', null, cli.cliente);
-      tdCli.style.fontWeight = '600';
-      tr.appendChild(tdCli);
-
-      var tdPod = crear('td');
-      tdPod.style.textAlign = 'center';
-      if (cli.pod) {
-        var pild = crear('span', 'pildora', cli.pod);
-        pild.style.fontSize = '11px';
-        tdPod.appendChild(pild);
-      } else {
-        tdPod.textContent = '-';
-      }
-      tr.appendChild(tdPod);
-
-      (matrizGlobal.tecnologias || []).forEach(function(tech) {
-        var td = crear('td', 'celda-tech');
-        var tData = cli.tecnologias[tech];
-        var pill = crear('span', 'tech-pill');
-
-        if (!tData || tData.total === 0) {
-          pill.classList.add('status-none');
-          pill.textContent = '—';
-          pill.title = 'Sin operaciones registradas hoy para ' + tech;
-        } else if (tData.estado === 'ERROR') {
-          pill.classList.add('status-err');
-          pill.textContent = '❌';
-          pill.title = tech + ': ' + tData.errores + ' error(es), ' + tData.total + ' ops';
-        } else if (tData.estado === 'ADVERTENCIA') {
-          pill.classList.add('status-warn');
-          pill.textContent = '⚠️';
-          pill.title = tech + ': ' + tData.advertencias + ' advertencia(s), ' + tData.total + ' ops';
-        } else {
-          pill.classList.add('status-ok');
-          pill.textContent = '✅';
-          pill.title = tech + ': 100% OK (' + tData.total + ' ops exitosas)';
-        }
-
-        td.appendChild(pill);
-        tr.appendChild(td);
-      });
-
-      var tdGen = crear('td');
-      tdGen.style.textAlign = 'center';
-      var badgeClase = 'badge-success';
-      var badgeTexto = '✅ Saludable';
-      if (cli.estadoGeneral === 'ERROR') {
-        badgeClase = 'badge-error';
-        badgeTexto = '🔴 Con Incidencias';
-      } else if (cli.estadoGeneral === 'ADVERTENCIA') {
-        badgeClase = 'badge-warning';
-        badgeTexto = '🟡 Con Advertencias';
-      }
-      tdGen.appendChild(crear('span', 'badge ' + badgeClase, badgeTexto));
-      tr.appendChild(tdGen);
-
-      var alHacerClicFila = function() {
-        abrirModalDetalleCliente(cli);
-      };
-      tr.addEventListener('click', alHacerClicFila);
-      tr.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          alHacerClicFila();
-        }
-      });
-
-      tbody.appendChild(tr);
-    });
-  }
-
-  function cargarTendencias() {
-    var sheetId = null;
-    var selectEnv = document.getElementById('filtroEntornoLogs');
-    if (selectEnv) sheetId = selectEnv.value;
-
-    google.script.run
-      .withSuccessHandler(function(datos) {
-        tendenciasGlobal = datos;
-        pintarTendencias();
-      })
-      .withFailureHandler(function(err) {
-        mostrarAviso(document.getElementById('avisoMatriz'), 'error', 'No se pudieron cargar tendencias: ' + err.message);
-      })
-      .webapp_obtenerTendenciaSemanal(sheetId);
-  }
-
-  function pintarTendencias() {
-    if (!tendenciasGlobal || tendenciasGlobal.length === 0) return;
-
-    var arrChart = [['Día', 'Resueltos', 'Con Advertencias', 'Errores']];
-    var tbody = document.getElementById('tbodyTendencias');
-    if (!tbody) return;
-    vaciar(tbody);
-
-    tendenciasGlobal.forEach(function(d) {
-      arrChart.push([d.fecha, d.resueltos, d.advertencias, d.errores]);
-
-      var totalOps = d.resueltos + d.advertencias + d.errores;
-      var estabilidadPct = totalOps > 0 ? Math.round((d.resueltos / totalOps) * 100) : 100;
-
-      var tr = crear('tr');
-      tr.appendChild(crear('td', null, d.fecha));
-      tr.appendChild(crear('td', null, d.resueltos));
-      tr.appendChild(crear('td', null, d.advertencias));
-      tr.appendChild(crear('td', null, d.errores));
-      tr.appendChild(crear('td', null, d.totalTickets));
-
-      var tdEst = crear('td');
-      var badgeClase = 'badge-success';
-      if (estabilidadPct < 80) badgeClase = 'badge-error';
-      else if (estabilidadPct < 95) badgeClase = 'badge-warning';
-      tdEst.appendChild(crear('span', 'badge ' + badgeClase, estabilidadPct + '%'));
-      tr.appendChild(tdEst);
-
-      tbody.appendChild(tr);
-    });
-
-    var chartDiv = document.getElementById('chart_tendencia_div');
-    if (chartDiv && typeof google !== 'undefined' && google.visualization && google.visualization.ColumnChart) {
-      var dataTable = google.visualization.arrayToDataTable(arrChart);
-      var options = {
-        isStacked: true,
-        colors: ['#109E58', '#D97706', '#DC2626'],
-        legend: { position: 'top' },
-        chartArea: { width: '85%', height: '70%' },
-        hAxis: { title: 'Fecha' },
-        vAxis: { title: 'Volumen de Operaciones', minValue: 0 }
-      };
-      var chart = new google.visualization.ColumnChart(chartDiv);
-      chart.draw(dataTable, options);
-    }
-  }
-
-  // --- Modal de Detalle de Cliente ---------------------------------------------------------
-  function abrirModalDetalleCliente(cli) {
-    var modal = document.getElementById('modalDetalleCliente');
-    var titulo = document.getElementById('modalTituloCliente');
-    var cuerpo = document.getElementById('modalCuerpoCliente');
-    if (!modal || !cuerpo) return;
-
-    titulo.textContent = 'Detalle Operacional — ' + cli.cliente + (cli.pod ? ' [' + cli.pod + ']' : '');
-    vaciar(cuerpo);
-
-    if (!cli.operaciones || cli.operaciones.length === 0) {
-      cuerpo.appendChild(crear('p', 'vacio', 'No se encontraron operaciones registradas para este cliente.'));
-    } else {
-      var wrap = crear('div', 'table-responsive');
-      var tabla = crear('table', 'tabla-logs');
-      var thead = crear('thead');
-      var trH = crear('tr');
-      ['Hora', 'Tecnología', 'Operación', 'Estado', 'Tickets', 'Detalle / Error'].forEach(function(h) {
-        trH.appendChild(crear('th', null, h));
-      });
-      thead.appendChild(trH);
-      tabla.appendChild(thead);
-
-      var tbody = crear('tbody');
-      cli.operaciones.forEach(function(op) {
-        var tr = crear('tr');
-        tr.appendChild(crear('td', null, op.hora || '-'));
-        tr.appendChild(crear('td', null, op.tech || '-'));
-        tr.appendChild(crear('td', null, op.operacion || '-'));
-
-        var tdEst = crear('td');
-        var badge = 'badge-neutral';
-        if (op.estado && (op.estado.indexOf('Resuelto') > -1 || op.estado === 'SUCCESS')) badge = 'badge-success';
-        else if (op.estado && op.estado.indexOf('advertencia') > -1) badge = 'badge-warning';
-        else if (op.estado && op.estado.indexOf('No resuelto') > -1) badge = 'badge-error';
-        tdEst.appendChild(crear('span', 'badge ' + badge, op.estado));
-        tr.appendChild(tdEst);
-
-        tr.appendChild(crear('td', null, op.ticketsCreados || 0));
-
-        var tdDet = crear('td');
-        if (op.ultimoError) {
-          var errSpan = crear('span', null, op.ultimoError);
-          errSpan.style.color = 'var(--rojo-osc)';
-          errSpan.style.fontSize = '12px';
-          tdDet.appendChild(errSpan);
-        } else {
-          tdDet.textContent = '-';
-          tdDet.style.color = '#9ca3af';
-        }
-        tr.appendChild(tdDet);
-
-        tbody.appendChild(tr);
-      });
-      tabla.appendChild(tbody);
-      wrap.appendChild(tabla);
-      cuerpo.appendChild(wrap);
-    }
-
-    modal.style.display = 'flex';
-  }
-
-  function cerrarModalCliente() {
-    var modal = document.getElementById('modalDetalleCliente');
-    if (modal) modal.style.display = 'none';
   }
 
   // --- Gestión de Tickets Jira -------------------------------------------------------------
@@ -1323,11 +693,8 @@
       
       // Cabecera
       var header = crear('div', 'acordeon-header');
-      header.setAttribute('tabindex', '0');
-      header.setAttribute('role', 'button');
-      header.setAttribute('aria-expanded', gIndex === 0 ? 'true' : 'false');
       var titulo = crear('div', null, grupo.cliente + ' (' + grupo.tickets.length + ' tickets)');
-      var icono = crear('div', null, gIndex === 0 ? '▲' : '▼');
+      var icono = crear('div', null, '▼');
       header.appendChild(titulo);
       header.appendChild(icono);
       
@@ -1384,31 +751,25 @@
       tabla.appendChild(tbody);
       
       // Envolver tabla en un div con overflow
-      var overflowDiv = crear('div', 'table-responsive');
+      var overflowDiv = crear('div');
+      overflowDiv.style.overflowX = 'auto';
       overflowDiv.appendChild(tabla);
       content.appendChild(overflowDiv);
       
       item.appendChild(header);
       item.appendChild(content);
       
-      // Lógica de colapso con soporte de teclado
-      var toggleAcordeon = function() {
+      // Lógica de colapso
+      header.addEventListener('click', function() {
         var isOpen = content.classList.contains('open');
         content.classList.toggle('open');
-        header.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
-        icono.textContent = !isOpen ? '▲' : '▼';
-      };
-      header.addEventListener('click', toggleAcordeon);
-      header.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggleAcordeon();
-        }
+        icono.textContent = isOpen ? '▼' : '▲';
       });
       
       // Expandir el primer acordeón por defecto
       if (gIndex === 0) {
         content.classList.add('open');
+        icono.textContent = '▲';
       }
       
       contenedor.appendChild(item);
@@ -1420,77 +781,25 @@
   el.btnCiclo.addEventListener('click', function () { lanzarCiclo(false); });
   el.btnActualizar.addEventListener('click', actualizarBandeja);
   
-  // Listeners para filtros de bandeja
+  // Listeners para filtros
   document.getElementById('filtroCliente').addEventListener('change', pintarBandeja);
   document.getElementById('filtroBuscar').addEventListener('keyup', pintarBandeja);
   
-  // Listeners de Logs
-  var selectEntornoLogs = document.getElementById('filtroEntornoLogs');
-  if (selectEntornoLogs) {
-    selectEntornoLogs.addEventListener('change', function() {
-      cargarLogs();
-      if (matrizGlobal) cargarMatrizSalud();
-    });
+  if (document.getElementById('filtroClienteLogs')) {
+    document.getElementById('filtroClienteLogs').addEventListener('change', pintarTabActivo);
+    document.getElementById('filtroBuscarLogs').addEventListener('keyup', pintarTabActivo);
   }
-  var filtroCliLogs = document.getElementById('filtroClienteLogs');
-  if (filtroCliLogs) filtroCliLogs.addEventListener('change', pintarTabActivo);
   
-  var filtroPodLogs = document.getElementById('filtroPodLogs');
-  if (filtroPodLogs) filtroPodLogs.addEventListener('change', pintarTabActivo);
+  if (document.getElementById('filtroEntornoLogs')) {
+    document.getElementById('filtroEntornoLogs').addEventListener('change', cargarLogs);
+  }
 
-  var filtroReincLogs = document.getElementById('filtroReincidenteLogs');
-  if (filtroReincLogs) filtroReincLogs.addEventListener('change', pintarTabActivo);
-
-  var filtroFecha = document.getElementById('filtroFechaEnvio');
-  if (filtroFecha) filtroFecha.addEventListener('change', pintarTabActivo);
-
-  var filtroBuscarLogs = document.getElementById('filtroBuscarLogs');
-  if (filtroBuscarLogs) filtroBuscarLogs.addEventListener('keyup', pintarTabActivo);
-
-  var btnExportar = document.getElementById('btnExportarLogs');
-  if (btnExportar) btnExportar.addEventListener('click', exportarCSVActual);
-
+  // Listener logs y tabs
   document.getElementById('btnActualizarLogs').addEventListener('click', cargarLogs);
-  var tabButtons = document.querySelectorAll('#seccion-logs .tab-btn');
+  var tabButtons = document.querySelectorAll('.tab-btn');
   for (var k = 0; k < tabButtons.length; k++) {
     tabButtons[k].addEventListener('click', cambiarTabLogs);
   }
-
-  // Listeners de Salud Operativa
-  var btnActMatriz = document.getElementById('btnActualizarMatriz');
-  if (btnActMatriz) btnActMatriz.addEventListener('click', cargarMatrizSalud);
-
-  var subtabsOp = document.querySelectorAll('#seccion-operaciones .tab-btn');
-  for (var s = 0; s < subtabsOp.length; s++) {
-    subtabsOp[s].addEventListener('click', cambiarSubtabOperaciones);
-  }
-
-  var fPeriodoMatriz = document.getElementById('filtroPeriodoMatriz');
-  if (fPeriodoMatriz) fPeriodoMatriz.addEventListener('change', cargarMatrizSalud);
-
-  var fPodMatriz = document.getElementById('filtroPodMatriz');
-  if (fPodMatriz) fPodMatriz.addEventListener('change', pintarMatrizSalud);
-
-  var fEstMatriz = document.getElementById('filtroEstadoMatriz');
-  if (fEstMatriz) fEstMatriz.addEventListener('change', pintarMatrizSalud);
-
-  var fBusqMatriz = document.getElementById('filtroBuscarMatriz');
-  if (fBusqMatriz) fBusqMatriz.addEventListener('keyup', pintarMatrizSalud);
-
-  // Modal Detalle de Cliente
-  var btnCerrarModal = document.getElementById('btnCerrarModalCliente');
-  if (btnCerrarModal) btnCerrarModal.addEventListener('click', cerrarModalCliente);
-
-  var modalOverlay = document.getElementById('modalDetalleCliente');
-  if (modalOverlay) {
-    modalOverlay.addEventListener('click', function(e) {
-      if (e.target === this) cerrarModalCliente();
-    });
-  }
-
-  window.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') cerrarModalCliente();
-  });
   
   // --- Navegación Principal ------------------------------------------------------------------
   
@@ -1507,21 +816,11 @@
     var navBtns = document.querySelectorAll('.nav-btn');
     for (var j = 0; j < navBtns.length; j++) {
       navBtns[j].classList.remove('active');
-      navBtns[j].setAttribute('aria-selected', 'false');
     }
     
     // Mostrar la sección objetivo y marcar el botón
-    var targetEl = document.getElementById(targetId);
-    if (targetEl) targetEl.classList.add('active');
+    document.getElementById(targetId).classList.add('active');
     e.currentTarget.classList.add('active');
-    e.currentTarget.setAttribute('aria-selected', 'true');
-
-    // Carga perezosa automática al ingresar por primera vez
-    if (targetId === 'seccion-operaciones' && !matrizGlobal) {
-      cargarMatrizSalud();
-    } else if (targetId === 'seccion-logs' && !logsGlobales) {
-      cargarLogs();
-    }
   }
 
   var mainNavButtons = document.querySelectorAll('.nav-btn');
@@ -1631,8 +930,12 @@
       var createBtn = function(texto, pageNum, isActive, isDisabled) {
         var btn = document.createElement('button');
         btn.innerHTML = texto;
-        btn.className = 'btn-paginacion' + (isActive ? ' active' : '');
-        btn.disabled = isDisabled;
+        btn.style.padding = '4px 8px';
+        btn.style.border = '1px solid #d1d5db';
+        btn.style.background = isActive ? '#109E58' : (isDisabled ? '#f3f4f6' : 'white');
+        btn.style.color = isActive ? 'white' : (isDisabled ? '#9ca3af' : '#374151');
+        btn.style.borderRadius = '4px';
+        btn.style.cursor = isDisabled ? 'default' : 'pointer';
         if (!isDisabled && !isActive) {
           btn.addEventListener('click', function() {
             renderPaginatedTable(tickets, tbodyId, paginacionId, pageNum, itemsPorPagina);
@@ -1667,6 +970,303 @@
     }
   }
 
+  // --- Control de Envíos y Tareas del Índice ------------------------------------------------
+  var datosIndiceGlobal = null;
+
+  function cargarEstadoIndice(silencioso) {
+    var btn = document.getElementById('btnRefrescarIndice');
+    if (!silencioso && btn) ocupar(btn, 'Consultando...');
+    var aviso = document.getElementById('avisoIndice');
+    if (aviso) aviso.hidden = true;
+
+    google.script.run
+      .withSuccessHandler(function (datos) {
+        if (!silencioso && btn) liberar(btn);
+        datosIndiceGlobal = datos;
+        pintarMetricasIndice(datos);
+        renderizarTablaIndice();
+      })
+      .withFailureHandler(function (error) {
+        if (!silencioso && btn) liberar(btn);
+        if (aviso) mostrarAviso(aviso, 'error', 'Error al leer el Índice Operativo: ' + error.message);
+      })
+      .webapp_obtenerEstadoIndice();
+  }
+
+  function pintarMetricasIndice(datos) {
+    if (!datos) return;
+    var elReloj = document.getElementById('relojProximoEnvio');
+    var elBadge = document.getElementById('badgeEstadoVentana');
+    var elCantMarcadas = document.getElementById('cantCasillasMarcadas');
+    var elCantTotal = document.getElementById('cantClientesTotal');
+    var elMailsHoy = document.getElementById('cantMailsEnviadosHoy');
+
+    if (elCantMarcadas) elCantMarcadas.textContent = datos.casillasMarcadas || 0;
+    if (elCantTotal) elCantTotal.textContent = datos.totalClientes || 0;
+
+    // Actualizar cantidad de mails de hoy desde logs si están cargados
+    if (elMailsHoy && logsGlobales && logsGlobales.envioMails) {
+      elMailsHoy.textContent = logsGlobales.envioMails.length;
+    }
+
+    if (datos.proximoEnvio) {
+      if (elReloj) elReloj.textContent = datos.proximoEnvio.proximaEjecucion || '--:--';
+      if (elBadge) {
+        if (datos.proximoEnvio.enVentana) {
+          elBadge.textContent = 'En Ventana (08-11 hs)';
+          elBadge.className = 'pildora alerta';
+        } else if (datos.proximoEnvio.finDeSemana) {
+          elBadge.textContent = 'Fin de Semana';
+          elBadge.className = 'pildora';
+        } else {
+          elBadge.textContent = 'Fuera de Horario';
+          elBadge.className = 'pildora';
+        }
+      }
+    }
+
+    // Llenar selector de PODs si aún no se llenó
+    var selectPod = document.getElementById('filtroPodIndice');
+    if (selectPod && selectPod.options.length <= 1 && datos.clientes) {
+      var podsUnicos = {};
+      datos.clientes.forEach(function (c) {
+        if (c.pod && c.pod !== '-') podsUnicos[c.pod] = true;
+      });
+      Object.keys(podsUnicos).sort().forEach(function (pod) {
+        var opt = document.createElement('option');
+        opt.value = pod;
+        opt.textContent = pod;
+        selectPod.appendChild(opt);
+      });
+    }
+  }
+
+  function renderizarTablaIndice() {
+    var tbody = document.getElementById('tbodyIndiceControl');
+    var aviso = document.getElementById('avisoIndice');
+    var elCantFilas = document.getElementById('cantFilasMostradas');
+    if (!tbody) return;
+    vaciar(tbody);
+
+    if (!datosIndiceGlobal || !datosIndiceGlobal.clientes || datosIndiceGlobal.clientes.length === 0) {
+      var trVacio = document.createElement('tr');
+      trVacio.innerHTML = '<td colspan="8" style="padding: 28px; text-align: center; color: var(--gris);">No se encontraron clientes configurados en el Índice.</td>';
+      tbody.appendChild(trVacio);
+      return;
+    }
+
+    var filtroBuscar = (document.getElementById('filtroBuscarIndice') ? document.getElementById('filtroBuscarIndice').value : '').trim().toLowerCase();
+    var filtroPod = (document.getElementById('filtroPodIndice') ? document.getElementById('filtroPodIndice').value : '').trim();
+    var filtroEstado = (document.getElementById('filtroEstadoCasillaIndice') ? document.getElementById('filtroEstadoCasillaIndice').value : '').trim();
+
+    var filtrados = datosIndiceGlobal.clientes.filter(function (c) {
+      if (filtroPod && c.pod !== filtroPod) return false;
+
+      var tieneAlgunaMarcada = (
+        (c.tecnologias.vsphere && c.tecnologias.vsphere.checked) ||
+        (c.tecnologias.veeam && c.tecnologias.veeam.checked) ||
+        (c.tecnologias.nutanix && c.tecnologias.nutanix.checked) ||
+        (c.tecnologias.rvtools && c.tecnologias.rvtools.checked)
+      );
+
+      if (filtroEstado === 'con_pendientes' && !tieneAlgunaMarcada) return false;
+      if (filtroEstado === 'sin_pendientes' && tieneAlgunaMarcada) return false;
+
+      if (filtroBuscar) {
+        var textoUnificado = (c.nombre + ' ' + c.empresa + ' ' + c.pod + ' ' + c.servicios).toLowerCase();
+        if (textoUnificado.indexOf(filtroBuscar) === -1) return false;
+      }
+      return true;
+    });
+
+    if (elCantFilas) {
+      elCantFilas.textContent = filtrados.length + ' de ' + datosIndiceGlobal.clientes.length + ' clientes mostrados';
+    }
+
+    if (filtrados.length === 0) {
+      var trSinResultados = document.createElement('tr');
+      trSinResultados.innerHTML = '<td colspan="8" style="padding: 24px; text-align: center; color: var(--gris);">No hay clientes que coincidan con los filtros aplicados.</td>';
+      tbody.appendChild(trSinResultados);
+      return;
+    }
+
+    filtrados.forEach(function (c) {
+      var tieneAlgunaMarcada = (
+        (c.tecnologias.vsphere && c.tecnologias.vsphere.checked) ||
+        (c.tecnologias.veeam && c.tecnologias.veeam.checked) ||
+        (c.tecnologias.nutanix && c.tecnologias.nutanix.checked) ||
+        (c.tecnologias.rvtools && c.tecnologias.rvtools.checked)
+      );
+
+      var tr = document.createElement('tr');
+      if (tieneAlgunaMarcada) tr.className = 'fila-con-envio-pendiente';
+
+      // 1. Columna Fila
+      var tdFila = document.createElement('td');
+      tdFila.style.color = 'var(--gris-claro)';
+      tdFila.style.fontWeight = '600';
+      tdFila.textContent = '#' + c.fila;
+      tr.appendChild(tdFila);
+
+      // 2. Columna Cliente
+      var tdCliente = document.createElement('td');
+      var divCli = document.createElement('div');
+      divCli.style.fontWeight = '600';
+      divCli.style.color = 'var(--tinta)';
+      divCli.textContent = c.nombre;
+      var divSub = document.createElement('div');
+      divSub.style.fontSize = '11px';
+      divSub.style.color = 'var(--gris)';
+      divSub.textContent = (c.opsKey ? 'Ops: ' + c.opsKey : '') + (c.soporteKey ? ' | Sop: ' + c.soporteKey : '');
+      tdCliente.appendChild(divCli);
+      if (c.opsKey || c.soporteKey) tdCliente.appendChild(divSub);
+      tr.appendChild(tdCliente);
+
+      // 3. Columna POD
+      var tdPod = document.createElement('td');
+      var spanPod = document.createElement('span');
+      spanPod.className = 'pildora';
+      spanPod.textContent = c.pod;
+      spanPod.title = c.podEmail || '';
+      tdPod.appendChild(spanPod);
+      tr.appendChild(tdPod);
+
+      // Helper para renderizar toggles de envío
+      function crearTdToggle(tecInfo, claseTech, labelTech) {
+        var td = document.createElement('td');
+        td.style.textAlign = 'center';
+
+        if (!tecInfo || !tecInfo.habilitado) {
+          td.innerHTML = '<span style="color: #cbd5e1; font-size: 16px;" title="Tecnología no habilitada para este cliente">—</span>';
+          return td;
+        }
+
+        var btnToggle = document.createElement('button');
+        btnToggle.className = 'toggle-switch ' + claseTech;
+        btnToggle.setAttribute('role', 'switch');
+        btnToggle.setAttribute('aria-checked', tecInfo.checked ? 'true' : 'false');
+        btnToggle.setAttribute('aria-label', labelTech + ' ' + c.nombre);
+        btnToggle.title = tecInfo.checked ? 'Habilitado para envío en el próximo lote. Clic para desmarcar.' : 'Desmarcado. Clic para activar el envío en el próximo lote.';
+
+        btnToggle.addEventListener('click', function () {
+          var nuevoEstado = !(tecInfo.checked);
+          btnToggle.disabled = true;
+
+          google.script.run
+            .withSuccessHandler(function (res) {
+              btnToggle.disabled = false;
+              tecInfo.checked = nuevoEstado;
+              btnToggle.setAttribute('aria-checked', nuevoEstado ? 'true' : 'false');
+              btnToggle.title = nuevoEstado ? 'Habilitado para envío. Clic para desmarcar.' : 'Desmarcado. Clic para activar.';
+              
+              // Recalcular métricas
+              var delta = nuevoEstado ? 1 : -1;
+              if (datosIndiceGlobal) {
+                datosIndiceGlobal.casillasMarcadas = Math.max(0, (datosIndiceGlobal.casillasMarcadas || 0) + delta);
+                pintarMetricasIndice(datosIndiceGlobal);
+              }
+
+              // Actualizar estilo de fila si queda alguna activa
+              var algunaActiva = (
+                (c.tecnologias.vsphere && c.tecnologias.vsphere.checked) ||
+                (c.tecnologias.veeam && c.tecnologias.veeam.checked) ||
+                (c.tecnologias.nutanix && c.tecnologias.nutanix.checked) ||
+                (c.tecnologias.rvtools && c.tecnologias.rvtools.checked)
+              );
+              tr.className = algunaActiva ? 'fila-con-envio-pendiente' : '';
+
+              if (aviso) mostrarAviso(aviso, 'ok', c.nombre + ' (' + labelTech + '): ' + (nuevoEstado ? 'activado para próximo envío' : 'desmarcado'));
+            })
+            .withFailureHandler(function (err) {
+              btnToggle.disabled = false;
+              if (aviso) mostrarAviso(aviso, 'error', 'Error actualizando ' + c.nombre + ': ' + err.message);
+            })
+            .webapp_marcarCheckboxIndice(c.fila, tecInfo.col, nuevoEstado);
+        });
+
+        td.appendChild(btnToggle);
+        return td;
+      }
+
+      // 4. vSphere
+      tr.appendChild(crearTdToggle(c.tecnologias.vsphere, 'sw-vsphere', 'vSphere'));
+
+      // 5. Veeam
+      tr.appendChild(crearTdToggle(c.tecnologias.veeam, 'sw-veeam', 'Veeam'));
+
+      // 6. Nutanix
+      tr.appendChild(crearTdToggle(c.tecnologias.nutanix, 'sw-nutanix', 'Nutanix'));
+
+      // 7. RVTools (Acción On-Demand)
+      var tdRV = document.createElement('td');
+      tdRV.style.textAlign = 'center';
+      if (c.tecnologias.rvtools && c.tecnologias.rvtools.habilitado) {
+        var btnRV = document.createElement('button');
+        btnRV.className = 'btn-accion-rvtools';
+        btnRV.textContent = 'Procesar';
+        btnRV.title = 'Ejecutar auditoría de RVTools para ' + c.nombre;
+
+        btnRV.addEventListener('click', function () {
+          ocupar(btnRV, 'Procesando...');
+          google.script.run
+            .withSuccessHandler(function (res) {
+              liberar(btnRV);
+              btnRV.textContent = 'Encolado ✓';
+              btnRV.style.borderColor = 'var(--verde)';
+              btnRV.style.color = 'var(--verde)';
+              if (aviso) mostrarAviso(aviso, 'ok', res.mensaje || ('RVTools encolado para ' + c.nombre));
+            })
+            .withFailureHandler(function (err) {
+              liberar(btnRV);
+              if (aviso) mostrarAviso(aviso, 'error', 'Error al procesar RVTools para ' + c.nombre + ': ' + err.message);
+            })
+            .webapp_procesarRVToolsCliente(c.fila, c.nombre);
+        });
+
+        tdRV.appendChild(btnRV);
+      } else {
+        tdRV.innerHTML = '<span style="color: #cbd5e1; font-size: 16px;">—</span>';
+      }
+      tr.appendChild(tdRV);
+
+      // 8. Servicios
+      var tdServ = document.createElement('td');
+      var badges = [];
+      if (c.tecnologias.vsphere && c.tecnologias.vsphere.habilitado) badges.push('<span class="tech-tag tag-vsphere">vSphere</span>');
+      if (c.tecnologias.veeam && c.tecnologias.veeam.habilitado) badges.push('<span class="tech-tag tag-veeam">Veeam</span>');
+      if (c.tecnologias.nutanix && c.tecnologias.nutanix.habilitado) badges.push('<span class="tech-tag tag-nutanix">Nutanix</span>');
+      if (c.tecnologias.horizon && c.tecnologias.horizon.habilitado) badges.push('<span class="tech-tag tag-horizon">Horizon</span>');
+      tdServ.innerHTML = badges.length ? '<div style="display: flex; gap: 4px; flex-wrap: wrap;">' + badges.join('') + '</div>' : '<span style="color:var(--gris-claro); font-size:11px;">Sin tags</span>';
+      tr.appendChild(tdServ);
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  // Listeners para la sección Control del Índice
+  var btnRefrescarIndice = document.getElementById('btnRefrescarIndice');
+  if (btnRefrescarIndice) {
+    btnRefrescarIndice.addEventListener('click', function () { cargarEstadoIndice(false); });
+  }
+
+  var inputBuscarIndice = document.getElementById('filtroBuscarIndice');
+  if (inputBuscarIndice) {
+    inputBuscarIndice.addEventListener('input', renderizarTablaIndice);
+  }
+
+  var selectPodIndice = document.getElementById('filtroPodIndice');
+  if (selectPodIndice) {
+    selectPodIndice.addEventListener('change', renderizarTablaIndice);
+  }
+
+  var selectEstadoIndice = document.getElementById('filtroEstadoCasillaIndice');
+  if (selectEstadoIndice) {
+    selectEstadoIndice.addEventListener('change', renderizarTablaIndice);
+  }
+
+  // Cargar estado inicial del Índice en segundo plano
+  cargarEstadoIndice(true);
+
   pintarEncabezado();
   pintarBandeja();
 
@@ -1675,6 +1275,50 @@
   setInterval(function () {
     pintarUltimoLanzamiento();
     pintarContextoBandeja();
+    // Actualizar reloj y estado de envío si el panel está abierto
+    if (datosIndiceGlobal) {
+      datosIndiceGlobal.proximoEnvio = webapp_calcularProximoEnvioLocal();
+      pintarMetricasIndice(datosIndiceGlobal);
+    }
   }, 60000);
+
+  function webapp_calcularProximoEnvioLocal() {
+    var ahora = new Date();
+    var horaActual = ahora.getHours();
+    var minutosActual = ahora.getMinutes();
+    var diaSemana = ahora.getDay();
+    var finDeSemana = (diaSemana === 0 || diaSemana === 6);
+    var dentroDeVentana = (horaActual >= 8 && horaActual < 11);
+
+    var proxMin = Math.ceil((minutosActual + 1) / 5) * 5;
+    var horaProx = horaActual;
+    var minProx = proxMin;
+    if (minProx >= 60) { horaProx += 1; minProx = 0; }
+
+    var proximoTexto = '';
+    var estadoVentana = '';
+    if (finDeSemana) {
+      estadoVentana = 'FIN_DE_SEMANA';
+      proximoTexto = 'Próximo Lunes 08:00 hs';
+    } else if (horaActual < 8) {
+      estadoVentana = 'ANTES_DE_VENTANA';
+      proximoTexto = 'Hoy 08:00 hs';
+    } else if (dentroDeVentana) {
+      estadoVentana = 'EN_VENTANA';
+      var horaFormato = (horaProx < 10 ? '0' : '') + horaProx + ':' + (minProx < 10 ? '0' : '') + minProx + ' hs';
+      var minutosFaltan = ((horaProx * 60 + minProx) - (horaActual * 60 + minutosActual));
+      proximoTexto = horaFormato + ' (en ~' + minutosFaltan + ' min)';
+    } else {
+      estadoVentana = 'FINALIZADA_HOY';
+      proximoTexto = 'Mañana 08:00 hs';
+    }
+
+    return {
+      estado: estadoVentana,
+      proximaEjecucion: proximoTexto,
+      enVentana: dentroDeVentana,
+      finDeSemana: finDeSemana
+    };
+  }
 })();
 </script>

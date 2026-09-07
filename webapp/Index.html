@@ -3,8 +3,6 @@
   <head>
     <base target="_top">
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Panel de Operaciones · WETCOM</title>
     <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
     <?!= webapp_include('webapp/Estilos') ?>
   </head>
@@ -14,7 +12,7 @@
       <div class="marca">
         <!-- Isotipo de WETCOM dibujado en SVG: la WebApp corre dentro del sandbox de Apps
              Script, donde una imagen alojada afuera es una dependencia que puede fallar. -->
-        <svg class="logo" viewBox="0 0 100 100" role="img" aria-label="Logo WETCOM">
+        <svg class="logo" viewBox="0 0 100 100" role="img" aria-label="WETCOM">
           <circle cx="50" cy="50" r="50" fill="#109E58"></circle>
           <path d="M18 30 L34 66 L50 32 L66 66 L82 30" fill="none" stroke="#FFFFFF"
                 stroke-width="13" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -34,17 +32,17 @@
 
     <main>
       <!-- Navegación Principal -->
-      <nav class="nav-principal" role="tablist" aria-label="Navegación principal del panel">
-        <button class="nav-btn active" role="tab" aria-selected="true" aria-controls="seccion-inicio" data-seccion="seccion-inicio">Inicio y Bandeja</button>
-        <button class="nav-btn" role="tab" aria-selected="false" aria-controls="seccion-operaciones" data-seccion="seccion-operaciones">📊 Salud Operativa</button>
-        <button class="nav-btn" role="tab" aria-selected="false" aria-controls="seccion-logs" data-seccion="seccion-logs">Logs del Sistema</button>
-        <button class="nav-btn" role="tab" aria-selected="false" aria-controls="seccion-jira" data-seccion="seccion-jira">Tickets Jira</button>
-        <button class="nav-btn" role="tab" aria-selected="false" aria-controls="seccion-reportes" data-seccion="seccion-reportes">Reportes Analíticos</button>
+      <nav class="navegacion-principal" style="margin-bottom: 24px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px;">
+        <button class="nav-btn active" data-seccion="seccion-inicio">Inicio y Bandeja</button>
+        <button class="nav-btn" data-seccion="seccion-indice">Control de Envíos</button>
+        <button class="nav-btn" data-seccion="seccion-logs">Logs del Sistema</button>
+        <button class="nav-btn" data-seccion="seccion-jira">Tickets Jira</button>
+        <button class="nav-btn" data-seccion="seccion-reportes">Reportes Analíticos</button>
       </nav>
 
       <!-- VISTA: INICIO Y BANDEJA -->
-      <div id="seccion-inicio" class="vista-seccion active" role="tabpanel" aria-labelledby="tab-inicio">
-        <!-- 1. Ejecución manual del ciclo -->
+      <div id="seccion-inicio" class="vista-seccion active">
+        <!-- 1. Ejecución manual del ciclo ---------------------------------------------------- -->
         <section class="tarjeta">
           <header>
             <div>
@@ -61,35 +59,26 @@
           <div class="contexto" id="contexto"></div>
           
           <!-- Bloque de Salud del Sistema (KPIs) -->
-          <div id="panelSalud" class="kpi-grid" role="region" aria-label="Métricas de salud operativa del día">
-            <div class="kpi-card kpi-procesados">
-              <div class="kpi-header">
-                <span class="kpi-label">Procesados hoy</span>
-                <span class="kpi-indicator" aria-hidden="true"></span>
-              </div>
-              <div id="kpiProcesados" class="kpi-value" aria-live="polite">-</div>
+          <div id="panelSalud" style="display: flex; gap: 16px; margin-top: 16px;">
+            <div style="flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; text-align: center; background: #f9fafb;">
+               <div style="font-size: 12px; color: #6b7280; text-transform: uppercase;">Correos procesados hoy</div>
+               <div id="kpiProcesados" style="font-size: 24px; font-weight: bold; color: #111827;">-</div>
             </div>
-            <div class="kpi-card kpi-errores">
-              <div class="kpi-header">
-                <span class="kpi-label">Errores hoy</span>
-                <span class="kpi-indicator" aria-hidden="true"></span>
-              </div>
-              <div id="kpiErrores" class="kpi-value" aria-live="polite">-</div>
+            <div style="flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; text-align: center; background: #f9fafb;">
+               <div style="font-size: 12px; color: #6b7280; text-transform: uppercase;">Errores hoy</div>
+               <div id="kpiErrores" style="font-size: 24px; font-weight: bold; color: #ef4444;">-</div>
             </div>
-            <div class="kpi-card kpi-faltantes">
-              <div class="kpi-header">
-                <span class="kpi-label">Reportes faltantes hoy</span>
-                <span class="kpi-indicator" aria-hidden="true"></span>
-              </div>
-              <div id="kpiFaltantes" class="kpi-value" aria-live="polite">-</div>
+            <div style="flex: 1; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; text-align: center; background: #f9fafb;">
+               <div style="font-size: 12px; color: #6b7280; text-transform: uppercase;">Faltantes hoy</div>
+               <div id="kpiFaltantes" style="font-size: 24px; font-weight: bold; color: #f59e0b;">-</div>
             </div>
           </div>
 
-          <div class="aviso" id="avisoCiclo" hidden></div>
-          <p class="ayuda" id="ultimoLanzamiento" style="margin-top: 14px;"></p>
+          <div class="aviso" id="avisoCiclo" hidden style="margin-top: 16px;"></div>
+          <p class="ayuda" id="ultimoLanzamiento" style="margin-top:12px"></p>
         </section>
   
-        <!-- 2. Bandeja del día -->
+        <!-- 2. Bandeja del día --------------------------------------------------------------- -->
         <section class="tarjeta">
           <header>
             <div>
@@ -106,11 +95,11 @@
           <div class="contexto" id="contextoBandeja"></div>
           
           <!-- Controles de filtrado -->
-          <div class="filter-toolbar">
-            <select id="filtroCliente" class="select-control" aria-label="Filtrar correos por cliente">
+          <div style="margin-top: 16px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
+            <select id="filtroCliente" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none; min-width: 200px;">
               <option value="">Todos los clientes</option>
             </select>
-            <input type="text" id="filtroBuscar" class="input-control search-input" placeholder="Buscar por asunto o reporte…" aria-label="Buscar por asunto o reporte" autocomplete="off">
+            <input type="text" id="filtroBuscar" placeholder="Buscar por nombre de reporte..." style="flex-grow: 1; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; outline: none;">
           </div>
   
           <div class="aviso" id="avisoBandeja" hidden></div>
@@ -118,109 +107,8 @@
         </section>
       </div>
 
-      <!-- VISTA: SALUD OPERATIVA Y MATRIZ TECNOLÓGICA -->
-      <section id="seccion-operaciones" class="tarjeta vista-seccion" role="tabpanel" aria-labelledby="tab-operaciones">
-        <header>
-          <div>
-            <h2>Salud Operativa y Matriz Tecnológica</h2>
-            <p class="ayuda">
-              Visión 360° del estado de los servicios por cliente y tecnología, con correlación de anomalías y tendencias de estabilidad.
-            </p>
-          </div>
-          <button id="btnActualizarMatriz" class="btn-primario">Actualizar Matriz</button>
-        </header>
-
-        <!-- Subpestañas de Salud Operativa -->
-        <div class="tabs-container" role="tablist" aria-label="Subpestañas de salud operativa">
-          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-operaciones="matriz">Matriz de Salud</button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab-operaciones="tendencias">Tendencia Semanal</button>
-        </div>
-
-        <!-- Controles de Filtrado para Matriz -->
-        <div class="filter-toolbar" id="controlesMatriz">
-          <select id="filtroPeriodoMatriz" class="select-control" aria-label="Período de análisis">
-            <option value="hoy">Hoy</option>
-            <option value="ayer">Ayer</option>
-            <option value="semana">Últimos 7 días</option>
-          </select>
-          <select id="filtroPodMatriz" class="select-control" aria-label="Filtrar por POD">
-            <option value="">Todos los PODs</option>
-            <option value="POD1">POD 1</option>
-            <option value="POD2">POD 2</option>
-            <option value="POD3">POD 3</option>
-            <option value="POD4">POD 4</option>
-            <option value="POD5">POD 5</option>
-            <option value="Cloud">Cloud</option>
-          </select>
-          <select id="filtroEstadoMatriz" class="select-control" aria-label="Filtrar por estado">
-            <option value="">Todos los estados</option>
-            <option value="anomalias">Solo con alertas / incidencias</option>
-            <option value="ok">100% Sin anomalías</option>
-          </select>
-          <input type="text" id="filtroBuscarMatriz" class="input-control search-input" placeholder="Buscar cliente en matriz…" aria-label="Buscar cliente" autocomplete="off">
-        </div>
-
-        <div class="aviso" id="avisoMatriz" hidden></div>
-
-        <!-- Scorecards de Resumen Operativo -->
-        <div id="scorecardMatriz" class="scorecard-grid">
-          <div class="scorecard-card">
-            <span class="scorecard-label">Clientes Monitoreados</span>
-            <span id="scTotalClientes" class="scorecard-value">-</span>
-          </div>
-          <div class="scorecard-card card-err">
-            <span class="scorecard-label">Con Incidencias</span>
-            <span id="scConIncidencias" class="scorecard-value">-</span>
-          </div>
-          <div class="scorecard-card card-warn">
-            <span class="scorecard-label">Con Advertencias</span>
-            <span id="scConAdvertencias" class="scorecard-value">-</span>
-          </div>
-          <div class="scorecard-card card-ok">
-            <span class="scorecard-label">Salud Global</span>
-            <span id="scSaludGlobal" class="scorecard-value">-%</span>
-          </div>
-        </div>
-
-        <!-- Contenedor 1: Tabla Matriz de Salud -->
-        <div id="vistaSubtabMatriz">
-          <div class="matriz-container">
-            <table class="matriz-table" id="tablaMatriz">
-              <thead id="theadMatriz"></thead>
-              <tbody id="tbodyMatriz"></tbody>
-            </table>
-          </div>
-          <p id="matrizVacio" class="vacio" style="display: none;">No hay datos registrados para los filtros seleccionados.</p>
-        </div>
-
-        <!-- Contenedor 2: Tendencias Semanales -->
-        <div id="vistaSubtabTendencias" style="display: none;">
-          <div class="chart-card" style="margin-bottom: 20px;">
-            <h3>Estabilidad Operacional en los últimos 7 días</h3>
-            <div id="chart_tendencia_div" style="width: 100%; height: 320px;"></div>
-          </div>
-          <div class="table-container">
-            <div class="table-responsive">
-              <table class="tabla-logs" id="tablaTendencias">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Operaciones Resueltas</th>
-                    <th>Con Advertencias</th>
-                    <th>No Resueltas / Errores</th>
-                    <th>Tickets Creados</th>
-                    <th>Índice de Estabilidad</th>
-                  </tr>
-                </thead>
-                <tbody id="tbodyTendencias"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 3. Logs del Sistema -->
-      <section id="seccion-logs" class="tarjeta vista-seccion" role="tabpanel" aria-labelledby="tab-logs">
+      <!-- 3. Logs del Sistema ----------------------------------------------------------- -->
+      <section id="seccion-logs" class="tarjeta vista-seccion">
         <header>
           <div>
             <h2>Logs del Sistema</h2>
@@ -228,175 +116,141 @@
               Historial en tiempo real de operaciones, errores, notificaciones y reportes faltantes.
             </p>
           </div>
-          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-            <button id="btnExportarLogs" class="btn-export" title="Descargar registros como archivo CSV">📥 Exportar CSV</button>
-            <button id="btnActualizarLogs" class="btn-secundario">Cargar Logs</button>
-          </div>
+          <button id="btnActualizarLogs" class="btn-secundario">Cargar Logs</button>
         </header>
 
-        <div class="tabs-container" role="tablist" aria-label="Subpestañas de logs">
-          <button class="tab-btn active" role="tab" aria-selected="true" data-tab="estadoFinal">Estado Final <span class="tab-badge" id="badgeCountEstadoFinal">-</span></button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab="erroresScript">Errores del Script <span class="tab-badge" id="badgeCountErroresScript">-</span></button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab="envioMails">Envío de Mails <span class="tab-badge" id="badgeCountEnvioMails">-</span></button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab="reportesFaltantes">Reportes Faltantes <span class="tab-badge" id="badgeCountReportesFaltantes">-</span></button>
+        <div class="tabs-container" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
+          <button class="tab-btn active" data-tab="estadoFinal">Estado Final</button>
+          <button class="tab-btn" data-tab="erroresScript">Errores del Script</button>
+          <button class="tab-btn" data-tab="envioMails">Envío de Mails</button>
+          <button class="tab-btn" data-tab="reportesFaltantes">Reportes Faltantes</button>
         </div>
 
         <!-- Controles de filtrado para Logs -->
-        <div class="filter-toolbar" id="controlesLogs">
-          <select id="filtroEntornoLogs" class="select-control" aria-label="Seleccionar entorno de logs">
+        <div style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;" id="controlesLogs">
+          <select id="filtroEntornoLogs" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none; min-width: 150px;">
             <option value="11dfz2dBl-A1owku7xGhtuyJ2pbayezwObHV5oETuuDw">Testing</option>
             <option value="1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ">Producción</option>
           </select>
-          <select id="filtroClienteLogs" class="select-control" aria-label="Filtrar logs por cliente">
+          <select id="filtroClienteLogs" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none; min-width: 200px;">
             <option value="">Todos los clientes</option>
           </select>
-          <select id="filtroPodLogs" class="select-control" aria-label="Filtrar logs por POD">
-            <option value="">Todos los PODs</option>
-            <option value="POD1">POD 1</option>
-            <option value="POD2">POD 2</option>
-            <option value="POD3">POD 3</option>
-            <option value="POD4">POD 4</option>
-            <option value="POD5">POD 5</option>
-            <option value="Cloud">Cloud</option>
-          </select>
-          <select id="filtroReincidenteLogs" class="select-control" style="display:none;" aria-label="Filtrar reincidentes">
-            <option value="">Todos los errores</option>
-            <option value="reincidente">Solo reincidentes</option>
-          </select>
-          <select id="filtroFechaEnvio" class="select-control" style="display:none;" aria-label="Filtrar fecha de envío">
-            <option value="hoy">Hoy</option>
-            <option value="ayer">Ayer</option>
-            <option value="hace2">Hace 2 días</option>
-            <option value="hace3">Hace 3 días</option>
-          </select>
-          <input type="text" id="filtroBuscarLogs" class="input-control search-input" placeholder="Buscar en logs…" aria-label="Buscar en logs" autocomplete="off">
-          <span id="tsLogs" style="font-size: 11.5px; color: var(--gris-claro); margin-left: auto;"></span>
+          <input type="text" id="filtroBuscarLogs" placeholder="Buscar en los logs..." style="flex-grow: 1; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; outline: none;">
         </div>
 
         <div class="aviso" id="avisoLogs" hidden></div>
         
-        <div class="table-container">
-          <div class="table-responsive">
-            <table class="tabla-logs" id="tablaLogs" style="display: none;">
-              <thead id="theadLogs"></thead>
-              <tbody id="tbodyLogs"></tbody>
-            </table>
-          </div>
-          <p id="logsVacio" class="vacio">Haz clic en Cargar Logs para ver el historial.</p>
+        <div style="overflow-x: auto; margin-top: 16px;">
+          <table class="tabla-logs" id="tablaLogs" style="width: 100%; text-align: left; border-collapse: collapse; display: none;">
+            <thead id="theadLogs">
+            </thead>
+            <tbody id="tbodyLogs">
+            </tbody>
+          </table>
+          <p id="logsVacio" class="ayuda" style="margin-top: 16px; text-align: center;">Haz clic en Cargar Logs para ver el historial.</p>
         </div>
       </section>
 
-      <!-- 4. Gestión de Tickets Jira -->
-      <section id="seccion-jira" class="tarjeta vista-seccion" role="tabpanel" aria-labelledby="tab-jira">
-        <header>
-          <div>
-            <h2>Gestión de Tickets Jira</h2>
-            <p class="ayuda">
-              Visualiza los tickets creados por Alarmas Wetcom agrupados por cliente.
-            </p>
-          </div>
-          <div class="filter-toolbar" style="margin: 0; padding: 0; background: transparent; border: none;">
-            <select id="filtroClienteJira" class="select-control" aria-label="Filtrar tickets por cliente">
-              <option value="ALL">Todos los Clientes</option>
-            </select>
-            <select id="filtroTiempoJira" class="select-control" aria-label="Rango de tiempo de tickets Jira">
-              <option value="hoy">Últimas 24 horas</option>
-              <option value="7dias">Últimos 7 días</option>
-              <option value="mes_actual">En el transcurso de este mes</option>
-              <option value="mes_pasado">Mes pasado</option>
-            </select>
-            <button id="btnCargarJira" class="btn-secundario">Cargar Tickets</button>
-          </div>
-        </header>
+      <!-- 4. Gestión de Tickets Jira ----------------------------------------------------------- -->
+      <section id="seccion-jira" class="tarjeta vista-seccion">
+          <header>
+            <div>
+              <h2>Gestión de Tickets Jira</h2>
+              <p class="ayuda">
+                Visualiza los tickets creados por el equipo WPC y el sistema agrupados por cliente.
+              </p>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <select id="filtroClienteJira" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px; max-width: 200px;">
+                <option value="ALL">Todos los Clientes</option>
+              </select>
+              <select id="filtroTiempoJira" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px;">
+                <option value="hoy">Últimas 24 horas</option>
+                <option value="7dias">Últimos 7 días</option>
+                <option value="mes_actual">En el transcurso de este mes</option>
+                <option value="mes_pasado">Mes pasado</option>
+              </select>
+              <button id="btnCargarJira" class="btn-secundario">Cargar Tickets</button>
+            </div>
+          </header>
         
         <div class="aviso" id="avisoJira" hidden></div>
         
-        <p id="contenedorJiraVacio" class="vacio">Haz clic en Cargar Tickets para consultar a Jira.</p>
+        <div id="contenedorJiraVacio" class="ayuda" style="margin-top: 16px; text-align: center;">Haz clic en Cargar Tickets para consultar a Jira.</div>
         <div id="contenedorTicketsJira" style="margin-top: 16px;"></div>
       </section>
 
-      <!-- 5. Reportes Analíticos (Gráficos) -->
-      <section id="seccion-reportes" class="tarjeta vista-seccion" role="tabpanel" aria-labelledby="tab-reportes">
-        <header>
-          <div>
-            <h2>Reportes Analíticos de Jira</h2>
-            <p class="ayuda">
-              Análisis gráfico de carga operativa y soporte agrupado por tecnología y cliente.
-            </p>
-          </div>
-          <div class="filter-toolbar" style="margin: 0; padding: 0; background: transparent; border: none;">
-            <select id="filtroClienteReportes" class="select-control" aria-label="Seleccionar cliente para reporte analítico">
-              <option value="">Seleccione un Cliente…</option>
-            </select>
-            <select id="filtroTiempoReportes" class="select-control" aria-label="Rango de tiempo de reporte analítico">
-              <option value="mes_actual">En el transcurso de este mes</option>
-              <option value="mes_pasado">Mes pasado</option>
-              <option value="30dias">Últimos 30 días</option>
-            </select>
-            <button id="btnCargarReportes" class="btn-primario" disabled>Cargar Gráficos</button>
-          </div>
-        </header>
+      <!-- 5. Reportes Analíticos (Gráficos) --------------------------------------------------- -->
+      <section id="seccion-reportes" class="tarjeta vista-seccion">
+          <header>
+            <div>
+              <h2>Reportes Analíticos de Jira</h2>
+              <p class="ayuda">
+                Análisis gráfico de carga operativa y soporte (requiere cargar la API de Google Charts).
+              </p>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <select id="filtroClienteReportes" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px; max-width: 200px;">
+                <option value="">Seleccione un Cliente...</option>
+              </select>
+              <select id="filtroTiempoReportes" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 14px;">
+                <option value="mes_actual">En el transcurso de este mes</option>
+                <option value="mes_pasado">Mes pasado</option>
+                <option value="30dias">Últimos 30 días</option>
+              </select>
+              <button id="btnCargarReportes" class="btn-primario" disabled>Cargar Gráficos</button>
+            </div>
+          </header>
         
         <div class="aviso" id="avisoReportes" hidden></div>
         
-        <p id="contenedorReportesVacio" class="vacio">Seleccione un cliente y haga clic en Cargar Gráficos.</p>
+        <div id="contenedorReportesVacio" class="ayuda" style="margin-top: 16px; text-align: center;">Seleccione un cliente y haga clic en Cargar Gráficos.</div>
         
         <div id="contenedorReportesDatos" style="margin-top: 24px; display: none;">
-          <div class="chart-grid">
-            <div class="chart-card">
-              <h3>Operaciones vs Soporte</h3>
-              <div id="piechart_div" style="width: 100%; height: 260px;"></div>
-            </div>
-            <div class="chart-card">
-              <h3>Tickets por Tecnología</h3>
-              <div id="barchart_div" style="width: 100%; height: 260px;"></div>
-            </div>
-          </div>
-
-          <div class="chart-grid">
-            <div class="chart-card">
-              <h3>Tickets de Operaciones (<span id="countOps" style="font-variant-numeric: tabular-nums;">0</span>)</h3>
-              <div class="table-container" style="margin-top: 10px;">
-                <div class="table-responsive">
-                  <table class="tabla-logs">
-                    <thead><tr><th>Clave</th><th>Resumen</th><th>Estado</th><th>Creado</th></tr></thead>
-                    <tbody id="tbodyOps"></tbody>
-                  </table>
-                </div>
+           <div style="display: flex; gap: 24px; margin-bottom: 24px;">
+              <div style="flex: 1; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+                 <h3 style="margin-bottom: 16px; font-size: 16px; color: #111827;">Operaciones vs Soporte</h3>
+                 <div id="piechart_div" style="width: 100%; height: 250px;"></div>
               </div>
-              <div id="paginacionOps" class="paginacion-wrapper"></div>
-            </div>
-
-            <div class="chart-card">
-              <h3>Tickets de Soporte (<span id="countSop" style="font-variant-numeric: tabular-nums;">0</span>)</h3>
-              <div class="table-container" style="margin-top: 10px;">
-                <div class="table-responsive">
-                  <table class="tabla-logs">
-                    <thead><tr><th>Clave</th><th>Resumen</th><th>Estado</th><th>Creado</th></tr></thead>
-                    <tbody id="tbodySop"></tbody>
-                  </table>
-                </div>
+              <div style="flex: 2; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+                 <h3 style="margin-bottom: 16px; font-size: 16px; color: #111827;">Tickets por Tecnología</h3>
+                 <div id="barchart_div" style="width: 100%; height: 250px;"></div>
               </div>
-              <div id="paginacionSop" class="paginacion-wrapper"></div>
-            </div>
-          </div>
+           </div>
+
+           <div style="display: flex; gap: 24px;">
+              <div style="flex: 1; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; display: flex; flex-direction: column;">
+                 <h3 style="margin-bottom: 16px; font-size: 16px; color: #111827;">Tickets de Operaciones (<span id="countOps">0</span>)</h3>
+                 <div style="overflow-x: auto; flex-grow: 1;">
+                   <table class="tabla-logs" style="width: 100%; text-align: left; border-collapse: collapse;">
+                      <thead><tr><th>Clave</th><th>Resumen</th><th>Estado</th><th>Creado</th></tr></thead>
+                      <tbody id="tbodyOps"></tbody>
+                   </table>
+                 </div>
+                 <div id="paginacionOps" style="margin-top: 12px; display: flex; gap: 8px; justify-content: center;"></div>
+              </div>
+              <div style="flex: 1; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; display: flex; flex-direction: column;">
+                 <h3 style="margin-bottom: 16px; font-size: 16px; color: #111827;">Tickets de Soporte (<span id="countSop">0</span>)</h3>
+                 <div style="overflow-x: auto; flex-grow: 1;">
+                   <table class="tabla-logs" style="width: 100%; text-align: left; border-collapse: collapse;">
+                      <thead><tr><th>Clave</th><th>Resumen</th><th>Estado</th><th>Creado</th></tr></thead>
+                      <tbody id="tbodySop"></tbody>
+                   </table>
+                 </div>
+                 <div id="paginacionSop" style="margin-top: 12px; display: flex; gap: 8px; justify-content: center;"></div>
+              </div>
+           </div>
         </div>
+      </section>
+
+      <!-- 6. Control de Envíos (Índice) ---------------------------------------------------- -->
+      <section id="seccion-indice" class="tarjeta vista-seccion">
+        <?!= webapp_include('webapp/IndiceControl') ?>
       </section>
     </main>
 
-    <!-- Modal para Detalle de Operaciones de Cliente -->
-    <div id="modalDetalleCliente" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modalTituloCliente">
-      <div class="modal-card">
-        <div class="modal-header">
-          <h3 id="modalTituloCliente">Detalle Operacional del Cliente</h3>
-          <button type="button" id="btnCerrarModalCliente" class="modal-close" aria-label="Cerrar">&times;</button>
-        </div>
-        <div class="modal-body" id="modalCuerpoCliente"></div>
-      </div>
-    </div>
-
     <footer>
-      Panel de Operaciones Automatizadas · WETCOM
+      Automatización de Soporte Operativo · WETCOM
     </footer>
 
     <script>

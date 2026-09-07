@@ -331,7 +331,7 @@ function webapp_estado() {
   try {
     feriado = esFeriadoHoy();
   } catch (e) {
-    Logger.log('[WebApp] No se pudo consultar el API de feriados: ' + e.message);
+    Logger.log('[WebApp] No se pudo consultar el calendario de feriados: ' + e.message);
   }
 
   const hoyStr = Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
@@ -340,11 +340,34 @@ function webapp_estado() {
   let erroresHoy = 0;
   let faltantesHoy = 0;
   try {
-    const logs = webapp_obtenerLogs(150);
-    const hoyCorto = hoyStr.substring(0,5); // dd/MM
-    procesadosHoy = logs.estadoFinal.filter(l => l.fecha === hoyStr && (l.estado && (l.estado.indexOf('Resuelto') !== -1 || l.estado === 'Éxito'))).length;
-    erroresHoy = logs.erroresScript.filter(l => (l.fecha === hoyStr) || (l.hora && l.hora.startsWith(hoyCorto))).length; 
-    faltantesHoy = logs.reportesFaltantes.filter(l => l.fecha === hoyStr).length;
+    const cached = CacheService.getScriptCache().get('kpis_hoy_' + hoyStr);
+    if (cached) {
+      const kp = JSON.parse(cached);
+      procesadosHoy = kp.procesados;
+      erroresHoy = kp.errores;
+      faltantesHoy = kp.faltantes;
+    } else {
+      const logs = webapp_obtenerLogs(100); // 100 rows is enough for a single day usually
+      const hoyCorto = hoyStr.substring(0, 5); // dd/MM
+      procesadosHoy = logs.estadoFinal.filter(function(l) {
+        return l.fecha === hoyStr && (
+          l.estado === 'Éxito' ||
+          l.estado === 'SUCCESS' ||
+          (l.estado && l.estado.toLowerCase().indexOf('resuelto') > -1)
+        );
+      }).length;
+      erroresHoy = logs.erroresScript.filter(function(l) {
+        return l.hora && l.hora.startsWith(hoyCorto);
+      }).length;
+      faltantesHoy = logs.reportesFaltantes.filter(function(l) {
+        return l.fecha === hoyStr;
+      }).length;
+      CacheService.getScriptCache().put(
+        'kpis_hoy_' + hoyStr,
+        JSON.stringify({ procesados: procesadosHoy, errores: erroresHoy, faltantes: faltantesHoy }),
+        300 // 5 minutos de caché
+      );
+    }
   } catch(e) {
     Logger.log("Error calculando KPIs de salud: " + e.message);
   }
@@ -400,7 +423,7 @@ function webapp_lanzarCiclo(forzar) {
   try {
     feriado = esFeriadoHoy();
   } catch (e) {
-    Logger.log('[WebApp] No se pudo consultar el API de feriados: ' + e.message);
+    Logger.log('[WebApp] No se pudo consultar el calendario de feriados: ' + e.message);
   }
 
   // El ciclo se omite solo los fines de semana y feriados. Antes de gastar un activador en una
@@ -591,8 +614,6 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
     }
 
     // 1. Estado Final
-    // Columnas: 0: Fecha, 1: Operación, 2: Origen, 3: Cliente, 4: POD, 5: Intentos, 6: Estado,
-    //           7: Tickets Creados, 8: Tickets Actualizados, 9: Tareas Cerradas, 10: Último Error, 11: Última Actualización
     resultados.estadoFinal = procesarHoja("Estado Final", function(r) {
       let d = r[11] ? new Date(r[11]) : (r[0] ? new Date(r[0]) : new Date());
       return {
@@ -602,43 +623,34 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
         origen: r[2] || "",
         cliente: r[3] || "",
         pod: r[4] || "",
-        intentos: Number(r[5]) || 1,
+        intentos: r[5] || 0,
         estado: r[6] || "",
-        ticketsCreados: Number(r[7]) || 0,
-        ticketsActualizados: Number(r[8]) || 0,
-        tareasCerradas: Number(r[9]) || 0,
-        ultimoError: r[10] || "",
-        ultimaAct: r[11] ? Utilities.formatDate(new Date(r[11]), HORARIO_OPERATIVO_TZ, 'HH:mm') : ""
+        ticketsCreados: r[7] || 0,
+        ultimoError: r[10] || ""
       };
     });
 
     // 2. Errores del Script
-    // Columnas: 0: Fecha, 1: Hora, 2: Operación, 3: Origen, 4: Cliente, 5: Detalle del Error, 6: ¿Reincidente?, 7: Día Semana
     resultados.erroresScript = procesarHoja("Errores del Script", function(r) {
       let d = r[0] ? new Date(r[0]) : new Date();
       return {
         hora: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'dd/MM HH:mm'),
-        fecha: r[0] ? Utilities.formatDate(new Date(r[0]), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy') : "",
         operacion: r[2] || "",
         origen: r[3] || "",
         cliente: r[4] || "",
         error: r[5] || "",
-        reincidente: (r[6] === "Sí" || r[6] === "⚠️ SÍ" || r[6] === "Si"),
-        diaSemana: r[7] || ""
+        detalle: r[6] || ""
       };
     });
 
     // 3. Envío de Mails
-    // Columnas: 0: Fecha, 1: Hora, 2: Día Semana, 3: Cliente, 4: Tecnología, 5: POD, 6: Estado, 7: Total Tickets, 8: Soporte, 9: Operaciones
     resultados.envioMails = procesarHoja("Envío de Mails", function(r) {
       let horaStr = r[1];
       if (r[1] instanceof Date) {
         horaStr = Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, 'HH:mm:ss');
       }
       return {
-        fecha: r[0] ? Utilities.formatDate(new Date(r[0]), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy') : "-",
         horaStr: horaStr || "-",
-        diaSemana: r[2] || "-",
         cliente: r[3] || "-",
         tecnologia: r[4] || "-",
         pod: r[5] || "-",
@@ -650,15 +662,11 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
     });
 
     // 4. Reportes Faltantes
-    // Columnas: 0: Fecha, 1: Hora, 2: Cliente, 3: POD, 4: Tecnología, 5: Operación
     resultados.reportesFaltantes = procesarHoja("Logs Reportes Faltantes", function(r) {
-      let horaStr = "-";
-      if (r[1]) {
-        horaStr = (r[1] instanceof Date) ? Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, 'HH:mm') : r[1].toString().substring(0, 5);
-      }
+      // Fecha en col 0, Hora en col 1
       return {
         fecha: r[0] ? Utilities.formatDate(new Date(r[0]), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy') : "-",
-        hora: horaStr,
+        hora: r[1] ? Utilities.formatDate(new Date(r[1]), HORARIO_OPERATIVO_TZ, 'HH:mm') : "-",
         cliente: r[2] || "",
         pod: r[3] || "",
         tecnologia: r[4] || "",
@@ -671,190 +679,6 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
   }
   
   return resultados;
-}
-
-/**
- * Devuelve una matriz cruzada de Clientes vs Tecnologías con el estado de salud operativa del día o período.
- * Permite al equipo de Operaciones ver de un solo vistazo el mapa completo de cobertura y alertas.
- *
- * @param {string} [filtroPeriodo='hoy'] 'hoy', 'ayer', o 'semana'
- * @param {string} [overrideSheetId] ID de sheet alternativo para testing/producción
- * @returns {Object} { clientes: Array, tecnologias: Array, resumen: Object }
- */
-function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
-  const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
-
-  const logs = webapp_obtenerLogs(300, overrideSheetId);
-  const ahora = new Date();
-  const hoyStr = Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
-  
-  let fechaTarget = hoyStr;
-  if (filtroPeriodo === 'ayer') {
-    const ayer = new Date(ahora);
-    ayer.setDate(ayer.getDate() - 1);
-    fechaTarget = Utilities.formatDate(ayer, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
-  }
-
-  // Tecnologías estándar a representar en la matriz
-  const techsEstandar = ['vSphere', 'Veeam', 'Horizon', 'Nutanix', 'Tanzu', 'RVTools'];
-
-  function normalizarTech(origen, operacion) {
-    const o = (origen || '').toLowerCase();
-    const op = (operacion || '').toLowerCase();
-    if (o.includes('vro') || o.includes('vsphere') || op.includes('vsphere') || op.includes('cluster') || op.includes('datastore') || op.includes('affinity')) return 'vSphere';
-    if (o.includes('veeam') || op.includes('veeam') || op.includes('job') || op.includes('repositorio') || op.includes('proxy')) return 'Veeam';
-    if (o.includes('connection') || o.includes('horizon') || o.includes('view') || op.includes('horizon') || op.includes('view')) return 'Horizon';
-    if (o.includes('nutanix') || op.includes('nutanix')) return 'Nutanix';
-    if (o.includes('tanzu') || op.includes('tanzu')) return 'Tanzu';
-    if (o.includes('rvtools') || op.includes('rvtools') || op.includes('zombie')) return 'RVTools';
-    return 'vSphere';
-  }
-
-  // Filtrar filas por fecha (o últimos 7 días si es 'semana')
-  const rows = (logs.estadoFinal || []).filter(function(r) {
-    if (!r.cliente || r.cliente === '—' || r.cliente === '-') return false;
-    if (filtroPeriodo === 'semana') return true;
-    return r.fecha === fechaTarget;
-  });
-
-  const clienteMap = {};
-
-  rows.forEach(function(r) {
-    const cli = r.cliente.trim();
-    if (!clienteMap[cli]) {
-      clienteMap[cli] = {
-        cliente: cli,
-        pod: r.pod || '',
-        tecnologias: {},
-        operaciones: [],
-        totalOperaciones: 0,
-        estadoGeneral: 'OK'
-      };
-    }
-
-    if (!clienteMap[cli].pod && r.pod) {
-      clienteMap[cli].pod = r.pod;
-    }
-
-    const tech = normalizarTech(r.origen, r.operacion);
-    if (!clienteMap[cli].tecnologias[tech]) {
-      clienteMap[cli].tecnologias[tech] = {
-        estado: 'OK',
-        total: 0,
-        exitos: 0,
-        advertencias: 0,
-        errores: 0,
-        tickets: 0
-      };
-    }
-
-    const tData = clienteMap[cli].tecnologias[tech];
-    tData.total++;
-    tData.tickets += (r.ticketsCreados || 0);
-
-    const est = (r.estado || '').toLowerCase();
-    if (est.includes('no resuelto') || est.includes('error')) {
-      tData.errores++;
-      tData.estado = 'ERROR';
-      clienteMap[cli].estadoGeneral = 'ERROR';
-    } else if (est.includes('advertencia') || est.includes('anomalia')) {
-      tData.advertencias++;
-      if (tData.estado !== 'ERROR') tData.estado = 'ADVERTENCIA';
-      if (clienteMap[cli].estadoGeneral !== 'ERROR') clienteMap[cli].estadoGeneral = 'ADVERTENCIA';
-    } else {
-      tData.exitos++;
-    }
-
-    clienteMap[cli].totalOperaciones++;
-    clienteMap[cli].operaciones.push({
-      hora: r.hora,
-      operacion: r.operacion,
-      tech: tech,
-      estado: r.estado,
-      ticketsCreados: r.ticketsCreados || 0,
-      tareasCerradas: r.tareasCerradas || 0,
-      intentos: r.intentos || 1,
-      ultimoError: r.ultimoError || ''
-    });
-  });
-
-  // Convertir a array ordenado por Cliente
-  const listaClientes = Object.keys(clienteMap).map(function(k) { return clienteMap[k]; });
-  listaClientes.sort(function(a, b) { return a.cliente.localeCompare(b.cliente); });
-
-  // Resumen global
-  let totalIncidencias = 0;
-  let totalAdvertencias = 0;
-  let totalSinAnomalias = 0;
-
-  listaClientes.forEach(function(c) {
-    if (c.estadoGeneral === 'ERROR') totalIncidencias++;
-    else if (c.estadoGeneral === 'ADVERTENCIA') totalAdvertencias++;
-    else totalSinAnomalias++;
-  });
-
-  return {
-    fecha: fechaTarget,
-    periodo: filtroPeriodo || 'hoy',
-    tecnologias: techsEstandar,
-    clientes: listaClientes,
-    resumen: {
-      totalClientes: listaClientes.length,
-      conIncidencias: totalIncidencias,
-      conAdvertencias: totalAdvertencias,
-      sinAnomalias: totalSinAnomalias,
-      saludGlobalPct: listaClientes.length > 0 ? Math.round((totalSinAnomalias / listaClientes.length) * 100) : 100
-    }
-  };
-}
-
-/**
- * Devuelve la serie temporal de los últimos 7 días de ejecuciones para graficar tendencias de estabilidad.
- * @param {string} [overrideSheetId]
- * @returns {Array<Object>}
- */
-function webapp_obtenerTendenciaSemanal(overrideSheetId) {
-  const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
-
-  const logs = webapp_obtenerLogs(500, overrideSheetId);
-  const diasMap = {};
-
-  (logs.estadoFinal || []).forEach(function(r) {
-    if (!r.fecha || r.fecha === '-') return;
-    if (!diasMap[r.fecha]) {
-      diasMap[r.fecha] = {
-        fecha: r.fecha,
-        resueltos: 0,
-        advertencias: 0,
-        errores: 0,
-        totalTickets: 0
-      };
-    }
-    const d = diasMap[r.fecha];
-    const est = (r.estado || '').toLowerCase();
-    if (est.includes('no resuelto') || est.includes('error')) {
-      d.errores++;
-    } else if (est.includes('advertencia')) {
-      d.advertencias++;
-    } else {
-      d.resueltos++;
-    }
-    d.totalTickets += (r.ticketsCreados || 0);
-  });
-
-  // Tomar hasta los últimos 7 días con actividad ordenados cronológicamente
-  const diasOrdenados = Object.keys(diasMap).sort(function(a, b) {
-    const pA = a.split('/');
-    const pB = b.split('/');
-    if (pA.length === 3 && pB.length === 3) {
-      return new Date(pA[2], pA[1]-1, pA[0]) - new Date(pB[2], pB[1]-1, pB[0]);
-    }
-    return a.localeCompare(b);
-  }).slice(-7);
-
-  return diasOrdenados.map(function(k) { return diasMap[k]; });
 }
 
 /**
@@ -979,4 +803,262 @@ function webapp_obtenerTicketsJira(rango, projectKey) {
   });
 
   return resultados;
+}
+
+// --- Control del Índice y Envíos de Mail ----------------------------------------------------
+
+/**
+ * ID oficial del Índice General (Master Index / Configuración Operativa).
+ */
+const WEBAPP_INDICE_SPREADSHEET_ID = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
+
+/**
+ * Obtiene el estado actual de todas las filas y checkboxes del Índice Operativo.
+ * Columnas consultadas:
+ *   Col B (2): Nombre Cliente Ops
+ *   Col D (4): Jira Ops Key
+ *   Col I (9): POD / Casilla destino
+ *   Col L (12): Nombre Empresa
+ *   Col M (13): Servicios habilitados (vsphere, veeam, nutanix, horizon, etc.)
+ *   Col N (14): Jira Soporte Key
+ *   Col R (18): Checkbox vSphere
+ *   Col S (19): Checkbox Veeam
+ *   Col T (20): Checkbox Nutanix
+ *   Col U (21): Checkbox RVTools
+ *
+ * @returns {Object} Estado con lista de clientes y métricas resumidas
+ */
+function webapp_obtenerEstadoIndice() {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+
+  const cacheKey = "webapp_estado_indice_v1";
+  const cached = CacheService.getScriptCache().get(cacheKey);
+  if (cached) {
+    try {
+      return JSON.parse(cached);
+    } catch(e) {}
+  }
+
+  const clientes = [];
+  let casillasMarcadas = 0;
+
+  try {
+    const spreadsheet = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
+    const sheet = spreadsheet.getSheetByName("Sheet1") || spreadsheet.getSheets()[0];
+    const lastRow = sheet.getLastRow();
+
+    if (lastRow > 1) {
+      // Tomamos desde la fila 2 hasta la última, hasta la columna 22 (V)
+      const data = sheet.getRange(2, 1, lastRow - 1, 22).getValues();
+
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        const filaNum = i + 2;
+
+        const nombreOps     = row[1]  ? row[1].toString().trim()  : "";
+        const opsKey        = row[3]  ? row[3].toString().trim().toUpperCase() : "";
+        const podEmail      = row[8]  ? row[8].toString().trim()  : "";
+        const nombreEmpresa = row[11] ? row[11].toString().trim() : "";
+        const servicios     = row[12] ? row[12].toString().toLowerCase() : "";
+        const soporteKey    = row[13] ? row[13].toString().trim().toUpperCase() : "";
+
+        // Omitir filas sin nombre o pruebas internas vacías
+        if (!nombreOps || nombreOps.toLowerCase().includes("testing") || nombreOps.toLowerCase().includes("wpc -")) {
+          continue;
+        }
+
+        const checkVsphere = row[17] === true || String(row[17]).toUpperCase() === "TRUE";
+        const checkVeeam   = row[18] === true || String(row[18]).toUpperCase() === "TRUE";
+        const checkNutanix = row[19] === true || String(row[19]).toUpperCase() === "TRUE";
+        const checkRVTools = row[20] === true || String(row[20]).toUpperCase() === "TRUE";
+
+        if (checkVsphere) casillasMarcadas++;
+        if (checkVeeam) casillasMarcadas++;
+        if (checkNutanix) casillasMarcadas++;
+        if (checkRVTools) casillasMarcadas++;
+
+        // Habilitaciones según columna Servicios
+        const tieneVsphere = servicios.includes("vsphere");
+        const tieneVeeam   = servicios.includes("veeam");
+        const tieneNutanix = servicios.includes("nutanix");
+        const tieneHorizon = servicios.includes("horizon");
+        const tieneRVTools = servicios.includes("rvtools") || tieneVsphere;
+
+        // Pod tag corto (ej: "pod1@wetcom.com" -> "POD 1")
+        let podDisplay = podEmail ? podEmail.split("@")[0].toUpperCase() : "-";
+
+        clientes.push({
+          fila: filaNum,
+          nombre: nombreOps,
+          empresa: nombreEmpresa || nombreOps,
+          pod: podDisplay,
+          podEmail: podEmail,
+          opsKey: opsKey,
+          soporteKey: soporteKey,
+          servicios: servicios,
+          tecnologias: {
+            vsphere: { habilitado: tieneVsphere, checked: checkVsphere, col: 18 },
+            veeam:   { habilitado: tieneVeeam,   checked: checkVeeam,   col: 19 },
+            nutanix: { habilitado: tieneNutanix, checked: checkNutanix, col: 20 },
+            rvtools: { habilitado: tieneRVTools, checked: checkRVTools, col: 21 },
+            horizon: { habilitado: tieneHorizon }
+          }
+        });
+      }
+    }
+  } catch (err) {
+    Logger.log("[WebApp] Error al obtener estado del Índice: " + err.message);
+    throw new Error("No se pudo leer el Índice Operativo: " + err.message);
+  }
+
+  clientes.sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+  // Datos del próximo envío
+  const proximo = webapp_calcularProximoEnvio();
+
+  const resultado = {
+    clientes: clientes,
+    totalClientes: clientes.length,
+    casillasMarcadas: casillasMarcadas,
+    proximoEnvio: proximo,
+    actualizadoEn: new Date().toISOString()
+  };
+
+  try {
+    CacheService.getScriptCache().put(cacheKey, JSON.stringify(resultado), 45); // 45 segs
+  } catch(e) {}
+
+  return resultado;
+}
+
+/**
+ * Modifica el valor de una casilla de verificación en el Índice Operativo.
+ * @param {number} fila Número de fila en la Spreadsheet
+ * @param {number} col Número de columna (18=vSphere, 19=Veeam, 20=Nutanix, 21=RVTools)
+ * @param {boolean} nuevoValor true o false
+ * @returns {Object} { ok: boolean, fila, col, nuevoValor }
+ */
+function webapp_marcarCheckboxIndice(fila, col, nuevoValor) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+
+  // Validaciones de seguridad de fila y columna
+  const colsPermitidas = [18, 19, 20, 21];
+  if (!colsPermitidas.includes(Number(col))) {
+    throw new Error("Columna no permitida para edición de checkbox: " + col);
+  }
+  if (!fila || Number(fila) < 2) {
+    throw new Error("Número de fila inválido: " + fila);
+  }
+
+  const valBool = (nuevoValor === true || nuevoValor === "true");
+
+  try {
+    const spreadsheet = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
+    const sheet = spreadsheet.getSheetByName("Sheet1") || spreadsheet.getSheets()[0];
+    
+    // Escribir el nuevo valor boolean en la celda
+    sheet.getRange(Number(fila), Number(col)).setValue(valBool);
+    SpreadsheetApp.flush();
+
+    // Invalidar el caché
+    try {
+      CacheService.getScriptCache().remove("webapp_estado_indice_v1");
+    } catch(e) {}
+
+    Logger.log(`[WebApp] Checkbox actualizado por ${usuario}: Fila ${fila}, Col ${col} -> ${valBool}`);
+
+    return {
+      ok: true,
+      fila: Number(fila),
+      col: Number(col),
+      valor: valBool,
+      mensaje: `Casilla actualizada correctamente (${valBool ? "Marcada" : "Desmarcada"}).`
+    };
+  } catch (err) {
+    Logger.log(`[WebApp] Error al marcar checkbox en fila ${fila}, col ${col}: ${err.message}`);
+    throw new Error("Error al actualizar la celda en el Índice: " + err.message);
+  }
+}
+
+/**
+ * Dispara el procesamiento manual de RVTools para un cliente puntual.
+ * @param {number} fila Fila del cliente en la hoja
+ * @param {string} clienteNombre Nombre del cliente
+ */
+function webapp_procesarRVToolsCliente(fila, clienteNombre) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+
+  try {
+    // 1. Marcar el checkbox U (21) en el Índice para trazabilidad
+    webapp_marcarCheckboxIndice(fila, 21, true);
+
+    // 2. Si la función de biblioteca o global está disponible, invocarla
+    let mensajeRespuesta = "Procesamiento de RVTools solicitado y encolado en el Índice.";
+    if (typeof AutomatizarOperaciones !== 'undefined' && typeof AutomatizarOperaciones.procesarRVTools === 'function') {
+      AutomatizarOperaciones.procesarRVTools(clienteNombre);
+      mensajeRespuesta = `RVTools procesado exitosamente para ${clienteNombre}.`;
+    }
+
+    return {
+      ok: true,
+      cliente: clienteNombre,
+      mensaje: mensajeRespuesta
+    };
+  } catch(e) {
+    Logger.log(`[WebApp] Error procesando RVTools para ${clienteNombre}: ${e.message}`);
+    throw new Error("No se pudo iniciar el procesamiento de RVTools: " + e.message);
+  }
+}
+
+/**
+ * Calcula cuándo será la próxima ejecución programada del lote de envíos de correo.
+ * Los triggers por defecto corren cada 5 minutos en la ventana 08:00 a 11:00 hs (GMT-3).
+ */
+function webapp_calcularProximoEnvio() {
+  const ahora = new Date();
+  const horaActual = ahora.getHours();
+  const minutosActual = ahora.getMinutes();
+  const diaSemana = ahora.getDay(); // 0=Dom, 6=Sab
+
+  const finDeSemana = (diaSemana === 0 || diaSemana === 6);
+  const dentroDeVentana = (horaActual >= 8 && horaActual < 11);
+
+  // Calcular próximo múltiplo de 5 minutos
+  const proxMin = Math.ceil((minutosActual + 1) / 5) * 5;
+  let horaProx = horaActual;
+  let minProx = proxMin;
+
+  if (minProx >= 60) {
+    horaProx += 1;
+    minProx = 0;
+  }
+
+  let proximoTexto = "";
+  let estadoVentana = "";
+
+  if (finDeSemana) {
+    estadoVentana = "FIN_DE_SEMANA";
+    proximoTexto = "Próximo Lunes 08:00 hs";
+  } else if (horaActual < 8) {
+    estadoVentana = "ANTES_DE_VENTANA";
+    proximoTexto = "Hoy 08:00 hs";
+  } else if (dentroDeVentana) {
+    estadoVentana = "EN_VENTANA";
+    const horaFormato = (horaProx < 10 ? "0" : "") + horaProx + ":" + (minProx < 10 ? "0" : "") + minProx + " hs";
+    const minutosFaltan = ((horaProx * 60 + minProx) - (horaActual * 60 + minutosActual));
+    proximoTexto = `${horaFormato} (en ~${minutosFaltan} min)`;
+  } else {
+    estadoVentana = "FINALIZADA_HOY";
+    proximoTexto = "Mañana 08:00 hs";
+  }
+
+  return {
+    estado: estadoVentana,
+    proximaEjecucion: proximoTexto,
+    enVentana: dentroDeVentana,
+    finDeSemana: finDeSemana
+  };
 }
