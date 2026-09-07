@@ -42,12 +42,16 @@ class AffinityRulesProcessor extends MailProcessor {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).` });
         if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
-        if (typeof clientConfig !== 'undefined' && clientConfig) {
-      const nombreArchivo = this.operationName + " - OK.txt";
-      this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
-      this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
-    }
-    return { status: 'SUCCESS' };
+      if (typeof clientConfig !== 'undefined' && clientConfig) {
+        let nombreArchivo = this.operationName + " - OK.txt";
+        if (this.isDRP) {
+          const banco = extractDRPBankSuffix(emailSubject, clientConfig.clientName);
+          nombreArchivo = `DRP - ${this.operationName}${banco ? " " + banco : ""} - OK.txt`;
+        }
+        this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+        this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+      }
+      return { status: 'SUCCESS' };
     }
     
     return super.processSingleMessage(message, summaryReport);
