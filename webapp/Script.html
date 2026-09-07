@@ -419,6 +419,141 @@
     pintarTabActivo();
   }
 
+  var TECHS_FIJAS = ['Veeam', 'vSphere', 'Horizon', 'Nutanix', 'Tanzu', 'NSX'];
+
+  var POD_COLORES = {
+    'POD1': '#fff0f3', 'POD 1': '#fff0f3',
+    'POD2': '#dceeff', 'POD 2': '#dceeff',
+    'POD3': '#dcf5e4', 'POD 3': '#dcf5e4',
+    'POD4': '#ede0ff', 'POD 4': '#ede0ff',
+    'POD5': '#fff0d8', 'POD 5': '#fff0d8',
+    'Cloud': '#fffbd0'
+  };
+
+  function _mapTecnologia(tec) {
+    if (!tec) return 'Otro';
+    var t = tec.toLowerCase();
+    if (t.includes('vro') || t.includes('rvtools')) return 'vSphere';
+    if (t.includes('veeam')) return 'Veeam';
+    if (t.includes('connection')) return 'Horizon';
+    if (t.includes('nutanix')) return 'Nutanix';
+    if (t.includes('tanzu')) return 'Tanzu';
+    if (t.includes('nsx')) return 'NSX';
+    return tec;
+  }
+
+  function _estadoEsPeor(nuevo, actual) {
+    var j = { 'Con Incidencias': 2, 'Con Advertencias': 1, 'ADVERTENCIA': 1, 'Sin Anomalías': 0 };
+    return (j[nuevo] || 0) > (j[actual] || 0);
+  }
+
+  function _pivotarEnvioMails(datos, fechaFiltro) {
+    var hoy = new Date();
+    var target = new Date(hoy);
+    if (fechaFiltro === 'ayer')     { target.setDate(target.getDate()-1); }
+    if (fechaFiltro === 'hace2')    { target.setDate(target.getDate()-2); }
+    if (fechaFiltro === 'hace3')    { target.setDate(target.getDate()-3); }
+    
+    var fechaStr = fechaFiltro === 'semana' ? null : 
+      (target.getDate()+'').padStart(2,'0') + '/' + (target.getMonth()+1+'').padStart(2,'0') + '/' + target.getFullYear();
+
+    var filtrados = datos.filter(function(d) {
+      return !fechaStr || d.fecha === fechaStr;
+    });
+
+    var grupos = {}; 
+    filtrados.forEach(function(d) {
+      var pod = d.pod || 'Sin POD';
+      var cli = d.cliente;
+      var tec = _mapTecnologia(d.tecnologia);
+      
+      if (TECHS_FIJAS.indexOf(tec) === -1) return; // Ignorar columnas que no esten en TECHS_FIJAS
+      
+      if (!grupos[pod])             grupos[pod] = {};
+      if (!grupos[pod][cli])        grupos[pod][cli] = {};
+      
+      var actual = grupos[pod][cli][tec];
+      var nuevo  = { estado: d.estado, operaciones: parseInt(d.operaciones) || 0 };
+      
+      if (!actual || _estadoEsPeor(nuevo.estado, actual.estado)) {
+        grupos[pod][cli][tec] = nuevo;
+      }
+    });
+
+    return grupos;
+  }
+
+  function _renderPivotEnvioMails(grupos, thead, tbody) {
+    var trH = crear('tr');
+    trH.style.borderBottom = '2px solid #eee';
+    trH.appendChild(crear('th', null, 'POD'));
+    trH.appendChild(crear('th', null, 'Cliente'));
+    TECHS_FIJAS.forEach(function(t) { 
+        var th = crear('th', null, t);
+        th.style.textAlign = 'center';
+        trH.appendChild(th); 
+    });
+    thead.appendChild(trH);
+
+    var podsOrdenados = Object.keys(grupos).sort();
+    podsOrdenados.forEach(function(pod) {
+      var clientes = grupos[pod];
+      var color = POD_COLORES[pod] || '#f9f9f9';
+      var clientesList = Object.keys(clientes).sort();
+      var totalClientes = clientesList.length;
+
+      clientesList.forEach(function(cliente, idx) {
+        var tr = crear('tr');
+        tr.style.backgroundColor = color;
+        tr.style.borderBottom = '1px solid rgba(0,0,0,0.06)';
+
+        if (idx === 0) {
+          var tdPod = crear('td');
+          tdPod.rowSpan = totalClientes;
+          tdPod.textContent = pod;
+          tdPod.style.fontWeight = '700';
+          tdPod.style.textAlign = 'center';
+          tdPod.style.verticalAlign = 'middle';
+          tdPod.style.borderRight = '2px solid rgba(0,0,0,0.1)';
+          tr.appendChild(tdPod);
+        }
+
+        var tdCli = crear('td', null, cliente);
+        tr.appendChild(tdCli);
+
+        TECHS_FIJAS.forEach(function(tech) {
+          var td = crear('td');
+          td.style.textAlign = 'center';
+          var entrada = clientes[cliente][tech];
+          if (!entrada) {
+            td.innerHTML = '<span style="color:#aaa;font-size:16px">—</span>';
+          } else {
+            var emoji, title;
+            if (entrada.estado === 'Sin Anomalías' || entrada.estado === 'SUCCESS') {
+              emoji = '✅'; title = 'Sin anomalías';
+            } else if (entrada.estado === 'Con Advertencias' || entrada.estado === 'ADVERTENCIA') {
+              emoji = '⚠️'; title = 'Con advertencias';
+            } else {
+              emoji = '🔴'; title = 'Con incidencias';
+            }
+            td.title = title;
+            td.innerHTML = '<span style="font-size:18px;cursor:default">' + emoji + '</span>';
+            if (entrada.operaciones > 0 && entrada.estado !== 'Sin Anomalías') {
+              td.innerHTML += '<br><small style="color:#666;font-size:10px">' + entrada.operaciones + ' ops</small>';
+            }
+          }
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      
+      var sep = crear('tr');
+      sep.style.height = '4px';
+      sep.style.backgroundColor = '#fff';
+      tbody.appendChild(sep);
+    });
+  }
+
   function pintarTabActivo() {
     if (!logsGlobales) {
       document.getElementById('tablaLogs').style.display = 'none';
@@ -426,16 +561,44 @@
       return;
     }
 
+    var textFiltroCli = document.getElementById('filtroClienteLogs') ? document.getElementById('filtroClienteLogs').value : '';
+    var textFiltroBuscar = document.getElementById('filtroBuscarLogs') ? document.getElementById('filtroBuscarLogs').value.toLowerCase() : '';
+
     var thead = document.getElementById('theadLogs');
     var tbody = document.getElementById('tbodyLogs');
     vaciar(thead);
     vaciar(tbody);
+
+    var filtroFecha = document.getElementById('filtroFechaEnvio');
+    if (filtroFecha) {
+      filtroFecha.style.display = (logTabActivo === 'envioMails') ? 'inline-block' : 'none';
+    }
+
+    if (logTabActivo === 'envioMails') {
+      var dataRawEnvio = logsGlobales['envioMails'] || [];
+      var dataEnvio = dataRawEnvio.filter(function(log) {
+        if (textFiltroCli && log.cliente && log.cliente.toLowerCase().indexOf(textFiltroCli) === -1) return false;
+        if (textFiltroBuscar) {
+          var str = JSON.stringify(log).toLowerCase();
+          if (str.indexOf(textFiltroBuscar) === -1) return false;
+        }
+        return true;
+      });
+
+      var grupos = _pivotarEnvioMails(dataEnvio, filtroFecha ? filtroFecha.value : 'hoy');
+      if (Object.keys(grupos).length === 0) {
+        document.getElementById('tablaLogs').style.display = 'none';
+        document.getElementById('logsVacio').style.display = 'block';
+      } else {
+        document.getElementById('tablaLogs').style.display = 'table';
+        document.getElementById('logsVacio').style.display = 'none';
+        _renderPivotEnvioMails(grupos, thead, tbody);
+      }
+      return;
+    }
     
     var dataRaw = logsGlobales[logTabActivo] || [];
     
-    var textFiltroCli = document.getElementById('filtroClienteLogs') ? document.getElementById('filtroClienteLogs').value : '';
-    var textFiltroBuscar = document.getElementById('filtroBuscarLogs') ? document.getElementById('filtroBuscarLogs').value.toLowerCase() : '';
-
     var data = dataRaw.filter(function(log) {
       if (textFiltroCli && log.cliente && log.cliente.toLowerCase().indexOf(textFiltroCli) === -1) {
         return false;
@@ -782,10 +945,18 @@
   document.getElementById('filtroCliente').addEventListener('change', pintarBandeja);
   document.getElementById('filtroBuscar').addEventListener('keyup', pintarBandeja);
   
-  if (document.getElementById('filtroClienteLogs')) {
-    document.getElementById('filtroClienteLogs').addEventListener('change', pintarTabActivo);
-    document.getElementById('filtroBuscarLogs').addEventListener('keyup', pintarTabActivo);
+  var selectEntornoLogs = document.getElementById('filtroEntornoLogs');
+  if (selectEntornoLogs) {
+    selectEntornoLogs.addEventListener('change', cargarLogs);
   }
+  var filtroCliLogs = document.getElementById('filtroClienteLogs');
+  if (filtroCliLogs) filtroCliLogs.addEventListener('change', pintarTabActivo);
+  
+  var filtroFecha = document.getElementById('filtroFechaEnvio');
+  if (filtroFecha) filtroFecha.addEventListener('change', pintarTabActivo);
+
+  var filtroBuscarLogs = document.getElementById('filtroBuscarLogs');
+  if (filtroBuscarLogs) filtroBuscarLogs.addEventListener('keyup', pintarTabActivo);
   
   if (document.getElementById('filtroEntornoLogs')) {
     document.getElementById('filtroEntornoLogs').addEventListener('change', cargarLogs);

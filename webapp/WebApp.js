@@ -627,6 +627,7 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
         horaStr = Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, 'HH:mm:ss');
       }
       return {
+        fecha: r[0] ? Utilities.formatDate(new Date(r[0]), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy') : "-",
         horaStr: horaStr || "-",
         cliente: r[3] || "-",
         tecnologia: r[4] || "-",
