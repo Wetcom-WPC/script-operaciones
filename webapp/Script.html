@@ -422,12 +422,12 @@
   var TECHS_FIJAS = ['Veeam', 'vSphere', 'Horizon', 'Nutanix', 'Tanzu', 'NSX'];
 
   var POD_COLORES = {
-    'POD1': '#fff0f3', 'POD 1': '#fff0f3',
-    'POD2': '#dceeff', 'POD 2': '#dceeff',
-    'POD3': '#dcf5e4', 'POD 3': '#dcf5e4',
-    'POD4': '#ede0ff', 'POD 4': '#ede0ff',
-    'POD5': '#fff0d8', 'POD 5': '#fff0d8',
-    'Cloud': '#fffbd0'
+    'POD1': '#db7b65', 'POD 1': '#db7b65', // Salmon
+    'POD2': '#a9a4d8', 'POD 2': '#a9a4d8', // Purple
+    'POD3': '#90bceb', 'POD 3': '#90bceb', // Light Blue
+    'POD4': '#b6d7a8', 'POD 4': '#b6d7a8', // Green
+    'POD5': '#c27ba0', 'POD 5': '#c27ba0', // Magenta
+    'Cloud': '#ffe599' // Yellow
   };
 
   function _mapTecnologia(tec) {
@@ -454,11 +454,10 @@
     if (fechaFiltro === 'hace2')    { target.setDate(target.getDate()-2); }
     if (fechaFiltro === 'hace3')    { target.setDate(target.getDate()-3); }
     
-    var fechaStr = fechaFiltro === 'semana' ? null : 
-      (target.getDate()+'').padStart(2,'0') + '/' + (target.getMonth()+1+'').padStart(2,'0') + '/' + target.getFullYear();
+    var fechaStr = (target.getDate()+'').padStart(2,'0') + '/' + (target.getMonth()+1+'').padStart(2,'0') + '/' + target.getFullYear();
 
     var filtrados = datos.filter(function(d) {
-      return !fechaStr || d.fecha === fechaStr;
+      return d.fecha === fechaStr;
     });
 
     var grupos = {}; 
@@ -485,12 +484,21 @@
 
   function _renderPivotEnvioMails(grupos, thead, tbody) {
     var trH = crear('tr');
-    trH.style.borderBottom = '2px solid #eee';
-    trH.appendChild(crear('th', null, 'POD'));
-    trH.appendChild(crear('th', null, 'Cliente'));
+    trH.style.backgroundColor = '#00c370'; // Header verde como en la planilla
+    trH.style.color = 'white';
+    
+    var thPod = crear('th', null, 'POD');
+    var thCli = crear('th', null, 'Cliente');
+    thPod.style.padding = '8px';
+    thCli.style.padding = '8px';
+    trH.appendChild(thPod);
+    trH.appendChild(thCli);
+    
     TECHS_FIJAS.forEach(function(t) { 
         var th = crear('th', null, t);
         th.style.textAlign = 'center';
+        th.style.padding = '8px';
+        th.style.borderLeft = '1px solid rgba(255,255,255,0.2)';
         trH.appendChild(th); 
     });
     thead.appendChild(trH);
@@ -504,9 +512,8 @@
 
       clientesList.forEach(function(cliente, idx) {
         var tr = crear('tr');
-        tr.style.backgroundColor = color;
-        tr.style.borderBottom = '1px solid rgba(0,0,0,0.06)';
 
+        // POD Cell
         if (idx === 0) {
           var tdPod = crear('td');
           tdPod.rowSpan = totalClientes;
@@ -514,19 +521,34 @@
           tdPod.style.fontWeight = '700';
           tdPod.style.textAlign = 'center';
           tdPod.style.verticalAlign = 'middle';
-          tdPod.style.borderRight = '2px solid rgba(0,0,0,0.1)';
+          tdPod.style.backgroundColor = color;
+          tdPod.style.border = '1px solid rgba(0,0,0,0.2)';
+          if(pod==='POD4' || pod==='Cloud') tdPod.style.color = '#333';
+          else tdPod.style.color = '#fff'; // Better contrast
           tr.appendChild(tdPod);
         }
 
+        // Cliente Cell
         var tdCli = crear('td', null, cliente);
+        tdCli.style.backgroundColor = color;
+        tdCli.style.border = '1px solid rgba(0,0,0,0.2)';
+        tdCli.style.fontWeight = '600';
+        tdCli.style.padding = '4px 10px';
+        if(pod==='POD4' || pod==='Cloud') tdCli.style.color = '#333';
+        else tdCli.style.color = '#fff';
         tr.appendChild(tdCli);
 
+        // Tech Cells
         TECHS_FIJAS.forEach(function(tech) {
           var td = crear('td');
           td.style.textAlign = 'center';
+          td.style.backgroundColor = '#383838'; // Fondo oscuro como Excel
+          td.style.border = '1px solid #555';
+          td.style.padding = '4px';
+          
           var entrada = clientes[cliente][tech];
           if (!entrada) {
-            td.innerHTML = '<span style="color:#aaa;font-size:16px">—</span>';
+            td.innerHTML = '<span style="color:#666;font-size:16px">🚫</span>'; // Ícono tachado gris/rojo oscuro
           } else {
             var emoji, title;
             if (entrada.estado === 'Sin Anomalías' || entrada.estado === 'SUCCESS') {
@@ -534,23 +556,15 @@
             } else if (entrada.estado === 'Con Advertencias' || entrada.estado === 'ADVERTENCIA') {
               emoji = '⚠️'; title = 'Con advertencias';
             } else {
-              emoji = '🔴'; title = 'Con incidencias';
+              emoji = '❌'; title = 'Con incidencias';
             }
-            td.title = title;
-            td.innerHTML = '<span style="font-size:18px;cursor:default">' + emoji + '</span>';
-            if (entrada.operaciones > 0 && entrada.estado !== 'Sin Anomalías') {
-              td.innerHTML += '<br><small style="color:#666;font-size:10px">' + entrada.operaciones + ' ops</small>';
-            }
+            td.title = title + (entrada.operaciones > 0 ? ' (' + entrada.operaciones + ' ops)' : '');
+            td.innerHTML = '<span style="font-size:16px;cursor:default">' + emoji + '</span>';
           }
           tr.appendChild(td);
         });
         tbody.appendChild(tr);
       });
-      
-      var sep = crear('tr');
-      sep.style.height = '4px';
-      sep.style.backgroundColor = '#fff';
-      tbody.appendChild(sep);
     });
   }
 
@@ -800,9 +814,24 @@
             divDetalle.appendChild(errorWrap);
           }
         } else if (logTabActivo === 'erroresScript') {
-          if (log.detalle) {
-            var pre = crear('pre', null, log.detalle);
-            divDetalle.appendChild(pre);
+          if (log.error) {
+            var errorWrap = crear('div', 'error-formateado');
+            
+            if (log.detalle && (log.detalle === 'Sí' || log.detalle === 'Si')) {
+              var bReinc = crear('span', 'badge-warning');
+              bReinc.innerHTML = '⚠ <strong>Reincidente</strong> (este error ya ocurrió antes)';
+              bReinc.style.display = 'inline-block';
+              bReinc.style.marginBottom = '12px';
+              errorWrap.appendChild(bReinc);
+            }
+            
+            var pre = crear('pre', null, log.error);
+            pre.style.whiteSpace = 'pre-wrap';
+            pre.style.wordBreak = 'break-all';
+            pre.style.margin = '0';
+            errorWrap.appendChild(pre);
+            
+            divDetalle.appendChild(errorWrap);
           }
         }
         
