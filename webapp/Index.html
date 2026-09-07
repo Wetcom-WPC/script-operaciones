@@ -36,6 +36,7 @@
       <!-- Navegación Principal -->
       <nav class="nav-principal" role="tablist" aria-label="Navegación principal del panel">
         <button class="nav-btn active" role="tab" aria-selected="true" aria-controls="seccion-inicio" data-seccion="seccion-inicio">Inicio y Bandeja</button>
+        <button class="nav-btn" role="tab" aria-selected="false" aria-controls="seccion-operaciones" data-seccion="seccion-operaciones">📊 Salud Operativa</button>
         <button class="nav-btn" role="tab" aria-selected="false" aria-controls="seccion-logs" data-seccion="seccion-logs">Logs del Sistema</button>
         <button class="nav-btn" role="tab" aria-selected="false" aria-controls="seccion-jira" data-seccion="seccion-jira">Tickets Jira</button>
         <button class="nav-btn" role="tab" aria-selected="false" aria-controls="seccion-reportes" data-seccion="seccion-reportes">Reportes Analíticos</button>
@@ -117,6 +118,107 @@
         </section>
       </div>
 
+      <!-- VISTA: SALUD OPERATIVA Y MATRIZ TECNOLÓGICA -->
+      <section id="seccion-operaciones" class="tarjeta vista-seccion" role="tabpanel" aria-labelledby="tab-operaciones">
+        <header>
+          <div>
+            <h2>Salud Operativa y Matriz Tecnológica</h2>
+            <p class="ayuda">
+              Visión 360° del estado de los servicios por cliente y tecnología, con correlación de anomalías y tendencias de estabilidad.
+            </p>
+          </div>
+          <button id="btnActualizarMatriz" class="btn-primario">Actualizar Matriz</button>
+        </header>
+
+        <!-- Subpestañas de Salud Operativa -->
+        <div class="tabs-container" role="tablist" aria-label="Subpestañas de salud operativa">
+          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-operaciones="matriz">Matriz de Salud</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab-operaciones="tendencias">Tendencia Semanal</button>
+        </div>
+
+        <!-- Controles de Filtrado para Matriz -->
+        <div class="filter-toolbar" id="controlesMatriz">
+          <select id="filtroPeriodoMatriz" class="select-control" aria-label="Período de análisis">
+            <option value="hoy">Hoy</option>
+            <option value="ayer">Ayer</option>
+            <option value="semana">Últimos 7 días</option>
+          </select>
+          <select id="filtroPodMatriz" class="select-control" aria-label="Filtrar por POD">
+            <option value="">Todos los PODs</option>
+            <option value="POD1">POD 1</option>
+            <option value="POD2">POD 2</option>
+            <option value="POD3">POD 3</option>
+            <option value="POD4">POD 4</option>
+            <option value="POD5">POD 5</option>
+            <option value="Cloud">Cloud</option>
+          </select>
+          <select id="filtroEstadoMatriz" class="select-control" aria-label="Filtrar por estado">
+            <option value="">Todos los estados</option>
+            <option value="anomalias">Solo con alertas / incidencias</option>
+            <option value="ok">100% Sin anomalías</option>
+          </select>
+          <input type="text" id="filtroBuscarMatriz" class="input-control search-input" placeholder="Buscar cliente en matriz…" aria-label="Buscar cliente" autocomplete="off">
+        </div>
+
+        <div class="aviso" id="avisoMatriz" hidden></div>
+
+        <!-- Scorecards de Resumen Operativo -->
+        <div id="scorecardMatriz" class="scorecard-grid">
+          <div class="scorecard-card">
+            <span class="scorecard-label">Clientes Monitoreados</span>
+            <span id="scTotalClientes" class="scorecard-value">-</span>
+          </div>
+          <div class="scorecard-card card-err">
+            <span class="scorecard-label">Con Incidencias</span>
+            <span id="scConIncidencias" class="scorecard-value">-</span>
+          </div>
+          <div class="scorecard-card card-warn">
+            <span class="scorecard-label">Con Advertencias</span>
+            <span id="scConAdvertencias" class="scorecard-value">-</span>
+          </div>
+          <div class="scorecard-card card-ok">
+            <span class="scorecard-label">Salud Global</span>
+            <span id="scSaludGlobal" class="scorecard-value">-%</span>
+          </div>
+        </div>
+
+        <!-- Contenedor 1: Tabla Matriz de Salud -->
+        <div id="vistaSubtabMatriz">
+          <div class="matriz-container">
+            <table class="matriz-table" id="tablaMatriz">
+              <thead id="theadMatriz"></thead>
+              <tbody id="tbodyMatriz"></tbody>
+            </table>
+          </div>
+          <p id="matrizVacio" class="vacio" style="display: none;">No hay datos registrados para los filtros seleccionados.</p>
+        </div>
+
+        <!-- Contenedor 2: Tendencias Semanales -->
+        <div id="vistaSubtabTendencias" style="display: none;">
+          <div class="chart-card" style="margin-bottom: 20px;">
+            <h3>Estabilidad Operacional en los últimos 7 días</h3>
+            <div id="chart_tendencia_div" style="width: 100%; height: 320px;"></div>
+          </div>
+          <div class="table-container">
+            <div class="table-responsive">
+              <table class="tabla-logs" id="tablaTendencias">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Operaciones Resueltas</th>
+                    <th>Con Advertencias</th>
+                    <th>No Resueltas / Errores</th>
+                    <th>Tickets Creados</th>
+                    <th>Índice de Estabilidad</th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyTendencias"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- 3. Logs del Sistema -->
       <section id="seccion-logs" class="tarjeta vista-seccion" role="tabpanel" aria-labelledby="tab-logs">
         <header>
@@ -126,14 +228,17 @@
               Historial en tiempo real de operaciones, errores, notificaciones y reportes faltantes.
             </p>
           </div>
-          <button id="btnActualizarLogs" class="btn-secundario">Cargar Logs</button>
+          <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <button id="btnExportarLogs" class="btn-export" title="Descargar registros como archivo CSV">📥 Exportar CSV</button>
+            <button id="btnActualizarLogs" class="btn-secundario">Cargar Logs</button>
+          </div>
         </header>
 
         <div class="tabs-container" role="tablist" aria-label="Subpestañas de logs">
-          <button class="tab-btn active" role="tab" aria-selected="true" data-tab="estadoFinal">Estado Final</button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab="erroresScript">Errores del Script</button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab="envioMails">Envío de Mails</button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab="reportesFaltantes">Reportes Faltantes</button>
+          <button class="tab-btn active" role="tab" aria-selected="true" data-tab="estadoFinal">Estado Final <span class="tab-badge" id="badgeCountEstadoFinal">-</span></button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab="erroresScript">Errores del Script <span class="tab-badge" id="badgeCountErroresScript">-</span></button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab="envioMails">Envío de Mails <span class="tab-badge" id="badgeCountEnvioMails">-</span></button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab="reportesFaltantes">Reportes Faltantes <span class="tab-badge" id="badgeCountReportesFaltantes">-</span></button>
         </div>
 
         <!-- Controles de filtrado para Logs -->
@@ -145,6 +250,19 @@
           <select id="filtroClienteLogs" class="select-control" aria-label="Filtrar logs por cliente">
             <option value="">Todos los clientes</option>
           </select>
+          <select id="filtroPodLogs" class="select-control" aria-label="Filtrar logs por POD">
+            <option value="">Todos los PODs</option>
+            <option value="POD1">POD 1</option>
+            <option value="POD2">POD 2</option>
+            <option value="POD3">POD 3</option>
+            <option value="POD4">POD 4</option>
+            <option value="POD5">POD 5</option>
+            <option value="Cloud">Cloud</option>
+          </select>
+          <select id="filtroReincidenteLogs" class="select-control" style="display:none;" aria-label="Filtrar reincidentes">
+            <option value="">Todos los errores</option>
+            <option value="reincidente">Solo reincidentes</option>
+          </select>
           <select id="filtroFechaEnvio" class="select-control" style="display:none;" aria-label="Filtrar fecha de envío">
             <option value="hoy">Hoy</option>
             <option value="ayer">Ayer</option>
@@ -152,6 +270,7 @@
             <option value="hace3">Hace 3 días</option>
           </select>
           <input type="text" id="filtroBuscarLogs" class="input-control search-input" placeholder="Buscar en logs…" aria-label="Buscar en logs" autocomplete="off">
+          <span id="tsLogs" style="font-size: 11.5px; color: var(--gris-claro); margin-left: auto;"></span>
         </div>
 
         <div class="aviso" id="avisoLogs" hidden></div>
@@ -264,6 +383,17 @@
         </div>
       </section>
     </main>
+
+    <!-- Modal para Detalle de Operaciones de Cliente -->
+    <div id="modalDetalleCliente" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="modalTituloCliente">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3 id="modalTituloCliente">Detalle Operacional del Cliente</h3>
+          <button type="button" id="btnCerrarModalCliente" class="modal-close" aria-label="Cerrar">&times;</button>
+        </div>
+        <div class="modal-body" id="modalCuerpoCliente"></div>
+      </div>
+    </div>
 
     <footer>
       Panel de Operaciones Automatizadas · WETCOM

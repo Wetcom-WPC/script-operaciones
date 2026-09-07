@@ -340,10 +340,10 @@ function webapp_estado() {
   let erroresHoy = 0;
   let faltantesHoy = 0;
   try {
-    const logs = webapp_obtenerLogs(100); // 100 rows is enough for a single day usually
+    const logs = webapp_obtenerLogs(150);
     const hoyCorto = hoyStr.substring(0,5); // dd/MM
-    procesadosHoy = logs.estadoFinal.filter(l => l.fecha === hoyStr && l.estado === 'Éxito').length;
-    erroresHoy = logs.erroresScript.filter(l => l.hora.startsWith(hoyCorto)).length; 
+    procesadosHoy = logs.estadoFinal.filter(l => l.fecha === hoyStr && (l.estado && (l.estado.indexOf('Resuelto') !== -1 || l.estado === 'Éxito'))).length;
+    erroresHoy = logs.erroresScript.filter(l => (l.fecha === hoyStr) || (l.hora && l.hora.startsWith(hoyCorto))).length; 
     faltantesHoy = logs.reportesFaltantes.filter(l => l.fecha === hoyStr).length;
   } catch(e) {
     Logger.log("Error calculando KPIs de salud: " + e.message);
@@ -591,6 +591,8 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
     }
 
     // 1. Estado Final
+    // Columnas: 0: Fecha, 1: Operación, 2: Origen, 3: Cliente, 4: POD, 5: Intentos, 6: Estado,
+    //           7: Tickets Creados, 8: Tickets Actualizados, 9: Tareas Cerradas, 10: Último Error, 11: Última Actualización
     resultados.estadoFinal = procesarHoja("Estado Final", function(r) {
       let d = r[11] ? new Date(r[11]) : (r[0] ? new Date(r[0]) : new Date());
       return {
@@ -600,27 +602,34 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
         origen: r[2] || "",
         cliente: r[3] || "",
         pod: r[4] || "",
-        intentos: r[5] || 0,
+        intentos: Number(r[5]) || 1,
         estado: r[6] || "",
-        ticketsCreados: r[7] || 0,
-        ultimoError: r[10] || ""
+        ticketsCreados: Number(r[7]) || 0,
+        ticketsActualizados: Number(r[8]) || 0,
+        tareasCerradas: Number(r[9]) || 0,
+        ultimoError: r[10] || "",
+        ultimaAct: r[11] ? Utilities.formatDate(new Date(r[11]), HORARIO_OPERATIVO_TZ, 'HH:mm') : ""
       };
     });
 
     // 2. Errores del Script
+    // Columnas: 0: Fecha, 1: Hora, 2: Operación, 3: Origen, 4: Cliente, 5: Detalle del Error, 6: ¿Reincidente?, 7: Día Semana
     resultados.erroresScript = procesarHoja("Errores del Script", function(r) {
       let d = r[0] ? new Date(r[0]) : new Date();
       return {
         hora: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'dd/MM HH:mm'),
+        fecha: r[0] ? Utilities.formatDate(new Date(r[0]), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy') : "",
         operacion: r[2] || "",
         origen: r[3] || "",
         cliente: r[4] || "",
         error: r[5] || "",
-        detalle: r[6] || ""
+        reincidente: (r[6] === "Sí" || r[6] === "⚠️ SÍ" || r[6] === "Si"),
+        diaSemana: r[7] || ""
       };
     });
 
     // 3. Envío de Mails
+    // Columnas: 0: Fecha, 1: Hora, 2: Día Semana, 3: Cliente, 4: Tecnología, 5: POD, 6: Estado, 7: Total Tickets, 8: Soporte, 9: Operaciones
     resultados.envioMails = procesarHoja("Envío de Mails", function(r) {
       let horaStr = r[1];
       if (r[1] instanceof Date) {
@@ -629,6 +638,7 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
       return {
         fecha: r[0] ? Utilities.formatDate(new Date(r[0]), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy') : "-",
         horaStr: horaStr || "-",
+        diaSemana: r[2] || "-",
         cliente: r[3] || "-",
         tecnologia: r[4] || "-",
         pod: r[5] || "-",
@@ -640,11 +650,15 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
     });
 
     // 4. Reportes Faltantes
+    // Columnas: 0: Fecha, 1: Hora, 2: Cliente, 3: POD, 4: Tecnología, 5: Operación
     resultados.reportesFaltantes = procesarHoja("Logs Reportes Faltantes", function(r) {
-      // Fecha en col 0, Hora en col 1
+      let horaStr = "-";
+      if (r[1]) {
+        horaStr = (r[1] instanceof Date) ? Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, 'HH:mm') : r[1].toString().substring(0, 5);
+      }
       return {
         fecha: r[0] ? Utilities.formatDate(new Date(r[0]), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy') : "-",
-        hora: r[1] ? Utilities.formatDate(new Date(r[1]), HORARIO_OPERATIVO_TZ, 'HH:mm') : "-",
+        hora: horaStr,
         cliente: r[2] || "",
         pod: r[3] || "",
         tecnologia: r[4] || "",
@@ -657,6 +671,190 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
   }
   
   return resultados;
+}
+
+/**
+ * Devuelve una matriz cruzada de Clientes vs Tecnologías con el estado de salud operativa del día o período.
+ * Permite al equipo de Operaciones ver de un solo vistazo el mapa completo de cobertura y alertas.
+ *
+ * @param {string} [filtroPeriodo='hoy'] 'hoy', 'ayer', o 'semana'
+ * @param {string} [overrideSheetId] ID de sheet alternativo para testing/producción
+ * @returns {Object} { clientes: Array, tecnologias: Array, resumen: Object }
+ */
+function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+
+  const logs = webapp_obtenerLogs(300, overrideSheetId);
+  const ahora = new Date();
+  const hoyStr = Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
+  
+  let fechaTarget = hoyStr;
+  if (filtroPeriodo === 'ayer') {
+    const ayer = new Date(ahora);
+    ayer.setDate(ayer.getDate() - 1);
+    fechaTarget = Utilities.formatDate(ayer, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
+  }
+
+  // Tecnologías estándar a representar en la matriz
+  const techsEstandar = ['vSphere', 'Veeam', 'Horizon', 'Nutanix', 'Tanzu', 'RVTools'];
+
+  function normalizarTech(origen, operacion) {
+    const o = (origen || '').toLowerCase();
+    const op = (operacion || '').toLowerCase();
+    if (o.includes('vro') || o.includes('vsphere') || op.includes('vsphere') || op.includes('cluster') || op.includes('datastore') || op.includes('affinity')) return 'vSphere';
+    if (o.includes('veeam') || op.includes('veeam') || op.includes('job') || op.includes('repositorio') || op.includes('proxy')) return 'Veeam';
+    if (o.includes('connection') || o.includes('horizon') || o.includes('view') || op.includes('horizon') || op.includes('view')) return 'Horizon';
+    if (o.includes('nutanix') || op.includes('nutanix')) return 'Nutanix';
+    if (o.includes('tanzu') || op.includes('tanzu')) return 'Tanzu';
+    if (o.includes('rvtools') || op.includes('rvtools') || op.includes('zombie')) return 'RVTools';
+    return 'vSphere';
+  }
+
+  // Filtrar filas por fecha (o últimos 7 días si es 'semana')
+  const rows = (logs.estadoFinal || []).filter(function(r) {
+    if (!r.cliente || r.cliente === '—' || r.cliente === '-') return false;
+    if (filtroPeriodo === 'semana') return true;
+    return r.fecha === fechaTarget;
+  });
+
+  const clienteMap = {};
+
+  rows.forEach(function(r) {
+    const cli = r.cliente.trim();
+    if (!clienteMap[cli]) {
+      clienteMap[cli] = {
+        cliente: cli,
+        pod: r.pod || '',
+        tecnologias: {},
+        operaciones: [],
+        totalOperaciones: 0,
+        estadoGeneral: 'OK'
+      };
+    }
+
+    if (!clienteMap[cli].pod && r.pod) {
+      clienteMap[cli].pod = r.pod;
+    }
+
+    const tech = normalizarTech(r.origen, r.operacion);
+    if (!clienteMap[cli].tecnologias[tech]) {
+      clienteMap[cli].tecnologias[tech] = {
+        estado: 'OK',
+        total: 0,
+        exitos: 0,
+        advertencias: 0,
+        errores: 0,
+        tickets: 0
+      };
+    }
+
+    const tData = clienteMap[cli].tecnologias[tech];
+    tData.total++;
+    tData.tickets += (r.ticketsCreados || 0);
+
+    const est = (r.estado || '').toLowerCase();
+    if (est.includes('no resuelto') || est.includes('error')) {
+      tData.errores++;
+      tData.estado = 'ERROR';
+      clienteMap[cli].estadoGeneral = 'ERROR';
+    } else if (est.includes('advertencia') || est.includes('anomalia')) {
+      tData.advertencias++;
+      if (tData.estado !== 'ERROR') tData.estado = 'ADVERTENCIA';
+      if (clienteMap[cli].estadoGeneral !== 'ERROR') clienteMap[cli].estadoGeneral = 'ADVERTENCIA';
+    } else {
+      tData.exitos++;
+    }
+
+    clienteMap[cli].totalOperaciones++;
+    clienteMap[cli].operaciones.push({
+      hora: r.hora,
+      operacion: r.operacion,
+      tech: tech,
+      estado: r.estado,
+      ticketsCreados: r.ticketsCreados || 0,
+      tareasCerradas: r.tareasCerradas || 0,
+      intentos: r.intentos || 1,
+      ultimoError: r.ultimoError || ''
+    });
+  });
+
+  // Convertir a array ordenado por Cliente
+  const listaClientes = Object.keys(clienteMap).map(function(k) { return clienteMap[k]; });
+  listaClientes.sort(function(a, b) { return a.cliente.localeCompare(b.cliente); });
+
+  // Resumen global
+  let totalIncidencias = 0;
+  let totalAdvertencias = 0;
+  let totalSinAnomalias = 0;
+
+  listaClientes.forEach(function(c) {
+    if (c.estadoGeneral === 'ERROR') totalIncidencias++;
+    else if (c.estadoGeneral === 'ADVERTENCIA') totalAdvertencias++;
+    else totalSinAnomalias++;
+  });
+
+  return {
+    fecha: fechaTarget,
+    periodo: filtroPeriodo || 'hoy',
+    tecnologias: techsEstandar,
+    clientes: listaClientes,
+    resumen: {
+      totalClientes: listaClientes.length,
+      conIncidencias: totalIncidencias,
+      conAdvertencias: totalAdvertencias,
+      sinAnomalias: totalSinAnomalias,
+      saludGlobalPct: listaClientes.length > 0 ? Math.round((totalSinAnomalias / listaClientes.length) * 100) : 100
+    }
+  };
+}
+
+/**
+ * Devuelve la serie temporal de los últimos 7 días de ejecuciones para graficar tendencias de estabilidad.
+ * @param {string} [overrideSheetId]
+ * @returns {Array<Object>}
+ */
+function webapp_obtenerTendenciaSemanal(overrideSheetId) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+
+  const logs = webapp_obtenerLogs(500, overrideSheetId);
+  const diasMap = {};
+
+  (logs.estadoFinal || []).forEach(function(r) {
+    if (!r.fecha || r.fecha === '-') return;
+    if (!diasMap[r.fecha]) {
+      diasMap[r.fecha] = {
+        fecha: r.fecha,
+        resueltos: 0,
+        advertencias: 0,
+        errores: 0,
+        totalTickets: 0
+      };
+    }
+    const d = diasMap[r.fecha];
+    const est = (r.estado || '').toLowerCase();
+    if (est.includes('no resuelto') || est.includes('error')) {
+      d.errores++;
+    } else if (est.includes('advertencia')) {
+      d.advertencias++;
+    } else {
+      d.resueltos++;
+    }
+    d.totalTickets += (r.ticketsCreados || 0);
+  });
+
+  // Tomar hasta los últimos 7 días con actividad ordenados cronológicamente
+  const diasOrdenados = Object.keys(diasMap).sort(function(a, b) {
+    const pA = a.split('/');
+    const pB = b.split('/');
+    if (pA.length === 3 && pB.length === 3) {
+      return new Date(pA[2], pA[1]-1, pA[0]) - new Date(pB[2], pB[1]-1, pB[0]);
+    }
+    return a.localeCompare(b);
+  }).slice(-7);
+
+  return diasOrdenados.map(function(k) { return diasMap[k]; });
 }
 
 /**
