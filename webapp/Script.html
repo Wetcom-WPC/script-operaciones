@@ -331,14 +331,8 @@
       var pAsunto = crear('p', 'asunto', item.asunto);
       if (item.reintentos && item.reintentos > 0) {
         var badgeReintentos = document.createElement('span');
-        badgeReintentos.style.background = '#ef4444';
-        badgeReintentos.style.color = 'white';
-        badgeReintentos.style.fontSize = '10px';
-        badgeReintentos.style.padding = '2px 6px';
-        badgeReintentos.style.borderRadius = '10px';
-        badgeReintentos.style.marginLeft = '8px';
-        badgeReintentos.style.verticalAlign = 'middle';
-        badgeReintentos.textContent = item.reintentos + ' retries';
+        badgeReintentos.className = 'badge-retry';
+        badgeReintentos.textContent = item.reintentos + ' reintentos';
         pAsunto.appendChild(badgeReintentos);
       }
       li.appendChild(pAsunto);
@@ -404,17 +398,20 @@
   }
 
   function cambiarTabLogs(event) {
-    if (!event.target.classList.contains('tab-btn')) return;
+    var target = event.currentTarget || event.target;
+    if (!target.classList.contains('tab-btn')) return;
     
-    // Cambiar clase active
+    // Cambiar clase active y ARIA
     var botones = document.querySelectorAll('.tab-btn');
     for (var i = 0; i < botones.length; i++) {
       botones[i].classList.remove('active');
+      botones[i].setAttribute('aria-selected', 'false');
     }
-    event.target.classList.add('active');
+    target.classList.add('active');
+    target.setAttribute('aria-selected', 'true');
     
     // Setear tab activo, resetear orden y renderizar
-    logTabActivo = event.target.getAttribute('data-tab');
+    logTabActivo = target.getAttribute('data-tab');
     ordenLogs = { key: null, asc: true };
     pintarTabActivo();
   }
@@ -727,9 +724,23 @@
       
       if (tieneDetalle) {
         tr.style.cursor = 'pointer';
-        tr.addEventListener('click', function() {
+        tr.setAttribute('tabindex', '0');
+        tr.setAttribute('role', 'button');
+        tr.setAttribute('aria-expanded', 'false');
+        var toggleDetalle = function() {
           var detalle = document.getElementById('detalle-log-' + i);
-          if (detalle) detalle.style.display = detalle.style.display === 'none' ? 'table-row' : 'none';
+          if (detalle) {
+            var cerrado = detalle.style.display === 'none';
+            detalle.style.display = cerrado ? 'table-row' : 'none';
+            tr.setAttribute('aria-expanded', cerrado ? 'true' : 'false');
+          }
+        };
+        tr.addEventListener('click', toggleDetalle);
+        tr.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleDetalle();
+          }
         });
       }
 
@@ -743,7 +754,7 @@
         if (log.estado === 'SUCCESS' || log.estado.indexOf('Resuelto') > -1) badge = 'badge-success';
         else if (log.estado === 'ADVERTENCIA' || log.estado.indexOf('advertencia') > -1) badge = 'badge-warning';
         else if (log.estado === 'ERROR' || log.estado.indexOf('No resuelto') > -1) badge = 'badge-error';
-        tdEstado.appendChild(crear('span', badge, log.estado));
+        tdEstado.appendChild(crear('span', 'badge ' + badge, log.estado));
         tr.appendChild(tdEstado);
       } 
       else if (logTabActivo === 'erroresScript') {
@@ -763,7 +774,7 @@
         if (log.estado === 'Sin Anomalías') badge = 'badge-success';
         else if (log.estado === 'Con Advertencias') badge = 'badge-warning';
         else if (log.estado === 'Con Incidencias') badge = 'badge-error';
-        tdEstado.appendChild(crear('span', badge, log.estado));
+        tdEstado.appendChild(crear('span', 'badge ' + badge, log.estado));
         tr.appendChild(tdEstado);
         
         tr.appendChild(crear('td', null, log.totalTickets));
@@ -882,8 +893,11 @@
       
       // Cabecera
       var header = crear('div', 'acordeon-header');
+      header.setAttribute('tabindex', '0');
+      header.setAttribute('role', 'button');
+      header.setAttribute('aria-expanded', gIndex === 0 ? 'true' : 'false');
       var titulo = crear('div', null, grupo.cliente + ' (' + grupo.tickets.length + ' tickets)');
-      var icono = crear('div', null, '▼');
+      var icono = crear('div', null, gIndex === 0 ? '▲' : '▼');
       header.appendChild(titulo);
       header.appendChild(icono);
       
@@ -940,25 +954,31 @@
       tabla.appendChild(tbody);
       
       // Envolver tabla en un div con overflow
-      var overflowDiv = crear('div');
-      overflowDiv.style.overflowX = 'auto';
+      var overflowDiv = crear('div', 'table-responsive');
       overflowDiv.appendChild(tabla);
       content.appendChild(overflowDiv);
       
       item.appendChild(header);
       item.appendChild(content);
       
-      // Lógica de colapso
-      header.addEventListener('click', function() {
+      // Lógica de colapso con soporte de teclado
+      var toggleAcordeon = function() {
         var isOpen = content.classList.contains('open');
         content.classList.toggle('open');
-        icono.textContent = isOpen ? '▼' : '▲';
+        header.setAttribute('aria-expanded', !isOpen ? 'true' : 'false');
+        icono.textContent = !isOpen ? '▲' : '▼';
+      };
+      header.addEventListener('click', toggleAcordeon);
+      header.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleAcordeon();
+        }
       });
       
       // Expandir el primer acordeón por defecto
       if (gIndex === 0) {
         content.classList.add('open');
-        icono.textContent = '▲';
       }
       
       contenedor.appendChild(item);
@@ -1013,11 +1033,14 @@
     var navBtns = document.querySelectorAll('.nav-btn');
     for (var j = 0; j < navBtns.length; j++) {
       navBtns[j].classList.remove('active');
+      navBtns[j].setAttribute('aria-selected', 'false');
     }
     
     // Mostrar la sección objetivo y marcar el botón
-    document.getElementById(targetId).classList.add('active');
+    var targetEl = document.getElementById(targetId);
+    if (targetEl) targetEl.classList.add('active');
     e.currentTarget.classList.add('active');
+    e.currentTarget.setAttribute('aria-selected', 'true');
   }
 
   var mainNavButtons = document.querySelectorAll('.nav-btn');
@@ -1127,12 +1150,8 @@
       var createBtn = function(texto, pageNum, isActive, isDisabled) {
         var btn = document.createElement('button');
         btn.innerHTML = texto;
-        btn.style.padding = '4px 8px';
-        btn.style.border = '1px solid #d1d5db';
-        btn.style.background = isActive ? '#109E58' : (isDisabled ? '#f3f4f6' : 'white');
-        btn.style.color = isActive ? 'white' : (isDisabled ? '#9ca3af' : '#374151');
-        btn.style.borderRadius = '4px';
-        btn.style.cursor = isDisabled ? 'default' : 'pointer';
+        btn.className = 'btn-paginacion' + (isActive ? ' active' : '');
+        btn.disabled = isDisabled;
         if (!isDisabled && !isActive) {
           btn.addEventListener('click', function() {
             renderPaginatedTable(tickets, tbodyId, paginacionId, pageNum, itemsPorPagina);
