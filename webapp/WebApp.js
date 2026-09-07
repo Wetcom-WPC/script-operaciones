@@ -605,6 +605,10 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
         ticketsCreados: r[7] || 0,
         ultimoError: r[10] || ""
       };
+    }).filter(function(log) {
+      if (!log.cliente) return false;
+      var c = String(log.cliente).trim();
+      return c.length > 1 && c !== '-' && c !== '—' && c !== '–';
     });
 
     // 2. Errores del Script

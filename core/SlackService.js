@@ -3,7 +3,6 @@
  * VERSIÓN CORREGIDA: Maneja correctamente los objetos de advertencia.
  */
 function enviarResumenSlack(operationName, summaryReport) {
-  _registrarEnLog(operationName, summaryReport);
   if (!SLACK_WEBHOOK_URL || SLACK_WEBHOOK_URL.trim() === "") return;
 
   const { exitos, advertencias, errores, tareasCerradas, tareasCerradasDetalle, drive } = summaryReport;
@@ -12,6 +11,9 @@ function enviarResumenSlack(operationName, summaryReport) {
   if (errores.length === 0 && advertencias.length === 0 && exitos.length === 0 && tareasCerradas === 0 && (!drive || drive.length === 0)) {
     return;
   }
+
+  // Registramos en log SOLAMENTE si el script hizo algo útil (procesó al menos un correo)
+  _registrarEnLog(operationName, summaryReport);
 
   let titulo;
   let mensaje = "";
