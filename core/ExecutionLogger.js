@@ -155,7 +155,7 @@ function _registrarEnLog(operationName, summaryReport) {
     // Armar entradas por cliente
     const entradas = _armarEntradas(
       esRVToolsManual, clienteRVTools, exitos, errores,
-      tareasCerradas, resultado
+      tareasCerradas, resultado, advertencias, summaryReport.drive || [], summaryReport.tareasCerradasDetalle || []
     );
     // Leer filas existentes para upsert
     const lastRow      = sheet.getLastRow();
@@ -278,7 +278,7 @@ function registrarEnvioMail(tecnologia, cliente, pod, totalTickets, itemsErrores
   }
 }
 // ─── HELPERS PRIVADOS ─────────────────────────────────────────────────────────
-function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareasCerradas, resultado) {
+function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareasCerradas, resultado, advertencias, drive, tareasCerradasDetalle) {
   if (esRVToolsManual) {
     return [{
       cliente:             clienteRVTools,
@@ -289,21 +289,96 @@ function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareas
       ultimoError:         _primerError(errores),
     }];
   }
-  const clientesTickets = _extraerClientesYKeys(exitos);
-  if (clientesTickets.length > 0) {
-    return clientesTickets.map(function(ct) {
+
+  // 1. Recolectar clientes y métricas de todas las fuentes disponibles
+  const clientesMap = {};
+
+  const registrarCliente = function(cli) {
+    if (!cli) return null;
+    const c = String(cli).trim();
+    if (!c || c === "—" || c === "-" || c === "_Desconocido_") return null;
+    if (!clientesMap[c]) {
+      clientesMap[c] = {
+        exitos: [],
+        errores: [],
+        advertencias: [],
+        ticketsCreados: 0,
+        ticketsActualizados: 0,
+        tareasCerradas: 0,
+        keys: []
+      };
+    }
+    return clientesMap[c];
+  };
+
+  // a) De exitos
+  (exitos || []).forEach(function(e) {
+    const msg = typeof e === "string" ? e : (e.mensaje || JSON.stringify(e));
+    const cliDirecto = (typeof e === 'object' && e && e.cliente) ? e.cliente : null;
+    const cli = cliDirecto || _extraerCliente(msg);
+    const registro = registrarCliente(cli);
+    if (registro) {
+      registro.exitos.push(msg);
+      const keys = msg.match(/[A-Z]+-\d+/g) || [];
+      registro.keys.push.apply(registro.keys, keys);
+      const msgL = msg.toLowerCase();
+      if (msgL.includes("cread")) { registro.ticketsCreados++; }
+      else if (msgL.includes("actualiz") || msgL.includes("update")) { registro.ticketsActualizados++; }
+    }
+  });
+
+  // b) De advertencias
+  (advertencias || []).forEach(function(w) {
+    const cli = (typeof w === 'object' && w) ? w.cliente : null;
+    const registro = registrarCliente(cli);
+    if (registro) {
+      registro.advertencias.push(w);
+    }
+  });
+
+  // c) De errores
+  (errores || []).forEach(function(err) {
+    const cli = (typeof err === 'object' && err) ? err.cliente : null;
+    const registro = registrarCliente(cli);
+    if (registro) {
+      registro.errores.push(err);
+    }
+  });
+
+  // d) De drive
+  (drive || []).forEach(function(d) {
+    const cli = (typeof d === 'object' && d) ? d.cliente : null;
+    registrarCliente(cli);
+  });
+
+  // e) De tareasCerradasDetalle (ej: "Affinity Rules (Banco Santa Fe)")
+  (tareasCerradasDetalle || []).forEach(function(det) {
+    const m = typeof det === 'string' ? det.match(/\(([^)]+)\)$/) : null;
+    const cli = m ? m[1].trim() : null;
+    const registro = registrarCliente(cli);
+    if (registro) {
+      registro.tareasCerradas++;
+    }
+  });
+
+  const listaClientes = Object.keys(clientesMap);
+  if (listaClientes.length > 0) {
+    return listaClientes.map(function(cliente) {
+      const d = clientesMap[cliente];
+      const tc = d.tareasCerradas > 0 ? d.tareasCerradas : (listaClientes.length === 1 ? tareasCerradas : 0);
       return {
-        cliente:             ct.cliente,
-        pod:                 _getPod(ct.cliente),
-        ticketsCreados:      ct.ticketsCreados,
-        ticketsActualizados: ct.ticketsActualizados,
-        tareasCerradas,
-        ultimoError:         _primerError(errores),
+        cliente:             cliente,
+        pod:                 _getPod(cliente),
+        ticketsCreados:      d.ticketsCreados,
+        ticketsActualizados: d.ticketsActualizados,
+        tareasCerradas:      tc,
+        ultimoError:         d.errores.length > 0 ? _primerError(d.errores) : _primerError(errores),
       };
     });
   }
-  // Fallback: extraer cliente desde errores si no hay éxitos
-  const errorConCliente = errores.find(function(e) { return e && e.cliente; });
+
+  // Fallback si ningún cliente pudo ser identificado
+  const errorConCliente = (errores || []).find(function(e) { return e && e.cliente; });
   const clienteFallback = errorConCliente ? errorConCliente.cliente : "—";
   return [{
     cliente:             clienteFallback,
@@ -318,31 +393,6 @@ function _estadoLabel(resultado) {
   if (resultado === "ERROR")       return "⚠️ No resuelto";
   if (resultado === "ADVERTENCIA") return "🟡 Con advertencias";
   return "✅ Resuelto";
-}
-function _extraerClientesYKeys(exitos) {
-  const mapa = {};
-  exitos.forEach(function(e) {
-    const msg     = typeof e === "string" ? e : (e.mensaje || JSON.stringify(e));
-    const cliente = _extraerCliente(msg);
-    if (!cliente) return;
-    if (!mapa[cliente]) mapa[cliente] = { ticketsCreados: 0, ticketsActualizados: 0, anomalias: 0, keys: [] };
-    const keys = msg.match(/[A-Z]+-\d+/g) || [];
-    mapa[cliente].keys.push.apply(mapa[cliente].keys, keys);
-    const msgL = msg.toLowerCase();
-    if      (msgL.includes("cread"))                          { mapa[cliente].ticketsCreados++;      mapa[cliente].anomalias++; }
-    else if (msgL.includes("actualiz") || msgL.includes("update")) { mapa[cliente].ticketsActualizados++; mapa[cliente].anomalias++; }
-  });
-  return Object.keys(mapa).map(function(cliente) {
-    const d = mapa[cliente];
-    return {
-      cliente,
-      resultado:           d.ticketsCreados > 0 || d.ticketsActualizados > 0 ? "ANOMALIAS" : "OK",
-      anomalias:           d.anomalias,
-      ticketsCreados:      d.ticketsCreados,
-      ticketsActualizados: d.ticketsActualizados,
-      keys:                d.keys.filter(function(v, i, a) { return a.indexOf(v) === i; }).join(", "),
-    };
-  });
 }
 function _extraerCliente(msg) {
   if (!msg) return null;

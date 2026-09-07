@@ -71,7 +71,7 @@ class StorageDRSProcessor extends MailProcessor {
           commentText += `| ${rowData.map(cell => (cell || "").trim()).join(" | ")} |\n`;
         });
         addCommentToJiraTicket(existingTicketKey, commentText);
-        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
+        summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.`, cliente: clientConfig.clientName });
         
         if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
         return { status: 'SUCCESS' };
@@ -83,7 +83,7 @@ class StorageDRSProcessor extends MailProcessor {
         if (attachmentStatus.status === 'SUCCESS') {
           commentText += `Se adjunta el reporte actualizado con **${alertCount}** clusters afectados.`;
           addCommentToJiraTicket(existingTicketKey, commentText);
-          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
+          summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.`, cliente: clientConfig.clientName });
           const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName); 
           if (accountIdAsignado) {
              ticketInformativo(existingTicketKey, accountIdAsignado);
@@ -112,11 +112,17 @@ class StorageDRSProcessor extends MailProcessor {
       
       const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, this.operationName);
       if (creationResult.status === 'SUCCESS') {
-        summaryReport.exitos.push(creationResult.detail);
+        const detailObj = typeof creationResult.detail === 'object' && creationResult.detail !== null ? creationResult.detail : { mensaje: creationResult.detail };
+        if (!detailObj.cliente) detailObj.cliente = clientConfig.clientName;
+        summaryReport.exitos.push(detailObj);
       } else if (creationResult.status === 'ERROR') {
-        summaryReport.errores.push(creationResult.detail);
+        const detailObj = typeof creationResult.detail === 'object' && creationResult.detail !== null ? creationResult.detail : { error: creationResult.detail };
+        if (!detailObj.cliente) detailObj.cliente = clientConfig.clientName;
+        summaryReport.errores.push(detailObj);
       } else {
-        summaryReport.advertencias.push(creationResult.detail);
+        const detailObj = typeof creationResult.detail === 'object' && creationResult.detail !== null ? creationResult.detail : { advertencia: creationResult.detail };
+        if (!detailObj.cliente) detailObj.cliente = clientConfig.clientName;
+        summaryReport.advertencias.push(detailObj);
       }
       
       if (creationResult.status !== 'FAILURE' && creationResult.status !== 'HTTP_500') {
