@@ -851,9 +851,8 @@
     if (aviso) aviso.hidden = true;
 
     var periodo = document.getElementById('filtroPeriodoMatriz') ? document.getElementById('filtroPeriodoMatriz').value : 'hoy';
-    var sheetId = null;
-    var selectEnv = document.getElementById('filtroEntornoLogs');
-    if (selectEnv) sheetId = selectEnv.value;
+    var selectEnv = document.getElementById('filtroEntornoMatriz') || document.getElementById('filtroEntornoLogs');
+    var sheetId = (selectEnv && selectEnv.value) ? selectEnv.value : '1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ';
 
     google.script.run
       .withSuccessHandler(function(datos) {
@@ -1006,9 +1005,8 @@
   }
 
   function cargarTendencias() {
-    var sheetId = null;
-    var selectEnv = document.getElementById('filtroEntornoLogs');
-    if (selectEnv) sheetId = selectEnv.value;
+    var selectEnv = document.getElementById('filtroEntornoMatriz') || document.getElementById('filtroEntornoLogs');
+    var sheetId = (selectEnv && selectEnv.value) ? selectEnv.value : '1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ';
 
     google.script.run
       .withSuccessHandler(function(datos) {
@@ -1146,8 +1144,21 @@
     subtabsOp[s].addEventListener('click', cambiarSubtabOperaciones);
   }
 
+  var fEntornoMatriz = document.getElementById('filtroEntornoMatriz');
+  if (fEntornoMatriz) {
+    fEntornoMatriz.addEventListener('change', function() {
+      matrizGlobal = null;
+      tendenciasGlobal = null;
+      cargarMatrizSalud();
+      cargarTendencias();
+    });
+  }
+
   var fPeriodoMatriz = document.getElementById('filtroPeriodoMatriz');
-  if (fPeriodoMatriz) fPeriodoMatriz.addEventListener('change', cargarMatrizSalud);
+  if (fPeriodoMatriz) fPeriodoMatriz.addEventListener('change', function() {
+    matrizGlobal = null;
+    cargarMatrizSalud();
+  });
 
   var fPodMatriz = document.getElementById('filtroPodMatriz');
   if (fPodMatriz) fPodMatriz.addEventListener('change', pintarMatrizSalud);

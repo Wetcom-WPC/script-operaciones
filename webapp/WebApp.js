@@ -585,10 +585,33 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
   };
   
   try {
-    const logSheetId = overrideSheetId || PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID") || (typeof LOG_SHEET_ID !== 'undefined' ? LOG_SHEET_ID : null);
+    const logSheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID || PropertiesService.getScriptProperties().getProperty("LOG_SHEET_ID") || (typeof LOG_SHEET_ID !== 'undefined' ? LOG_SHEET_ID : null);
     if (!logSheetId) return resultados;
     
     const ss = SpreadsheetApp.openById(logSheetId);
+
+    function parsearFechaLog(val) {
+      if (!val) return new Date();
+      if (val instanceof Date) return val;
+      const s = String(val).trim();
+      const partes = s.split(' ');
+      const fechaParte = partes[0].split('-');
+      if (fechaParte.length === 3) {
+        const anio = parseInt(fechaParte[0], 10);
+        const mes = parseInt(fechaParte[1], 10) - 1;
+        const dia = parseInt(fechaParte[2], 10);
+        let hora = 0, min = 0, sec = 0;
+        if (partes[1]) {
+          const horaParte = partes[1].split(':');
+          hora = parseInt(horaParte[0], 10) || 0;
+          min = parseInt(horaParte[1], 10) || 0;
+          sec = parseInt(horaParte[2], 10) || 0;
+        }
+        return new Date(anio, mes, dia, hora, min, sec);
+      }
+      const d = new Date(val);
+      return isNaN(d.getTime()) ? new Date() : d;
+    }
     
     // Función auxiliar para leer y formatear una hoja
     function procesarHoja(nombreHoja, mapeador) {
@@ -598,10 +621,10 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
       if (data.length <= 1) return [];
       
       const rows = data.slice(1);
-      // Ordenar por la primera columna (Fecha/Timestamp) descendente
+      // Ordenar por la fecha/timestamp más reciente descendente
       rows.sort(function(a, b) {
-        const d1 = new Date(a[0]).getTime();
-        const d2 = new Date(b[0]).getTime();
+        const d1 = parsearFechaLog(a[11] || a[0]).getTime();
+        const d2 = parsearFechaLog(b[11] || b[0]).getTime();
         return (isNaN(d2) ? 0 : d2) - (isNaN(d1) ? 0 : d1);
       });
       
@@ -615,7 +638,7 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
 
     // 1. Estado Final
     resultados.estadoFinal = procesarHoja("Estado Final", function(r) {
-      let d = r[11] ? new Date(r[11]) : (r[0] ? new Date(r[0]) : new Date());
+      let d = parsearFechaLog(r[11] || r[0]);
       return {
         hora: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'HH:mm'),
         fecha: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy'),
@@ -811,6 +834,7 @@ function webapp_obtenerTicketsJira(rango, projectKey) {
  * ID oficial del Índice General (Master Index / Configuración Operativa).
  */
 const WEBAPP_INDICE_SPREADSHEET_ID = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
+const WEBAPP_LOGS_PROD_ID = "1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ";
 
 /**
  * Obtiene el estado actual de todas las filas y checkboxes del Índice Operativo.
@@ -1095,7 +1119,8 @@ function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
   const usuario = webapp_usuarioActual();
   webapp_exigirAutorizacion(usuario);
 
-  const logs = webapp_obtenerLogs(300, overrideSheetId);
+  const targetSheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID;
+  const logs = webapp_obtenerLogs(1000, targetSheetId);
   const ahora = new Date();
   const hoyStr = Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
   
@@ -1230,7 +1255,8 @@ function webapp_obtenerTendenciaSemanal(overrideSheetId) {
   const usuario = webapp_usuarioActual();
   webapp_exigirAutorizacion(usuario);
 
-  const logs = webapp_obtenerLogs(500, overrideSheetId);
+  const targetSheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID;
+  const logs = webapp_obtenerLogs(1000, targetSheetId);
   const diasMap = {};
 
   (logs.estadoFinal || []).forEach(function(r) {
