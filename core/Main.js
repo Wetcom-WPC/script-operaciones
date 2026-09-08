@@ -83,7 +83,7 @@ function obtenerAsuntosConProcessor() {
 }
 
 // --- CONFIGURACIÓN DE LA VENTANA DE EJECUCIÓN ---
-const HORA_INICIO = 7;  // 7 AM arranca
+const HORA_INICIO = 6;  // 6 AM arranca
 const HORA_FIN = 15    // 12 AM termina definitivamente -- hasta las 15 PM
 
 /**
