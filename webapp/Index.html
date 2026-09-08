@@ -32,8 +32,9 @@
 
     <main>
       <!-- Navegación Principal -->
-      <nav class="navegacion-principal" style="margin-bottom: 24px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px;">
+      <nav class="navegacion-principal" style="margin-bottom: 24px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; flex-wrap: wrap;">
         <button class="nav-btn active" data-seccion="seccion-inicio">Inicio y Bandeja</button>
+        <button class="nav-btn" data-seccion="seccion-operaciones">📊 Salud Operativa</button>
         <button class="nav-btn" data-seccion="seccion-indice">Control de Envíos</button>
         <button class="nav-btn" data-seccion="seccion-logs">Logs del Sistema</button>
         <button class="nav-btn" data-seccion="seccion-jira">Tickets Jira</button>
@@ -106,6 +107,107 @@
           <div class="columnas" id="columnas"></div>
         </section>
       </div>
+
+      <!-- VISTA: SALUD OPERATIVA Y MATRIZ TECNOLÓGICA -->
+      <section id="seccion-operaciones" class="tarjeta vista-seccion" role="tabpanel" aria-labelledby="tab-operaciones">
+        <header>
+          <div>
+            <h2>Salud Operativa y Matriz Tecnológica</h2>
+            <p class="ayuda">
+              Visión 360° del estado de los servicios por cliente y tecnología, con correlación de anomalías y tendencias de estabilidad.
+            </p>
+          </div>
+          <button id="btnActualizarMatriz" class="btn-primario">Actualizar Matriz</button>
+        </header>
+
+        <!-- Subpestañas de Salud Operativa -->
+        <div class="tabs-container" role="tablist" aria-label="Subpestañas de salud operativa" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
+          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-operaciones="matriz">Matriz de Salud</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab-operaciones="tendencias">Tendencia Semanal</button>
+        </div>
+
+        <!-- Controles de Filtrado para Matriz -->
+        <div class="filter-toolbar" id="controlesMatriz" style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <select id="filtroPeriodoMatriz" class="select-control" aria-label="Período de análisis" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
+            <option value="hoy">Hoy</option>
+            <option value="ayer">Ayer</option>
+            <option value="semana">Últimos 7 días</option>
+          </select>
+          <select id="filtroPodMatriz" class="select-control" aria-label="Filtrar por POD" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
+            <option value="">Todos los PODs</option>
+            <option value="POD1">POD 1</option>
+            <option value="POD2">POD 2</option>
+            <option value="POD3">POD 3</option>
+            <option value="POD4">POD 4</option>
+            <option value="POD5">POD 5</option>
+            <option value="Cloud">Cloud</option>
+          </select>
+          <select id="filtroEstadoMatriz" class="select-control" aria-label="Filtrar por estado" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
+            <option value="">Todos los estados</option>
+            <option value="anomalias">Solo con alertas / incidencias</option>
+            <option value="ok">100% Sin anomalías</option>
+          </select>
+          <input type="text" id="filtroBuscarMatriz" class="input-control search-input" placeholder="Buscar cliente en matriz…" aria-label="Buscar cliente" autocomplete="off" style="flex-grow: 1; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; outline: none;">
+        </div>
+
+        <div class="aviso" id="avisoMatriz" hidden></div>
+
+        <!-- Scorecards de Resumen Operativo -->
+        <div id="scorecardMatriz" class="scorecard-grid" style="display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap;">
+          <div class="scorecard-card" style="flex: 1; min-width: 160px; border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; text-align: center; background: #f9fafb;">
+            <span class="scorecard-label" style="font-size: 12px; color: #6b7280; text-transform: uppercase;">Clientes Monitoreados</span>
+            <div id="scTotalClientes" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #111827;">-</div>
+          </div>
+          <div class="scorecard-card card-err" style="flex: 1; min-width: 160px; border: 1px solid #fca5a5; border-radius: 6px; padding: 12px; text-align: center; background: #fef2f2;">
+            <span class="scorecard-label" style="font-size: 12px; color: #991b1b; text-transform: uppercase;">Con Incidencias</span>
+            <div id="scConIncidencias" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #dc2626;">-</div>
+          </div>
+          <div class="scorecard-card card-warn" style="flex: 1; min-width: 160px; border: 1px solid #fcd34d; border-radius: 6px; padding: 12px; text-align: center; background: #fffbeb;">
+            <span class="scorecard-label" style="font-size: 12px; color: #92400e; text-transform: uppercase;">Con Advertencias</span>
+            <div id="scConAdvertencias" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #d97706;">-</div>
+          </div>
+          <div class="scorecard-card card-ok" style="flex: 1; min-width: 160px; border: 1px solid #a7f3d0; border-radius: 6px; padding: 12px; text-align: center; background: #ecfdf5;">
+            <span class="scorecard-label" style="font-size: 12px; color: #065f46; text-transform: uppercase;">Salud Global</span>
+            <div id="scSaludGlobal" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #059669;">-%</div>
+          </div>
+        </div>
+
+        <!-- Contenedor 1: Tabla Matriz de Salud -->
+        <div id="vistaSubtabMatriz">
+          <div class="matriz-container" style="overflow-x: auto;">
+            <table class="matriz-table tabla-logs" id="tablaMatriz" style="width: 100%; border-collapse: collapse;">
+              <thead id="theadMatriz"></thead>
+              <tbody id="tbodyMatriz"></tbody>
+            </table>
+          </div>
+          <p id="matrizVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">No hay datos registrados para los filtros seleccionados.</p>
+        </div>
+
+        <!-- Contenedor 2: Tendencias Semanales -->
+        <div id="vistaSubtabTendencias" style="display: none;">
+          <div class="chart-card" style="margin-bottom: 20px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+            <h3 style="margin-bottom: 12px; font-size: 16px;">Estabilidad Operacional en los últimos 7 días</h3>
+            <div id="chart_tendencia_div" style="width: 100%; height: 320px;"></div>
+          </div>
+          <div class="table-container">
+            <div class="table-responsive" style="overflow-x: auto;">
+              <table class="tabla-logs" id="tablaTendencias" style="width: 100%; border-collapse: collapse;">
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Operaciones Resueltas</th>
+                    <th>Con Advertencias</th>
+                    <th>No Resueltas / Errores</th>
+                    <th>Tickets Creados</th>
+                    <th>Índice de Estabilidad</th>
+                  </tr>
+                </thead>
+                <tbody id="tbodyTendencias"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <!-- 3. Logs del Sistema ----------------------------------------------------------- -->
       <section id="seccion-logs" class="tarjeta vista-seccion">
@@ -247,6 +349,20 @@
       <section id="seccion-indice" class="tarjeta vista-seccion">
         <?!= webapp_include('webapp/IndiceControl') ?>
       </section>
+
+      <!-- MODAL DETALLE DE CLIENTE EN MATRIZ -->
+      <div id="modalDetalleCliente" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true">
+        <div class="modal-card">
+          <header class="modal-header">
+            <div>
+              <h3 id="modalTituloCliente">Detalle de Operaciones</h3>
+              <span id="modalClientePod" class="pildora"></span>
+            </div>
+            <button id="btnCerrarModalCliente" class="modal-close" aria-label="Cerrar ventana">×</button>
+          </header>
+          <div class="modal-body" id="modalCuerpoCliente"></div>
+        </div>
+      </div>
     </main>
 
     <footer>

@@ -39,6 +39,10 @@ class AffinityRulesProcessor extends MailProcessor {
       clientConfig = this.resolveClientConfig(clientConfig, senderEmail, null, message, summaryReport);
       
       if (clientConfig) {
+        if (!summaryReport.clientesProcesados) summaryReport.clientesProcesados = [];
+        if (!summaryReport.clientesProcesados.includes(clientConfig.clientName)) {
+          summaryReport.clientesProcesados.push(clientConfig.clientName);
+        }
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).`, cliente: clientConfig.clientName });
         if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }

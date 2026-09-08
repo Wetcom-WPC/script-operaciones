@@ -155,7 +155,8 @@ function _registrarEnLog(operationName, summaryReport) {
     // Armar entradas por cliente
     const entradas = _armarEntradas(
       esRVToolsManual, clienteRVTools, exitos, errores,
-      tareasCerradas, resultado, advertencias, summaryReport.drive || [], summaryReport.tareasCerradasDetalle || []
+      tareasCerradas, resultado, advertencias, summaryReport.drive || [], summaryReport.tareasCerradasDetalle || [],
+      summaryReport.clientesProcesados || []
     );
     // Leer filas existentes para upsert
     const lastRow      = sheet.getLastRow();
@@ -278,7 +279,7 @@ function registrarEnvioMail(tecnologia, cliente, pod, totalTickets, itemsErrores
   }
 }
 // ─── HELPERS PRIVADOS ─────────────────────────────────────────────────────────
-function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareasCerradas, resultado, advertencias, drive, tareasCerradasDetalle) {
+function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareasCerradas, resultado, advertencias, drive, tareasCerradasDetalle, clientesProcesados) {
   if (esRVToolsManual) {
     return [{
       cliente:             clienteRVTools,
@@ -361,6 +362,12 @@ function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareas
     }
   });
 
+  // f) De clientesProcesados (provenientes directamente del remitente SMTP resuelto en MailProcessor)
+  (clientesProcesados || []).forEach(function(cli) {
+    const cNom = typeof cli === 'object' && cli ? (cli.cliente || cli.nombre) : cli;
+    registrarCliente(cNom);
+  });
+
   const listaClientes = Object.keys(clientesMap);
   if (listaClientes.length > 0) {
     return listaClientes.map(function(cliente) {
@@ -410,7 +417,8 @@ function _extraerCliente(msg) {
       if (fila) return fila[1].toString().trim();
     } catch(e) {}
   }
-  const m = msg.match(/(?:reporte de|para|de)\s+([A-ZÁÉÍÓÚÑ][^.,()\n<|]{2,50?})\s+(?:procesado|recibido|sin|creado|actualiz)/i);
+  // Cuantificador corregido: {2,50}? (no-greedy) y tolerancia a (SUCCESS) o fin de frase
+  const m = msg.match(/(?:reporte de|para|de)\s+([A-ZÁÉÍÓÚÑ][^.,()\n<|]{2,50}?)(?:\s+(?:procesado|recibido|sin|creado|actualiz|\(success\)|con)|$)/i);
   return m ? m[1].trim() : null;
 }
 function _contarPorPalabra(exitos, palabras) {
@@ -427,11 +435,14 @@ function _primerError(errores) {
 }
 function _getPod(clienteNombre) {
   try {
+    if (!clienteNombre || clienteNombre === "—" || clienteNombre === "-") return "";
     const data = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID)
                    .getSheets()[0].getDataRange().getValues();
+    const cLower = String(clienteNombre).trim().toLowerCase();
     const fila = data.find(function(r) {
-      return r[11] && r[11].toString().trim().toLowerCase() === clienteNombre.toLowerCase();
+      return (r[1] && r[1].toString().trim().toLowerCase() === cLower)
+          || (r[11] && r[11].toString().trim().toLowerCase() === cLower);
     });
-    return fila ? (fila[8] || "") : "";
+    return fila ? (fila[8] || fila[0] || "") : "";
   } catch (e) { return ""; }
 }

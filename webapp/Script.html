@@ -801,6 +801,374 @@
     tabButtons[k].addEventListener('click', cambiarTabLogs);
   }
   
+// --- Salud Operativa y Matriz Tecnológica -----------------------------------------------
+  var matrizGlobal = null;
+  var tendenciasGlobal = null;
+  var subtabOperacionesActivo = 'matriz';
+
+  function cambiarSubtabOperaciones(event) {
+    var target = event.currentTarget || event.target;
+    var subtab = target.getAttribute('data-tab-operaciones');
+    if (!subtab) return;
+
+    var botones = document.querySelectorAll('#seccion-operaciones .tab-btn');
+    for (var i = 0; i < botones.length; i++) {
+      botones[i].classList.remove('active');
+      botones[i].setAttribute('aria-selected', 'false');
+    }
+    target.classList.add('active');
+    target.setAttribute('aria-selected', 'true');
+
+    subtabOperacionesActivo = subtab;
+
+    var vMatriz = document.getElementById('vistaSubtabMatriz');
+    var vTendencias = document.getElementById('vistaSubtabTendencias');
+    var controles = document.getElementById('controlesMatriz');
+    var scorecard = document.getElementById('scorecardMatriz');
+
+    if (subtab === 'matriz') {
+      if (vMatriz) vMatriz.style.display = 'block';
+      if (vTendencias) vTendencias.style.display = 'none';
+      if (controles) controles.style.display = 'flex';
+      if (scorecard) scorecard.style.display = 'grid';
+    } else {
+      if (vMatriz) vMatriz.style.display = 'none';
+      if (vTendencias) vTendencias.style.display = 'block';
+      if (controles) controles.style.display = 'none';
+      if (scorecard) scorecard.style.display = 'none';
+      if (!tendenciasGlobal) {
+        cargarTendencias();
+      } else {
+        pintarTendencias();
+      }
+    }
+  }
+
+  function cargarMatrizSalud() {
+    var btn = document.getElementById('btnActualizarMatriz');
+    if (btn) ocupar(btn, 'Actualizando...');
+    var aviso = document.getElementById('avisoMatriz');
+    if (aviso) aviso.hidden = true;
+
+    var periodo = document.getElementById('filtroPeriodoMatriz') ? document.getElementById('filtroPeriodoMatriz').value : 'hoy';
+    var sheetId = null;
+    var selectEnv = document.getElementById('filtroEntornoLogs');
+    if (selectEnv) sheetId = selectEnv.value;
+
+    google.script.run
+      .withSuccessHandler(function(datos) {
+        if (btn) liberar(btn);
+        matrizGlobal = datos;
+        pintarMatrizSalud();
+      })
+      .withFailureHandler(function(err) {
+        if (btn) liberar(btn);
+        mostrarAviso(aviso, 'error', 'No se pudo cargar la matriz de salud: ' + err.message);
+      })
+      .webapp_obtenerMatrizSalud(periodo, sheetId);
+  }
+
+  function pintarMatrizSalud() {
+    if (!matrizGlobal) return;
+
+    var filtroPod = document.getElementById('filtroPodMatriz') ? document.getElementById('filtroPodMatriz').value.toUpperCase().trim() : '';
+    var filtroEstado = document.getElementById('filtroEstadoMatriz') ? document.getElementById('filtroEstadoMatriz').value : '';
+    var filtroBuscar = document.getElementById('filtroBuscarMatriz') ? document.getElementById('filtroBuscarMatriz').value.toLowerCase().trim() : '';
+
+    var clientesFiltrados = (matrizGlobal.clientes || []).filter(function(cli) {
+      if (filtroPod && cli.pod && cli.pod.toUpperCase().replace(/\s+/g, '') !== filtroPod.replace(/\s+/g, '')) return false;
+      if (filtroEstado === 'anomalias' && cli.estadoGeneral === 'OK') return false;
+      if (filtroEstado === 'ok' && cli.estadoGeneral !== 'OK') return false;
+      if (filtroBuscar && cli.cliente.toLowerCase().indexOf(filtroBuscar) === -1) return false;
+      return true;
+    });
+
+    // Actualizar Scorecards
+    var scTot = document.getElementById('scTotalClientes');
+    var scInc = document.getElementById('scConIncidencias');
+    var scAdv = document.getElementById('scConAdvertencias');
+    var scSalud = document.getElementById('scSaludGlobal');
+
+    var r = matrizGlobal.resumen || {};
+    if (scTot) scTot.textContent = r.totalClientes || 0;
+    if (scInc) scInc.textContent = r.conIncidencias || 0;
+    if (scAdv) scAdv.textContent = r.conAdvertencias || 0;
+    if (scSalud) scSalud.textContent = (r.saludGlobalPct !== undefined ? r.saludGlobalPct : 100) + '%';
+
+    var thead = document.getElementById('theadMatriz');
+    var tbody = document.getElementById('tbodyMatriz');
+    var vacio = document.getElementById('matrizVacio');
+    vaciar(thead);
+    vaciar(tbody);
+
+    if (clientesFiltrados.length === 0) {
+      if (vacio) vacio.style.display = 'block';
+      return;
+    }
+    if (vacio) vacio.style.display = 'none';
+
+    // Thead
+    var trHead = crear('tr');
+    var thCli = crear('th', 'th-cliente', 'Cliente');
+    var thPod = crear('th', null, 'POD');
+    trHead.appendChild(thCli);
+    trHead.appendChild(thPod);
+
+    (matrizGlobal.tecnologias || []).forEach(function(tech) {
+      var th = crear('th', null, tech);
+      trHead.appendChild(th);
+    });
+
+    var thGeneral = crear('th', null, 'Estado General');
+    trHead.appendChild(thGeneral);
+    thead.appendChild(trHead);
+
+    // Tbody
+    clientesFiltrados.forEach(function(cli) {
+      var tr = crear('tr', 'matriz-row');
+      tr.setAttribute('tabindex', '0');
+      tr.setAttribute('role', 'button');
+      tr.setAttribute('title', 'Clic para ver el desglose operacional de ' + cli.cliente);
+
+      var tdCli = crear('td', null, cli.cliente);
+      tdCli.style.fontWeight = '600';
+      tr.appendChild(tdCli);
+
+      var tdPod = crear('td');
+      tdPod.style.textAlign = 'center';
+      if (cli.pod) {
+        var pild = crear('span', 'pildora', cli.pod);
+        pild.style.fontSize = '11px';
+        tdPod.appendChild(pild);
+      } else {
+        tdPod.textContent = '-';
+      }
+      tr.appendChild(tdPod);
+
+      (matrizGlobal.tecnologias || []).forEach(function(tech) {
+        var td = crear('td', 'celda-tech');
+        var tData = cli.tecnologias[tech];
+        var pill = crear('span', 'tech-pill');
+
+        if (!tData || tData.total === 0) {
+          pill.classList.add('status-none');
+          pill.textContent = '—';
+          pill.title = 'Sin operaciones registradas hoy para ' + tech;
+        } else if (tData.estado === 'ERROR') {
+          pill.classList.add('status-err');
+          pill.textContent = '❌';
+          pill.title = tech + ': ' + tData.errores + ' error(es), ' + tData.total + ' ops';
+        } else if (tData.estado === 'ADVERTENCIA') {
+          pill.classList.add('status-warn');
+          pill.textContent = '⚠️';
+          pill.title = tech + ': ' + tData.advertencias + ' advertencia(s), ' + tData.total + ' ops';
+        } else {
+          pill.classList.add('status-ok');
+          pill.textContent = '✅';
+          pill.title = tech + ': 100% OK (' + tData.total + ' ops exitosas)';
+        }
+
+        td.appendChild(pill);
+        tr.appendChild(td);
+      });
+
+      var tdGen = crear('td');
+      tdGen.style.textAlign = 'center';
+      var badgeClase = 'badge-success';
+      var badgeTexto = '✅ Saludable';
+      if (cli.estadoGeneral === 'ERROR') {
+        badgeClase = 'badge-error';
+        badgeTexto = '🔴 Con Incidencias';
+      } else if (cli.estadoGeneral === 'ADVERTENCIA') {
+        badgeClase = 'badge-warning';
+        badgeTexto = '🟡 Con Advertencias';
+      }
+      tdGen.appendChild(crear('span', 'badge ' + badgeClase, badgeTexto));
+      tr.appendChild(tdGen);
+
+      var alHacerClicFila = function() {
+        abrirModalDetalleCliente(cli);
+      };
+      tr.addEventListener('click', alHacerClicFila);
+      tr.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          alHacerClicFila();
+        }
+      });
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  function cargarTendencias() {
+    var sheetId = null;
+    var selectEnv = document.getElementById('filtroEntornoLogs');
+    if (selectEnv) sheetId = selectEnv.value;
+
+    google.script.run
+      .withSuccessHandler(function(datos) {
+        tendenciasGlobal = datos;
+        pintarTendencias();
+      })
+      .withFailureHandler(function(err) {
+        mostrarAviso(document.getElementById('avisoMatriz'), 'error', 'No se pudieron cargar tendencias: ' + err.message);
+      })
+      .webapp_obtenerTendenciaSemanal(sheetId);
+  }
+
+  function pintarTendencias() {
+    if (!tendenciasGlobal || tendenciasGlobal.length === 0) return;
+
+    var arrChart = [['Día', 'Resueltos', 'Con Advertencias', 'Errores']];
+    var tbody = document.getElementById('tbodyTendencias');
+    if (!tbody) return;
+    vaciar(tbody);
+
+    tendenciasGlobal.forEach(function(d) {
+      arrChart.push([d.fecha, d.resueltos, d.advertencias, d.errores]);
+
+      var totalOps = d.resueltos + d.advertencias + d.errores;
+      var estabilidadPct = totalOps > 0 ? Math.round((d.resueltos / totalOps) * 100) : 100;
+
+      var tr = crear('tr');
+      tr.appendChild(crear('td', null, d.fecha));
+      tr.appendChild(crear('td', null, d.resueltos));
+      tr.appendChild(crear('td', null, d.advertencias));
+      tr.appendChild(crear('td', null, d.errores));
+      tr.appendChild(crear('td', null, d.totalTickets));
+
+      var tdEst = crear('td');
+      var badgeClase = 'badge-success';
+      if (estabilidadPct < 80) badgeClase = 'badge-error';
+      else if (estabilidadPct < 95) badgeClase = 'badge-warning';
+      tdEst.appendChild(crear('span', 'badge ' + badgeClase, estabilidadPct + '%'));
+      tr.appendChild(tdEst);
+
+      tbody.appendChild(tr);
+    });
+
+    var chartDiv = document.getElementById('chart_tendencia_div');
+    if (chartDiv && typeof google !== 'undefined' && google.visualization && google.visualization.ColumnChart) {
+      var dataTable = google.visualization.arrayToDataTable(arrChart);
+      var options = {
+        isStacked: true,
+        colors: ['#109E58', '#D97706', '#DC2626'],
+        legend: { position: 'top' },
+        chartArea: { width: '85%', height: '70%' },
+        hAxis: { title: 'Fecha' },
+        vAxis: { title: 'Volumen de Operaciones', minValue: 0 }
+      };
+      var chart = new google.visualization.ColumnChart(chartDiv);
+      chart.draw(dataTable, options);
+    }
+  }
+
+  // --- Modal de Detalle de Cliente ---------------------------------------------------------
+  function abrirModalDetalleCliente(cli) {
+    var modal = document.getElementById('modalDetalleCliente');
+    var titulo = document.getElementById('modalTituloCliente');
+    var cuerpo = document.getElementById('modalCuerpoCliente');
+    if (!modal || !cuerpo) return;
+
+    titulo.textContent = 'Detalle Operacional — ' + cli.cliente + (cli.pod ? ' [' + cli.pod + ']' : '');
+    vaciar(cuerpo);
+
+    if (!cli.operaciones || cli.operaciones.length === 0) {
+      cuerpo.appendChild(crear('p', 'vacio', 'No se encontraron operaciones registradas para este cliente.'));
+    } else {
+      var wrap = crear('div', 'table-responsive');
+      var tabla = crear('table', 'tabla-logs');
+      var thead = crear('thead');
+      var trH = crear('tr');
+      ['Hora', 'Tecnología', 'Operación', 'Estado', 'Tickets', 'Detalle / Error'].forEach(function(h) {
+        trH.appendChild(crear('th', null, h));
+      });
+      thead.appendChild(trH);
+      tabla.appendChild(thead);
+
+      var tbody = crear('tbody');
+      cli.operaciones.forEach(function(op) {
+        var tr = crear('tr');
+        tr.appendChild(crear('td', null, op.hora || '-'));
+        tr.appendChild(crear('td', null, op.tech || '-'));
+        tr.appendChild(crear('td', null, op.operacion || '-'));
+
+        var tdEst = crear('td');
+        var badge = 'badge-neutral';
+        if (op.estado && (op.estado.indexOf('Resuelto') > -1 || op.estado === 'SUCCESS')) badge = 'badge-success';
+        else if (op.estado && op.estado.indexOf('advertencia') > -1) badge = 'badge-warning';
+        else if (op.estado && op.estado.indexOf('No resuelto') > -1) badge = 'badge-error';
+        tdEst.appendChild(crear('span', 'badge ' + badge, op.estado));
+        tr.appendChild(tdEst);
+
+        tr.appendChild(crear('td', null, op.ticketsCreados || 0));
+
+        var tdDet = crear('td');
+        if (op.ultimoError) {
+          var errSpan = crear('span', null, op.ultimoError);
+          errSpan.style.color = 'var(--rojo-osc)';
+          errSpan.style.fontSize = '12px';
+          tdDet.appendChild(errSpan);
+        } else {
+          tdDet.textContent = '-';
+          tdDet.style.color = '#9ca3af';
+        }
+        tr.appendChild(tdDet);
+
+        tbody.appendChild(tr);
+      });
+      tabla.appendChild(tbody);
+      wrap.appendChild(tabla);
+      cuerpo.appendChild(wrap);
+    }
+
+    modal.style.display = 'flex';
+  }
+
+  function cerrarModalCliente() {
+    var modal = document.getElementById('modalDetalleCliente');
+    if (modal) modal.style.display = 'none';
+  }
+
+  
+
+  // Listeners de Salud Operativa
+  var btnActMatriz = document.getElementById('btnActualizarMatriz');
+  if (btnActMatriz) btnActMatriz.addEventListener('click', cargarMatrizSalud);
+
+  var subtabsOp = document.querySelectorAll('#seccion-operaciones .tab-btn');
+  for (var s = 0; s < subtabsOp.length; s++) {
+    subtabsOp[s].addEventListener('click', cambiarSubtabOperaciones);
+  }
+
+  var fPeriodoMatriz = document.getElementById('filtroPeriodoMatriz');
+  if (fPeriodoMatriz) fPeriodoMatriz.addEventListener('change', cargarMatrizSalud);
+
+  var fPodMatriz = document.getElementById('filtroPodMatriz');
+  if (fPodMatriz) fPodMatriz.addEventListener('change', pintarMatrizSalud);
+
+  var fEstMatriz = document.getElementById('filtroEstadoMatriz');
+  if (fEstMatriz) fEstMatriz.addEventListener('change', pintarMatrizSalud);
+
+  var fBusqMatriz = document.getElementById('filtroBuscarMatriz');
+  if (fBusqMatriz) fBusqMatriz.addEventListener('keyup', pintarMatrizSalud);
+
+  // Modal Detalle de Cliente
+  var btnCerrarModal = document.getElementById('btnCerrarModalCliente');
+  if (btnCerrarModal) btnCerrarModal.addEventListener('click', cerrarModalCliente);
+
+  var modalOverlay = document.getElementById('modalDetalleCliente');
+  if (modalOverlay) {
+    modalOverlay.addEventListener('click', function(e) {
+      if (e.target === this) cerrarModalCliente();
+    });
+  }
+
+  window.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') cerrarModalCliente();
+  });
+
   // --- Navegación Principal ------------------------------------------------------------------
   
   function cambiarSeccionPrincipal(e) {
@@ -816,11 +1184,23 @@
     var navBtns = document.querySelectorAll('.nav-btn');
     for (var j = 0; j < navBtns.length; j++) {
       navBtns[j].classList.remove('active');
+      navBtns[j].setAttribute('aria-selected', 'false');
     }
     
     // Mostrar la sección objetivo y marcar el botón
-    document.getElementById(targetId).classList.add('active');
+    var targetEl = document.getElementById(targetId);
+    if (targetEl) targetEl.classList.add('active');
     e.currentTarget.classList.add('active');
+    e.currentTarget.setAttribute('aria-selected', 'true');
+
+    // Carga perezosa automática al ingresar por primera vez
+    if (targetId === 'seccion-operaciones' && !matrizGlobal) {
+      cargarMatrizSalud();
+    } else if (targetId === 'seccion-logs' && !logsGlobales) {
+      cargarLogs();
+    } else if (targetId === 'seccion-indice' && !datosIndiceGlobal) {
+      cargarEstadoIndice();
+    }
   }
 
   var mainNavButtons = document.querySelectorAll('.nav-btn');

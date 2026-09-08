@@ -37,7 +37,7 @@ class MailProcessor {
    */
   processEmails() {
     const timeGuard = new TimeGuard({ operationName: this.operationName });
-    const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, tareasCerradasDetalle: [], drive: [], timeGuard: timeGuard };
+    const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, tareasCerradasDetalle: [], drive: [], timeGuard: timeGuard, clientesProcesados: [] };
     const threads = fetchAndFilterGlobalThreads(this.emailSubject);
     
     if (threads.length > 0) {
@@ -196,6 +196,12 @@ class MailProcessor {
       }
 
       clientName = clientConfig.clientName;
+      if (clientName && clientName !== "_Desconocido_") {
+        if (!summaryReport.clientesProcesados) summaryReport.clientesProcesados = [];
+        if (!summaryReport.clientesProcesados.includes(clientName)) {
+          summaryReport.clientesProcesados.push(clientName);
+        }
+      }
 
       const parsedData = this.parseAttachment(attachment, summaryReport);
 
