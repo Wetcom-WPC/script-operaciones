@@ -1131,22 +1131,107 @@ function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
     fechaTarget = Utilities.formatDate(ayer, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
   }
 
-  // Tecnologías estándar a representar en la matriz
   const techsEstandar = ['vSphere', 'Veeam', 'Horizon', 'Nutanix', 'Tanzu', 'RVTools'];
+
+  // 1. Cargar catálogo de clientes y tecnologías contratadas desde el Índice Maestro
+  const clienteMap = {};
+  const aliasToNombre = {};
+
+  try {
+    const spreadsheet = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
+    const sheet = spreadsheet.getSheetByName("Sheet1") || spreadsheet.getSheets()[0];
+    const lastRow = sheet.getLastRow();
+
+    if (lastRow > 1) {
+      const data = sheet.getRange(2, 1, lastRow - 1, 24).getValues();
+
+      for (let i = 0; i < data.length; i++) {
+        const row = data[i];
+        const nombreOps     = row[1]  ? row[1].toString().trim()  : "";
+        const podVal        = row[8]  ? row[8].toString().trim()  : "";
+        const nombreEmpresa = row[11] ? row[11].toString().trim() : "";
+        const servicios     = row[12] ? row[12].toString().toLowerCase() : "";
+
+        // Omitir filas sin nombre, testing o internas de WPC
+        const nombreBajo = nombreOps.toLowerCase();
+        if (!nombreOps || nombreBajo === "true" || nombreBajo === "false" || 
+            nombreBajo.includes("testing") || nombreBajo.startsWith("wpc -") || 
+            podVal.toUpperCase() === "WPC") {
+          continue;
+        }
+
+        const checkVsphere = row[17] === true || String(row[17]).toUpperCase() === "TRUE";
+        const checkVeeam   = row[18] === true || String(row[18]).toUpperCase() === "TRUE";
+        const checkNutanix = row[19] === true || String(row[19]).toUpperCase() === "TRUE";
+        const checkRVTools = row[20] === true || String(row[20]).toUpperCase() === "TRUE";
+
+        const tieneVsphere = true;
+        const tieneVeeam   = servicios.includes("veeam") || checkVeeam;
+        const tieneHorizon = servicios.includes("horizon") || servicios.includes("view");
+        const tieneNutanix = servicios.includes("nutanix") || checkNutanix;
+        const tieneTanzu   = servicios.includes("tanzu");
+        const tieneRVTools = servicios.includes("rvtools") || checkRVTools;
+
+        const contrato = {
+          'vSphere': tieneVsphere,
+          'Veeam': tieneVeeam,
+          'Horizon': tieneHorizon,
+          'Nutanix': tieneNutanix,
+          'Tanzu': tieneTanzu,
+          'RVTools': tieneRVTools
+        };
+
+        const tecsObj = {};
+        techsEstandar.forEach(function(t) {
+          if (contrato[t]) {
+            tecsObj[t] = {
+              estado: 'OK',
+              total: 0,
+              exitos: 0,
+              advertencias: 0,
+              errores: 0,
+              tickets: 0
+            };
+          }
+        });
+
+        clienteMap[nombreOps] = {
+          cliente: nombreOps,
+          pod: podVal,
+          tecnologias: tecsObj,
+          operaciones: [],
+          totalOperaciones: 0,
+          estadoGeneral: 'OK'
+        };
+
+        const claveSimple = nombreOps.toLowerCase().replace(/^operaciones\s+/i, '').trim();
+        aliasToNombre[claveSimple] = nombreOps;
+        aliasToNombre[nombreOps.toLowerCase()] = nombreOps;
+        if (nombreEmpresa) {
+          aliasToNombre[nombreEmpresa.toLowerCase()] = nombreOps;
+          aliasToNombre[nombreEmpresa.toLowerCase().replace(/^operaciones\s+/i, '').trim()] = nombreOps;
+        }
+      }
+    }
+  } catch (e) {
+    Logger.log("[MatrizSalud] Error al inicializar clientes desde el Índice: " + e.message);
+  }
 
   function normalizarTech(origen, operacion) {
     const o = (origen || '').toLowerCase();
     const op = (operacion || '').toLowerCase();
-    if (o.includes('vro') || o.includes('vsphere') || op.includes('vsphere') || op.includes('cluster') || op.includes('datastore') || op.includes('affinity')) return 'vSphere';
-    if (o.includes('veeam') || op.includes('veeam') || op.includes('job') || op.includes('repositorio') || op.includes('proxy')) return 'Veeam';
-    if (o.includes('connection') || o.includes('horizon') || o.includes('view') || op.includes('horizon') || op.includes('view')) return 'Horizon';
-    if (o.includes('nutanix') || op.includes('nutanix')) return 'Nutanix';
+
+    if (o.includes('rvtools') || op.includes('rvtools') || op.includes('zombie') || op.includes('connect at power on')) return 'RVTools';
+    if (o.includes('connection') || o.includes('horizon') || o.includes('view') || op.includes('horizon') || op.includes('view') || op.includes('agentes view')) return 'Horizon';
+    if (o.includes('nutanix') || op.includes('nutanix') || op.includes('data resiliency') || op.includes('cluster nutanix')) return 'Nutanix';
     if (o.includes('tanzu') || op.includes('tanzu')) return 'Tanzu';
-    if (o.includes('rvtools') || op.includes('rvtools') || op.includes('zombie')) return 'RVTools';
+    if (o.includes('veeam') || op.includes('veeam') || op.includes('repositorio') || op.includes('proxy') || op.includes('job') || op.includes('orphaned')) return 'Veeam';
+    if (o.includes('vro') || o.includes('vsphere') || op.includes('vsphere') || op.includes('cluster') || op.includes('datastore') || op.includes('affinity') || op.includes('snapshot') || op.includes('vm')) return 'vSphere';
+
     return 'vSphere';
   }
 
-  // Filtrar filas por fecha (o últimos 7 días si es 'semana')
+  // 2. Filtrar filas de logs según el período solicitado
   const rows = (logs.estadoFinal || []).filter(function(r) {
     if (!r.cliente || r.cliente === '—' || r.cliente === '-') return false;
     const cLow = r.cliente.toLowerCase();
@@ -1155,13 +1240,15 @@ function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
     return r.fecha === fechaTarget;
   });
 
-  const clienteMap = {};
-
+  // 3. Cruzar ejecuciones e incidencias registradas en los logs
   rows.forEach(function(r) {
-    const cli = r.cliente.trim();
-    if (!clienteMap[cli]) {
-      clienteMap[cli] = {
-        cliente: cli,
+    const rawCli = r.cliente.trim();
+    const cliKey = rawCli.toLowerCase().replace(/^operaciones\s+/i, '').trim();
+    const canonicalName = aliasToNombre[cliKey] || aliasToNombre[rawCli.toLowerCase()] || rawCli;
+
+    if (!clienteMap[canonicalName]) {
+      clienteMap[canonicalName] = {
+        cliente: canonicalName,
         pod: r.pod || '',
         tecnologias: {},
         operaciones: [],
@@ -1170,13 +1257,12 @@ function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
       };
     }
 
-    if (!clienteMap[cli].pod && r.pod) {
-      clienteMap[cli].pod = r.pod;
-    }
+    const cEntry = clienteMap[canonicalName];
+    if (!cEntry.pod && r.pod) cEntry.pod = r.pod;
 
     const tech = normalizarTech(r.origen, r.operacion);
-    if (!clienteMap[cli].tecnologias[tech]) {
-      clienteMap[cli].tecnologias[tech] = {
+    if (!cEntry.tecnologias[tech]) {
+      cEntry.tecnologias[tech] = {
         estado: 'OK',
         total: 0,
         exitos: 0,
@@ -1186,7 +1272,7 @@ function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
       };
     }
 
-    const tData = clienteMap[cli].tecnologias[tech];
+    const tData = cEntry.tecnologias[tech];
     tData.total++;
     tData.tickets += (r.ticketsCreados || 0);
 
@@ -1194,17 +1280,17 @@ function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
     if (est.includes('no resuelto') || est.includes('error')) {
       tData.errores++;
       tData.estado = 'ERROR';
-      clienteMap[cli].estadoGeneral = 'ERROR';
+      cEntry.estadoGeneral = 'ERROR';
     } else if (est.includes('advertencia') || est.includes('anomalia')) {
       tData.advertencias++;
       if (tData.estado !== 'ERROR') tData.estado = 'ADVERTENCIA';
-      if (clienteMap[cli].estadoGeneral !== 'ERROR') clienteMap[cli].estadoGeneral = 'ADVERTENCIA';
+      if (cEntry.estadoGeneral !== 'ERROR') cEntry.estadoGeneral = 'ADVERTENCIA';
     } else {
       tData.exitos++;
     }
 
-    clienteMap[cli].totalOperaciones++;
-    clienteMap[cli].operaciones.push({
+    cEntry.totalOperaciones++;
+    cEntry.operaciones.push({
       hora: r.hora,
       operacion: r.operacion,
       tech: tech,
@@ -1216,9 +1302,14 @@ function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
     });
   });
 
-  // Convertir a array ordenado por Cliente
+  // Convertir a array ordenado por POD y secundariamente por Cliente
   const listaClientes = Object.keys(clienteMap).map(function(k) { return clienteMap[k]; });
-  listaClientes.sort(function(a, b) { return a.cliente.localeCompare(b.cliente); });
+  listaClientes.sort(function(a, b) {
+    const podA = (a.pod || "").toUpperCase();
+    const podB = (b.pod || "").toUpperCase();
+    if (podA !== podB) return podA.localeCompare(podB);
+    return a.cliente.localeCompare(b.cliente);
+  });
 
   // Resumen global
   let totalIncidencias = 0;

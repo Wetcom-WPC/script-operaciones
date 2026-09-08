@@ -886,17 +886,25 @@
       return true;
     });
 
-    // Actualizar Scorecards
+    // Actualizar Scorecards según los clientes mostrados
     var scTot = document.getElementById('scTotalClientes');
     var scInc = document.getElementById('scConIncidencias');
     var scAdv = document.getElementById('scConAdvertencias');
     var scSalud = document.getElementById('scSaludGlobal');
 
-    var r = matrizGlobal.resumen || {};
-    if (scTot) scTot.textContent = r.totalClientes || 0;
-    if (scInc) scInc.textContent = r.conIncidencias || 0;
-    if (scAdv) scAdv.textContent = r.conAdvertencias || 0;
-    if (scSalud) scSalud.textContent = (r.saludGlobalPct !== undefined ? r.saludGlobalPct : 100) + '%';
+    var tot = clientesFiltrados.length;
+    var inc = 0, adv = 0, ok = 0;
+    clientesFiltrados.forEach(function(c) {
+      if (c.estadoGeneral === 'ERROR') inc++;
+      else if (c.estadoGeneral === 'ADVERTENCIA') adv++;
+      else ok++;
+    });
+    var saludPct = tot > 0 ? Math.round((ok / tot) * 100) : 100;
+
+    if (scTot) scTot.textContent = tot;
+    if (scInc) scInc.textContent = inc;
+    if (scAdv) scAdv.textContent = adv;
+    if (scSalud) scSalud.textContent = saludPct + '%';
 
     var thead = document.getElementById('theadMatriz');
     var tbody = document.getElementById('tbodyMatriz');
@@ -950,25 +958,25 @@
 
       (matrizGlobal.tecnologias || []).forEach(function(tech) {
         var td = crear('td', 'celda-tech');
-        var tData = cli.tecnologias[tech];
+        var tData = cli.tecnologias ? cli.tecnologias[tech] : null;
         var pill = crear('span', 'tech-pill');
 
-        if (!tData || tData.total === 0) {
+        if (!tData) {
           pill.classList.add('status-none');
           pill.textContent = '—';
-          pill.title = 'Sin operaciones registradas hoy para ' + tech;
+          pill.title = tech + ': No contratado / No configurado';
         } else if (tData.estado === 'ERROR') {
           pill.classList.add('status-err');
           pill.textContent = '❌';
-          pill.title = tech + ': ' + tData.errores + ' error(es), ' + tData.total + ' ops';
+          pill.title = tech + ': ' + (tData.errores || 1) + ' incidencia(s), ' + (tData.tickets || 0) + ' tickets';
         } else if (tData.estado === 'ADVERTENCIA') {
           pill.classList.add('status-warn');
           pill.textContent = '⚠️';
-          pill.title = tech + ': ' + tData.advertencias + ' advertencia(s), ' + tData.total + ' ops';
+          pill.title = tech + ': ' + (tData.advertencias || 1) + ' advertencia(s), ' + (tData.tickets || 0) + ' tickets';
         } else {
           pill.classList.add('status-ok');
           pill.textContent = '✅';
-          pill.title = tech + ': 100% OK (' + tData.total + ' ops exitosas)';
+          pill.title = tech + ': 100% Saludable (' + (tData.total > 0 ? tData.total + ' ops verificadas' : 'Sin anomalías activas') + ')';
         }
 
         td.appendChild(pill);
