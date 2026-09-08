@@ -1136,8 +1136,10 @@
       var tabla = crear('table', 'tabla-logs');
       var thead = crear('thead');
       var trH = crear('tr');
-      ['Hora', 'Tecnología', 'Operación', 'Estado', 'Tickets', 'Detalle / Error'].forEach(function(h) {
-        trH.appendChild(crear('th', null, h));
+      ['Hora', 'Tecnología', 'Operación', 'Estado', 'Tickets creados', 'Detalle / Error'].forEach(function(h) {
+        var th = crear('th', null, h);
+        if (h === 'Tickets creados') th.style.textAlign = 'center';
+        trH.appendChild(th);
       });
       thead.appendChild(trH);
       tabla.appendChild(thead);
@@ -1157,7 +1159,18 @@
         tdEst.appendChild(crear('span', 'badge ' + badge, op.estado));
         tr.appendChild(tdEst);
 
-        tr.appendChild(crear('td', null, op.ticketsCreados || 0));
+        var tdTick = crear('td');
+        tdTick.style.textAlign = 'center';
+        if (op.ticketsCreados && Number(op.ticketsCreados) > 0) {
+          var bTick = crear('span', 'badge-info', op.ticketsCreados + (Number(op.ticketsCreados) === 1 ? ' creado' : ' creados'));
+          bTick.style.fontWeight = 'bold';
+          tdTick.appendChild(bTick);
+        } else {
+          tdTick.textContent = '—';
+          tdTick.style.color = '#9ca3af';
+          tdTick.title = 'No requirió creación de tickets automáticos';
+        }
+        tr.appendChild(tdTick);
 
         var tdDet = crear('td');
         if (op.ultimoError) {
