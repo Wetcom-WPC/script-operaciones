@@ -495,6 +495,7 @@
         { label: 'Hora', key: 'hora' },
         { label: 'Operación', key: 'operacion' },
         { label: 'Cliente', key: 'cliente' },
+        { label: '¿Reincidente?', key: 'reincidente' },
         { label: 'Detalle Error', key: 'error' }
       ];
     } else if (logTabActivo === 'envioMails') {
@@ -576,7 +577,22 @@
         tr.appendChild(crear('td', null, log.hora));
         tr.appendChild(crear('td', null, log.operacion));
         tr.appendChild(crear('td', null, log.cliente || '-'));
-        tr.appendChild(crear('td', null, (log.error ? log.error.substring(0, 50) + '...' : '-')));
+
+        var tdReinc = crear('td');
+        tdReinc.style.textAlign = 'center';
+        if (log.reincidente) {
+          tdReinc.appendChild(crear('span', 'badge-reincidente', '⚠ SÍ'));
+        } else {
+          tdReinc.textContent = 'No';
+          tdReinc.style.color = '#9ca3af';
+        }
+        tr.appendChild(tdReinc);
+
+        var tdErr = crear('td');
+        var errTexto = log.error || '-';
+        tdErr.textContent = errTexto.length > 75 ? errTexto.substring(0, 75) + '…' : errTexto;
+        tdErr.title = errTexto;
+        tr.appendChild(tdErr);
       }
       else if (logTabActivo === 'envioMails') {
         tr.appendChild(crear('td', null, log.horaStr));
@@ -640,9 +656,38 @@
             divDetalle.appendChild(errorWrap);
           }
         } else if (logTabActivo === 'erroresScript') {
-          if (log.detalle) {
-            var pre = crear('pre', null, log.detalle);
-            divDetalle.appendChild(pre);
+          if (log.error) {
+            var errorWrap = crear('div', 'error-formateado');
+            
+            var badgesErr = crear('div', 'metadata-badges');
+            if (log.origen) {
+              var bOrigen = crear('span', 'badge-info');
+              bOrigen.innerHTML = '<strong>Origen:</strong> ' + log.origen;
+              badgesErr.appendChild(bOrigen);
+            }
+            if (log.reincidente) {
+              var bReinc = crear('span', 'badge-reincidente');
+              bReinc.textContent = '⚠ Reincidente (este error ya ocurrió con anterioridad)';
+              badgesErr.appendChild(bReinc);
+            }
+            if (badgesErr.childNodes.length > 0) {
+              errorWrap.appendChild(badgesErr);
+            }
+
+            var pre = crear('pre', null, log.error);
+            pre.style.whiteSpace = 'pre-wrap';
+            pre.style.wordBreak = 'break-word';
+            pre.style.margin = '10px 0 0 0';
+            pre.style.fontFamily = 'monospace';
+            pre.style.fontSize = '12px';
+            pre.style.color = '#dc2626';
+            pre.style.background = '#fef2f2';
+            pre.style.padding = '12px';
+            pre.style.borderRadius = '6px';
+            pre.style.border = '1px solid #fecaca';
+            errorWrap.appendChild(pre);
+            
+            divDetalle.appendChild(errorWrap);
           }
         }
         

@@ -655,14 +655,17 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
 
     // 2. Errores del Script
     resultados.erroresScript = procesarHoja("Errores del Script", function(r) {
-      let d = r[0] ? new Date(r[0]) : new Date();
+      let d = parsearFechaLog(r[0] ? (r[1] ? r[0] + ' ' + r[1] : r[0]) : new Date());
+      const reincStr = (r[6] || "").toString().trim().toLowerCase();
+      const esReinc = reincStr === "sí" || reincStr === "si" || reincStr === "true";
       return {
         hora: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'dd/MM HH:mm'),
         operacion: r[2] || "",
         origen: r[3] || "",
         cliente: r[4] || "",
         error: r[5] || "",
-        detalle: r[6] || ""
+        reincidente: esReinc,
+        diaSemana: r[7] || ""
       };
     });
 
