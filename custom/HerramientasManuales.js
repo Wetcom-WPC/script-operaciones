@@ -164,9 +164,9 @@ function manual_auditarActivadores() {
  * configuración), no en cada despliegue.
  *
  * Se configura una hora ANTES de HORA_INICIO a propósito: los activadores diarios de Google se
- * disparan en algún momento de una franja de una hora, así que uno puesto a las 7 puede caer
- * 7:55. Poniéndolo a las 6, la franja 6-7 termina siempre antes de la hora deseada y es
- * iniciarDiaOperativo() quien agenda el arranque exacto a las 7:00 (ver core/Main.js).
+ * disparan en algún momento de una franja de una hora, así que uno puesto a las 6 puede caer
+ * 6:55. Poniéndolo a las 5, la franja 5-6 termina siempre antes de la hora deseada y es
+ * iniciarDiaOperativo() quien agenda el arranque exacto a las 6:00 (ver core/Main.js).
  */
 function manual_configurarActivadorDiario() {
   const horaActivador = HORA_INICIO - 1;
