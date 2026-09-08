@@ -876,7 +876,11 @@
     var filtroBuscar = document.getElementById('filtroBuscarMatriz') ? document.getElementById('filtroBuscarMatriz').value.toLowerCase().trim() : '';
 
     var clientesFiltrados = (matrizGlobal.clientes || []).filter(function(cli) {
-      if (filtroPod && cli.pod && cli.pod.toUpperCase().replace(/\s+/g, '') !== filtroPod.replace(/\s+/g, '')) return false;
+      if (filtroPod) {
+        var p = (cli.pod || '').toUpperCase().replace(/\s+/g, '');
+        var fp = filtroPod.replace(/\s+/g, '');
+        if (p !== fp) return false;
+      }
       if (filtroEstado === 'anomalias' && cli.estadoGeneral === 'OK') return false;
       if (filtroEstado === 'ok' && cli.estadoGeneral !== 'OK') return false;
       if (filtroBuscar && cli.cliente.toLowerCase().indexOf(filtroBuscar) === -1) return false;

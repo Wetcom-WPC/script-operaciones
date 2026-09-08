@@ -864,7 +864,8 @@ function webapp_obtenerEstadoIndice() {
         const soporteKey    = row[13] ? row[13].toString().trim().toUpperCase() : "";
 
         // Omitir filas sin nombre o pruebas internas vacías
-        if (!nombreOps || nombreOps.toLowerCase().includes("testing") || nombreOps.toLowerCase().startsWith("wpc -")) {
+        const nombreBajo = nombreOps.toLowerCase();
+        if (!nombreOps || nombreBajo === "true" || nombreBajo === "false" || nombreBajo.includes("testing") || nombreBajo.startsWith("wpc -") || podVal.toUpperCase() === "WPC") {
           continue;
         }
 
@@ -1123,6 +1124,8 @@ function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
   // Filtrar filas por fecha (o últimos 7 días si es 'semana')
   const rows = (logs.estadoFinal || []).filter(function(r) {
     if (!r.cliente || r.cliente === '—' || r.cliente === '-') return false;
+    const cLow = r.cliente.toLowerCase();
+    if (cLow === "true" || cLow === "false" || cLow.includes("testing") || cLow.startsWith("wpc -") || (r.pod && r.pod.toUpperCase() === "WPC")) return false;
     if (filtroPeriodo === 'semana') return true;
     return r.fecha === fechaTarget;
   });
