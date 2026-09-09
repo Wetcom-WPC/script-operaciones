@@ -84,9 +84,14 @@ function procesarLicenciasManualLibreria(cliente, destinatario, folderId, pod) {
 
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
-  ui.createMenu('🚀 Wetcom Ops')
-    .addItem('Auditar Cliente Seleccionado', 'ejecutarClienteSeleccionado')
+  ui.createMenu('Ejecutar reporte de licencias')
+    .addItem('Auditar vSphere (Cliente Seleccionado)', 'ejecutarClienteSeleccionado')
+    .addItem('Auditar Veeam (Cliente Seleccionado)', 'ejecutarClienteSeleccionadoVeeam')
     .addToUi();
+}
+
+function ejecutarClienteSeleccionadoVeeam() {
+  AutomatizarOperaciones.ejecutarClienteSeleccionadoVeeamLic();
 }
 
 function ejecutarClienteSeleccionado() {
@@ -107,15 +112,21 @@ function ejecutarClienteSeleccionado() {
     return;
   }
   
-  // Columna A: Destinatario | B: PODs | C: Cliente | D: ID Carpeta RVTools
-  const rangoFila = hoja.getRange(fila, 1, 1, 4).getValues()[0];
+  // Columna A: Destinatario | B: PODs | C: Cliente | D: ID Carpeta vSphere | E: ID Carpeta Veeam | F: Activo
+  const rangoFila = hoja.getRange(fila, 1, 1, 6).getValues()[0];
   const emailDestino = rangoFila[0];
   const pod = rangoFila[1];
   const cliente = rangoFila[2];
   const folderId = rangoFila[3];
+  const activo = (rangoFila[5] || "").toString().trim().toUpperCase();
   
   if (!cliente || !emailDestino || !folderId) {
-    ui.alert("⚠️ Fila Incompleta", `Faltan datos clave en la fila ${fila} (Cliente, Destinatario o ID de Carpeta).`, ui.ButtonSet.OK);
+    ui.alert("⚠️ Fila Incompleta", `Faltan datos clave en la fila ${fila} (Cliente, Destinatario o ID de Carpeta vSphere).`, ui.ButtonSet.OK);
+    return;
+  }
+
+  if (activo === "NO") {
+    ui.alert("⚠️ Cliente Inactivo", `El cliente ${cliente} está marcado como inactivo (Columna F). No se ejecutará la auditoría.`, ui.ButtonSet.OK);
     return;
   }
   
@@ -666,4 +677,26 @@ function enviarAlertaSlackDetallada(cliente, alertas) {
   try {
     UrlFetchApp.fetch(SLACK_WEBHOOK_URL, { method: "post", contentType: "application/json", payload: JSON.stringify({ text: msg }) });
   } catch (e) {}
+}
+// --- INTEGRACION VEEAM LICENCIAS (LIBRERIA) ---
+function instalarTriggerVeeam() {
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => {
+    if (t.getHandlerFunction() === 'gatilloDiarioVeeam') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('gatilloDiarioVeeam').timeBased().everyDays(1).atHour(8).create();
+  console.log("✅ Trigger Diario Veeam instalado a las 8 AM.");
+}
+
+function gatilloDiarioVeeam() {
+  if (esUltimoDiaHabilMes()) {
+    console.log("📅 HOY ES EL ÚLTIMO DÍA HÁBIL DEL MES. Iniciando auditoría Veeam desde Indice...");
+    AutomatizarOperaciones.procesarTodasLasLicenciasVeeam({ nuevoCiclo: true });
+  } else {
+    console.log("💤 Hoy no es el último día hábil del mes. Abortando ejecución Veeam.");
+  }
+}
+
+function continuarProcesamientoVeeamLic() {
+  AutomatizarOperaciones.continuarProcesamientoVeeamLic();
 }
