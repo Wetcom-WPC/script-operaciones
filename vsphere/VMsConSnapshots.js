@@ -194,26 +194,67 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 
       if (matchedSopRule && matchedSopRule.criterio === 'considerar') {
          // → Ticket SOPORTE con umbrales personalizados
-         let sizeLimit = matchedSopRule.size > 0 ? matchedSopRule.size : Infinity;
-         let ageLimit = matchedSopRule.age > 0 ? matchedSopRule.age : Infinity;
-         let qtyLimit = matchedSopRule.qty > 0 ? matchedSopRule.qty : Infinity;
-         
          let rowBreaksRule = false;
-         if (age >= ageLimit) { detectedReasonsSoporte.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
-         if (count >= qtyLimit) { detectedReasonsSoporte.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
-         
-         const esRelativo = matchedSopRule.sizeType === 'porcentaje' || matchedSopRule.sizeType === 'relativo';
-         if (esRelativo) {
-            // PUNTO 1: Para tamaño en Soporte exigir al menos 24 hrs de vida (age >= 1)
-            if (usedPercent >= sizeLimit && sizeLimit !== Infinity && age >= 1) {
-               detectedReasonsSoporte.add(`Tamaño Relativo >= ${sizeLimit}% (Antigüedad >= 1 día)`); 
+         if (matchedSopRule.isCompoundRule) {
+            // MODO AND: Todas las filas de límites del mismo ID deben cumplirse simultáneamente
+            const reasonsGroup = [];
+            const allLimitsBroken = matchedSopRule.limits.every(limit => {
+               let broken = false;
+               if (limit.age !== null && limit.age > 0) {
+                  if (age >= limit.age) {
+                     reasonsGroup.push(`Antigüedad >= ${limit.age} días`);
+                     broken = true;
+                  }
+               }
+               if (limit.qty !== null && limit.qty > 0) {
+                  if (count >= limit.qty) {
+                     reasonsGroup.push(`Cantidad >= ${limit.qty}`);
+                     broken = true;
+                  }
+               }
+               if (limit.size !== null && limit.size > 0) {
+                  const esRelativo = limit.sizeType === 'porcentaje' || limit.sizeType === 'relativo';
+                  if (esRelativo) {
+                     if (usedPercent >= limit.size && age >= 1) {
+                        reasonsGroup.push(`Tamaño Relativo >= ${limit.size}% (Antigüedad >= 1 día)`);
+                        broken = true;
+                     }
+                  } else {
+                     if (space >= limit.size && age >= 1) {
+                        reasonsGroup.push(`Tamaño Absoluto >= ${limit.size} GB (Antigüedad >= 1 día)`);
+                        broken = true;
+                     }
+                  }
+               }
+               return broken;
+            });
+            if (allLimitsBroken) {
+               reasonsGroup.forEach(r => detectedReasonsSoporte.add(r));
                rowBreaksRule = true;
+               Logger.log('[DEBUG EVAL] -> VM asignada a SOPORTE por regla compuesta AND (' + reasonsGroup.join(' Y ') + '): ' + vmName);
             }
          } else {
-            // PUNTO 1: Para tamaño en Soporte exigir al menos 24 hrs de vida (age >= 1)
-            if (space >= sizeLimit && sizeLimit !== Infinity && age >= 1) {
-               detectedReasonsSoporte.add(`Tamaño Absoluto >= ${sizeLimit} GB (Antigüedad >= 1 día)`); 
-               rowBreaksRule = true;
+            // MODO INDIVIDUAL (1 fila): se evalúa con OR
+            let sizeLimit = matchedSopRule.size > 0 ? matchedSopRule.size : Infinity;
+            let ageLimit = matchedSopRule.age > 0 ? matchedSopRule.age : Infinity;
+            let qtyLimit = matchedSopRule.qty > 0 ? matchedSopRule.qty : Infinity;
+            
+            if (age >= ageLimit) { detectedReasonsSoporte.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
+            if (count >= qtyLimit) { detectedReasonsSoporte.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
+            
+            const esRelativo = matchedSopRule.sizeType === 'porcentaje' || matchedSopRule.sizeType === 'relativo';
+            if (esRelativo) {
+               // PUNTO 1: Para tamaño en Soporte exigir al menos 24 hrs de vida (age >= 1)
+               if (usedPercent >= sizeLimit && sizeLimit !== Infinity && age >= 1) {
+                  detectedReasonsSoporte.add(`Tamaño Relativo >= ${sizeLimit}% (Antigüedad >= 1 día)`); 
+                  rowBreaksRule = true;
+               }
+            } else {
+               // PUNTO 1: Para tamaño en Soporte exigir al menos 24 hrs de vida (age >= 1)
+               if (space >= sizeLimit && sizeLimit !== Infinity && age >= 1) {
+                  detectedReasonsSoporte.add(`Tamaño Absoluto >= ${sizeLimit} GB (Antigüedad >= 1 día)`); 
+                  rowBreaksRule = true;
+               }
             }
          }
          if (rowBreaksRule) soporteAlerts.push(row);
@@ -250,24 +291,65 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 
             if (matchedOpsRule && matchedOpsRule.criterio === 'considerar') {
                // Umbrales OPS personalizados
-               let sizeLimit = matchedOpsRule.size > 0 ? matchedOpsRule.size : Infinity;
-               let ageLimit  = matchedOpsRule.age  > 0 ? matchedOpsRule.age  : Infinity;
-               let qtyLimit  = matchedOpsRule.qty  > 0 ? matchedOpsRule.qty  : Infinity;
-               
                let rowBreaksRule = false;
-               if (age   >= ageLimit) { detectedReasonsOps.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
-               if (count >= qtyLimit) { detectedReasonsOps.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
-               
-               const esRelativo = matchedOpsRule.sizeType === 'porcentaje' || matchedOpsRule.sizeType === 'relativo';
-               if (esRelativo) {
-                  if (usedPercent >= sizeLimit && sizeLimit !== Infinity) { 
-                     detectedReasonsOps.add(`Tamaño Relativo >= ${sizeLimit}%`); 
-                     rowBreaksRule = true; 
+               if (matchedOpsRule.isCompoundRule) {
+                  // MODO AND: Todas las filas de límites del mismo ID deben cumplirse simultáneamente
+                  const reasonsGroup = [];
+                  const allLimitsBroken = matchedOpsRule.limits.every(limit => {
+                     let broken = false;
+                     if (limit.age !== null && limit.age > 0) {
+                        if (age >= limit.age) {
+                           reasonsGroup.push(`Antigüedad >= ${limit.age} días`);
+                           broken = true;
+                        }
+                     }
+                     if (limit.qty !== null && limit.qty > 0) {
+                        if (count >= limit.qty) {
+                           reasonsGroup.push(`Cantidad >= ${limit.qty}`);
+                           broken = true;
+                        }
+                     }
+                     if (limit.size !== null && limit.size > 0) {
+                        const esRelativo = limit.sizeType === 'porcentaje' || limit.sizeType === 'relativo';
+                        if (esRelativo) {
+                           if (usedPercent >= limit.size) {
+                              reasonsGroup.push(`Tamaño Relativo >= ${limit.size}%`);
+                              broken = true;
+                           }
+                        } else {
+                           if (space >= limit.size) {
+                              reasonsGroup.push(`Tamaño Absoluto >= ${limit.size} GB`);
+                              broken = true;
+                           }
+                        }
+                     }
+                     return broken;
+                  });
+                  if (allLimitsBroken) {
+                     reasonsGroup.forEach(r => detectedReasonsOps.add(r));
+                     rowBreaksRule = true;
+                     Logger.log('[DEBUG EVAL] -> VM asignada a OPS por regla compuesta AND (' + reasonsGroup.join(' Y ') + '): ' + vmName);
                   }
                } else {
-                  if (space >= sizeLimit && sizeLimit !== Infinity) { 
-                     detectedReasonsOps.add(`Tamaño Absoluto >= ${sizeLimit} GB`); 
-                     rowBreaksRule = true; 
+                  // MODO INDIVIDUAL (1 fila): se evalúa con OR
+                  let sizeLimit = matchedOpsRule.size > 0 ? matchedOpsRule.size : Infinity;
+                  let ageLimit  = matchedOpsRule.age  > 0 ? matchedOpsRule.age  : Infinity;
+                  let qtyLimit  = matchedOpsRule.qty  > 0 ? matchedOpsRule.qty  : Infinity;
+                  
+                  if (age   >= ageLimit) { detectedReasonsOps.add(`Antigüedad >= ${ageLimit} días`); rowBreaksRule = true; }
+                  if (count >= qtyLimit) { detectedReasonsOps.add(`Cantidad >= ${qtyLimit}`); rowBreaksRule = true; }
+                  
+                  const esRelativo = matchedOpsRule.sizeType === 'porcentaje' || matchedOpsRule.sizeType === 'relativo';
+                  if (esRelativo) {
+                     if (usedPercent >= sizeLimit && sizeLimit !== Infinity) { 
+                        detectedReasonsOps.add(`Tamaño Relativo >= ${sizeLimit}%`); 
+                        rowBreaksRule = true; 
+                     }
+                  } else {
+                     if (space >= sizeLimit && sizeLimit !== Infinity) { 
+                        detectedReasonsOps.add(`Tamaño Absoluto >= ${sizeLimit} GB`); 
+                        rowBreaksRule = true; 
+                     }
                   }
                }
                if (rowBreaksRule) {
@@ -504,8 +586,32 @@ function findMatchingSopRule(reportRow, headers, exceptions) {
     });
 
     if (allConditionsMet) {
+      const rowsWithLimits = ruleGroup.filter(r => 
+        (r.ageLimit !== null && r.ageLimit !== undefined && r.ageLimit !== '') ||
+        (r.sizeLimit !== null && r.sizeLimit !== undefined && r.sizeLimit !== '') ||
+        (r.qtyLimit !== null && r.qtyLimit !== undefined && r.qtyLimit !== '')
+      );
+
+      const isCompoundRule = rowsWithLimits.length > 1;
       const c = ruleGroup[0];
-      if (c) return { age: c.ageLimit, size: c.sizeLimit, qty: c.qtyLimit, sizeType: c.sizeType || '', criterio: (c.criterio || '').toLowerCase() };
+      const matchingCriterio = ruleGroup.find(r => r.criterio && r.criterio.trim() !== '');
+      const criterioGroup = (matchingCriterio ? matchingCriterio.criterio : (c ? c.criterio : '') || '').toLowerCase();
+
+      return {
+        exceptionId: exceptionId,
+        isCompoundRule: isCompoundRule,
+        limits: rowsWithLimits.map(r => ({
+          age: (r.ageLimit !== null && r.ageLimit !== undefined && r.ageLimit !== '') ? Number(r.ageLimit) : null,
+          size: (r.sizeLimit !== null && r.sizeLimit !== undefined && r.sizeLimit !== '') ? Number(r.sizeLimit) : null,
+          qty: (r.qtyLimit !== null && r.qtyLimit !== undefined && r.qtyLimit !== '') ? Number(r.qtyLimit) : null,
+          sizeType: (r.sizeType || '').toLowerCase()
+        })),
+        age: c ? c.ageLimit : null,
+        size: c ? c.sizeLimit : null,
+        qty: c ? c.qtyLimit : null,
+        sizeType: c ? (c.sizeType || '') : '',
+        criterio: criterioGroup
+      };
     }
   }
   return null;
