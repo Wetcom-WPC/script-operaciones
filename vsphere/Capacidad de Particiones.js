@@ -125,7 +125,7 @@ class PartitionProcessor extends MailProcessor {
         });
         addCommentToJiraTicket(existingTicketKey, commentText);
       } else {
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
         attStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
         
@@ -147,7 +147,7 @@ class PartitionProcessor extends MailProcessor {
       } else {
         summary = Partition_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Se detectaron ${alertCount} particiones críticas en el reporte **${attachmentName}**. Se adjunta el archivo filtrado.\n\n`;
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       }
       

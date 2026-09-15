@@ -76,7 +76,7 @@ class StorageDRSProcessor extends MailProcessor {
         if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
         return { status: 'SUCCESS' };
       } else {
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
         const attachmentStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
 
@@ -106,7 +106,7 @@ class StorageDRSProcessor extends MailProcessor {
       } else {
         summary = SDRS_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Se encontraron ${alertCount} clusters con una configuración de Storage DRS no adecuada. Se adjunta el reporte completo para su revisión.`;
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       }
       

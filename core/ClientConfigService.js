@@ -2,7 +2,8 @@
  * REEMPLAZA ESTA FUNCIÓN en FuncionesCompartidas.gs
  * * Busca la configuración de un cliente por su NOMBRE (Columna B) en el Índice Maestro.
  * CORREGIDA para ser inmune a espacios en blanco (con .trim()).
- */const DRP_CLIENT_NAME_MAP = {
+ */
+const DRP_CLIENT_NAME_MAP = {
   "BERSA": "Operaciones Banco de Entre Rios",
   "SANTA FE": "Operaciones Banco Santa Fe",
   "SAN JUAN": "Operaciones Banco de San Juan",
@@ -177,6 +178,25 @@ function extractDRPClientName(emailSubject, baseSubject = "") {
 }
 
 /**
+ * Extrae el nombre corto del banco para reportes DRP (ej: "BERSA", "Santa Cruz", "San Juan", "Santa Fe").
+ */
+function extractDRPBankSuffix(emailSubject, clientName = "") {
+  const subjUpper = String(emailSubject || '').toUpperCase();
+  if (subjUpper.includes("BERSA")) return "BERSA";
+  if (subjUpper.includes("SANTA CRUZ")) return "Santa Cruz";
+  if (subjUpper.includes("SAN JUAN")) return "San Juan";
+  if (subjUpper.includes("SANTA FE")) return "Santa Fe";
+
+  const clientUpper = String(clientName || '').toUpperCase();
+  if (clientUpper.includes("ENTRE RIOS") || clientUpper.includes("BERSA")) return "BERSA";
+  if (clientUpper.includes("SANTA CRUZ")) return "Santa Cruz";
+  if (clientUpper.includes("SAN JUAN")) return "San Juan";
+  if (clientUpper.includes("SANTA FE")) return "Santa Fe";
+
+  return "";
+}
+
+/**
  * Resuelve la configuración de un cliente por su NOMBRE (columna B del Índice Maestro).
  *
  * Es el único resolutor por nombre del proyecto, así que la red de seguridad de TESTING vive
@@ -244,7 +264,7 @@ function getClientConfigByName(clientName, operationName, soporte = false) {
     if (!exceptionSheet) {
       Logger.log(`ADVERTENCIA: No se encontró la PESTAÑA de excepciones "${operationName}" en el archivo del cliente ${clientNameFound}. Se continuará sin excepciones.`);
       if (soporte) {
-        return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue, exceptionFileId };
+        return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId };
       }
       return { exceptions: {}, clientName: clientNameFound.trim(), jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId };
     }
@@ -254,7 +274,7 @@ function getClientConfigByName(clientName, operationName, soporte = false) {
     if (soporte) {
       return {
         exceptions: groupedExceptions, clientNameSop, jiraProjectKeySop, serviceDeskIdSop,
-        requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue, exceptionFileId
+        requestTypeIdSop, tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId
       };
     }
 
@@ -353,14 +373,14 @@ function getClientConfig(senderEmail, operationName, soporte = false) {
       return { exceptions: {}, clientName, jiraProjectKey, serviceDeskId, requestTypeId, tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId };
     } else if (!exceptionSheet && soporte) {
       Logger.log(`ADVERTENCIA: No se encontró la PESTAÑA de excepciones "${operationName}" en el archivo del cliente ${clientName}. Se continuará sin excepciones.`);
-      return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue, exceptionFileId };
+      return { exceptions: {}, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, requestTypeIdSop, tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId };
     }
 
     const groupedExceptions = procesarReglasExcepciones(rawExceptionData, exceptionSheet);
     if (soporte){
       return {
       exceptions: groupedExceptions, clientNameSop, jiraProjectKeySop, serviceDeskIdSop, 
-      requestTypeIdSop, tecnologia: "Veeam Backup & Replication", origen: origenValue, exceptionFileId
+      requestTypeIdSop, tecnologia: tecnologiaValue, origen: origenValue, exceptionFileId
       };
     }
     return {

@@ -92,7 +92,7 @@ class EspacioEnDatastoresProcessor extends MailProcessor {
         if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
         return { status: 'SUCCESS' };
       } else {
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
         const attachmentResult = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
 
@@ -122,7 +122,7 @@ class EspacioEnDatastoresProcessor extends MailProcessor {
       } else {
         summary = DS_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Se encontraron ${alertCount} datastores con un espacio utilizado >= ${DS_THRESHOLD}%. Se adjunta el reporte condensado.`;
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       }
       

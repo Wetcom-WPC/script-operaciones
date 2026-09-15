@@ -166,6 +166,42 @@ const HORARIO_OPERATIVO_FIN = 15;     // exclusive (hasta las 14:59)
 const HORARIO_OPERATIVO_TZ = "America/Argentina/Buenos_Aires";
 
 /**
+ * ¿Hoy es feriado según el calendario de Alarmas WETCOM?
+ *
+ * Vive acá, al lado de estaEnHorarioOperativo(), porque hasta el 02/09/2026 estaba
+ * COPIADA en tres archivos (core/Main.js, reports/AuditorTPs.js y
+ * reports/AuditorMailyRVTools.js). Las tres hacían lo mismo, pero solo una logueaba el
+ * motivo cuando el calendario no respondía: arreglar una y no las otras era cuestión de
+ * tiempo, que es el patrón de lógica duplicada de AGENTS.md §5.
+ *
+ * Ante cualquier problema devuelve false —y lo deja logueado, nunca en silencio (§7)—:
+ * frenar la operación de todo un día porque no se pudo leer un calendario es peor que
+ * procesar de más en un feriado.
+ *
+ * El ID del calendario sale de la Script Property HOLIDAYS_CALENDAR_ID.
+ *
+ * @returns {boolean}
+ */
+function esFeriadoHoy() {
+  const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID");
+  if (!calendarId) {
+    Logger.log("⚠️ No está configurada la Script Property HOLIDAYS_CALENDAR_ID: se asume que hoy NO es feriado.");
+    return false;
+  }
+  try {
+    const calendario = CalendarApp.getCalendarById(calendarId);
+    if (!calendario) {
+      Logger.log(`⚠️ No se pudo acceder al calendario de feriados (${calendarId}). Revisar el ID y los permisos. Se asume que hoy NO es feriado.`);
+      return false;
+    }
+    return calendario.getEventsForDay(new Date()).length > 0;
+  } catch (error) {
+    Logger.log(`⚠️ Error consultando el calendario de feriados: ${error.message}. Se asume que hoy NO es feriado.`);
+    return false;
+  }
+}
+
+/**
  * Indica si el momento actual está dentro de la ventana operativa (05:00–15:00 hora Argentina).
  * @returns {boolean} `true` si se debe ejecutar, `false` si está fuera de horario.
  */

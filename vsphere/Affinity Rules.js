@@ -12,8 +12,8 @@ const AFFINITY_EMAIL_SUBJECT = "Affinity Rules";
 const AFFINITY_FILENAME_MATCH = ".json";
 const AFFINITY_SCHEDULED_TASK_NAME_TO_CLOSE = "Affinity Rules";
 const AFFINITY_ROW_LIMIT_FOR_TABLE = 10;
-const AFFINITY_JIRA_TICKET_SUMMARY_TABLE = "Se detectaron VMs sin Affinity Rules configuradas";
-const AFFINITY_JIRA_TICKET_SUMMARY_ATTACHMENT = "Se detectaron VMs sin Affinity Rules configuradas";
+const AFFINITY_JIRA_TICKET_SUMMARY_TABLE = "Se detectaron incumplimientos/inconsistencias en las reglas de afinidad";
+const AFFINITY_JIRA_TICKET_SUMMARY_ATTACHMENT = "Se detectaron incumplimientos/inconsistencias en las reglas de afinidad";
 
 
 class AffinityRulesProcessor extends MailProcessor {
@@ -40,14 +40,18 @@ class AffinityRulesProcessor extends MailProcessor {
       
       if (clientConfig) {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).` });
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
-        if (typeof clientConfig !== 'undefined' && clientConfig) {
-      const nombreArchivo = this.operationName + " - OK.txt";
-      this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
-      this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
-    }
-    return { status: 'SUCCESS' };
+      if (typeof clientConfig !== 'undefined' && clientConfig) {
+        let nombreArchivo = this.operationName + " - OK.txt";
+        if (this.isDRP) {
+          const banco = extractDRPBankSuffix(emailSubject, clientConfig.clientName);
+          nombreArchivo = `DRP - ${this.operationName}${banco ? " " + banco : ""} - OK.txt`;
+        }
+        this.extractedBlobs = [Utilities.newBlob("Reporte procesado exitosamente sin alertas.", "text/plain", nombreArchivo)];
+        this.ejecutarPasoDrive(message, clientConfig.clientName, summaryReport, { status: 'SUCCESS' });
+      }
+      return { status: 'SUCCESS' };
     }
     
     return super.processSingleMessage(message, summaryReport);
@@ -57,6 +61,10 @@ class AffinityRulesProcessor extends MailProcessor {
     const emailSubject = message.getSubject();
     const subjectLower = emailSubject.toLowerCase();
     this.isDRP = false;
+
+    // Lado AVS del reporte: sin esto el cierre usa el nombre sin prefijo y apunta siempre
+    // a la Tarea Programada no-AVS, aunque el reporte sea del lado AVS.
+    const esAVS = esReporteAVS(emailSubject, attachment);
 
     const drpClientName = extractDRPClientName(emailSubject, "Affinity Rules");
     if (drpClientName) {
@@ -72,6 +80,7 @@ class AffinityRulesProcessor extends MailProcessor {
       config = getClientConfig(sender, this.operationName);
       this.isDRP = false;
     }
+    if (config) config.isAVS = esAVS;
     return config;
   }
 
@@ -140,7 +149,7 @@ class AffinityRulesProcessor extends MailProcessor {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
       } else {
-        const newFileName = attachmentName.replace(/\.json$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
         attachmentStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
 
@@ -154,7 +163,7 @@ class AffinityRulesProcessor extends MailProcessor {
       }
       
       if (attachmentStatus.status === 'SUCCESS') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: attachmentStatus.status };
 
@@ -169,7 +178,7 @@ class AffinityRulesProcessor extends MailProcessor {
       } else {
         summary = this.jiraSummaryAttachment;
         description = `Se encontraron ${alertCount} VMs sin Affinity Rules configuradas. Se adjunta el reporte filtrado.`;
-        const newFileName = attachmentName.replace(/\.json$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       }
       
@@ -183,7 +192,7 @@ class AffinityRulesProcessor extends MailProcessor {
       }
       
       if (creationResult.status !== 'FAILURE' && creationResult.status !== 'HTTP_500') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: creationResult.status };
     }

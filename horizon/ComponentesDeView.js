@@ -76,7 +76,7 @@ class ComponentesDeViewProcessor extends MailProcessor {
         addCommentToJiraTicket(existingTicketKey, commentText);
         summaryReport.exitos.push({ mensaje: `Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con ${alertCount} alertas.` });
       } else {
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
         attachmentStatus = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
         if (attachmentStatus.status === 'SUCCESS') {
@@ -110,7 +110,7 @@ class ComponentesDeViewProcessor extends MailProcessor {
       } else {
         summary = VIEW_JIRA_TICKET_SUMMARY_ATTACHMENT;
         description = `Se encontraron ${alertCount} componentes de View con alto uso de disco. Se adjunta el reporte.`;
-        const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+        const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
         xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
       }
       const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, this.operationName);

@@ -469,12 +469,38 @@ function detenerTodosLosActivadores() {
   Logger.log("✅ Ciclo detenido y reseteado con éxito.");
 }
 
+/**
+ * Repone la Script Property DRIVE_RVTOOLS_ZOMB_FOLDER_ID si falta.
+ *
+ * OJO: esta función escribe configuración real. AGENTS.md §9 marca como bandera roja toda
+ * función que haga setProperty() con un valor literal en el código, justamente porque
+ * ejecutarla por error pisa la configuración productiva — ya pasó con
+ * configurarEntornoDeTesting(), que sobrescribía Script Properties reales con placeholders y
+ * terminó eliminada.
+ *
+ * Por eso NO pisa un valor existente: si la property ya tiene otro ID, avisa y no toca nada.
+ * Para cambiarlo a propósito hay que editarlo en Configuración del Proyecto → Propiedades de la
+ * Secuencia de Comandos, que es donde se ve lo que se está haciendo.
+ */
 function arreglarVariableDeDrive() {
   const scriptProps = PropertiesService.getScriptProperties();
-  
-  // Reemplaza "ACA_VA_EL_ID" por el ID real de la carpeta de Google Drive
-  scriptProps.setProperty("DRIVE_RVTOOLS_ZOMB_FOLDER_ID", "1OBjILy44I8DaYhRmYL3Sl-XHvrp9GAGB");
-  
-  Logger.log("✅ Variable configurada con éxito.");
-  Logger.log("Valor actual: " + scriptProps.getProperty("DRIVE_RVTOOLS_ZOMB_FOLDER_ID"));
+  const CLAVE = "DRIVE_RVTOOLS_ZOMB_FOLDER_ID";
+  const ID_CARPETA_ZOMBIES = "1OBjILy44I8DaYhRmYL3Sl-XHvrp9GAGB";
+
+  const actual = scriptProps.getProperty(CLAVE);
+
+  if (actual === ID_CARPETA_ZOMBIES) {
+    Logger.log(`✅ ${CLAVE} ya está configurada con el valor esperado. No se toca nada.`);
+    return;
+  }
+
+  if (actual) {
+    Logger.log(`⛔ ${CLAVE} ya tiene un valor DISTINTO ("${actual}") y NO se va a pisar.`);
+    Logger.log(`   Si de verdad hay que cambiarlo a "${ID_CARPETA_ZOMBIES}", hacerlo a mano desde`);
+    Logger.log(`   Configuración del Proyecto → Propiedades de la Secuencia de Comandos.`);
+    return;
+  }
+
+  scriptProps.setProperty(CLAVE, ID_CARPETA_ZOMBIES);
+  Logger.log(`✅ ${CLAVE} estaba vacía y se configuró en "${ID_CARPETA_ZOMBIES}".`);
 }

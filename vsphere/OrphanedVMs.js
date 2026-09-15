@@ -147,7 +147,7 @@ class OrphanedVMsProcessor extends MailProcessor {
   handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
     const alertCount = reasonsText;
     
-    const baseName = attachmentName.replace(/\.(xlsx|csv|zip)$/i, "");
+    const baseName = attachmentName.replace(/\.(xlsx|csv|xls|json|zip)$/i, "");
     const newFileName = `${baseName} - FILTRADO.xlsx`;
     const xlsxBlob = generateStyledReportBlob(finalAlerts, newFileName, [], "VMs");
     
@@ -323,28 +323,6 @@ function convertOrphanedExcelToData(blob) {
       try { Drive.Files.update({trashed: true}, tempFileId); } catch (e) {}
     }
   }
-}
-
-function findTargetReportTicket(summary, projectKey) {
-  const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
-  let jql = `summary ~ "${summary.replace(/"/g, '\\"')}" AND statusCategory != "Done"`;
-  if (projectKey) jql += ` AND project = "${projectKey}"`;
-  jql += ` AND issuetype != "Tarea Programada" ORDER BY created DESC`;
-  
-  const payload = { "jql": jql, "maxResults": 1, "fields": ["key"] };
-  const options = {
-    "method": "post", "contentType": "application/json",
-    "headers": { "Authorization": `Basic ${JIRA_AUTH_TOKEN_BASE_64}` },
-    "payload": JSON.stringify(payload), "muteHttpExceptions": true
-  };
-  try {
-    const response = fetchWithRetries(endpoint, options);
-    if (response.getResponseCode() === 200) {
-      const data = JSON.parse(response.getContentText());
-      if (data.issues && data.issues.length > 0) return data.issues[0].key;
-    }
-    return null;
-  } catch (e) { return null; }
 }
 
 function createInternalTicketLocal(summary, description, attachmentBlob, clientConfig) {

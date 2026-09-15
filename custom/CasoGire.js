@@ -217,7 +217,7 @@ function esFilaExceptuada(fila, headers, reglas) {
 
 function limpiarNombreReporte(fileName) {
   // 1. Quitar extensión (.xlsx)
-  let nombre = fileName.replace(/\.xlsx$/i, '');
+  let nombre = fileName.replace(/\.(xlsx|csv|xls|json)$/i, '');
 
   // 2. LIMPIEZA TOTAL DE PREFIJOS NUMÉRICOS
   // La Regex ^[\d\-\s]+ significa:

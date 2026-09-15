@@ -299,31 +299,6 @@ function enviarAlertaSlackPorPod(webhookUrl, mensaje) {
 }
 
 /**
- * Verifica si hoy hay un evento creado en el calendario de feriados.
- */
-function esFeriadoHoy() {
-  // ATENCIÓN: Reemplazá esto por el ID real de tu calendario de Alarmas Wetcom
-  const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID"); 
-  
-  try {
-    const calendario = CalendarApp.getCalendarById(calendarId);
-    if (!calendario) {
-      Logger.log("⚠️ ATENCIÓN: No se pudo acceder al calendario. Revisar el ID.");
-      return false; // Si hay un error con el ID, asume que NO es feriado para no frenar la empresa.
-    }
-    
-    const hoy = new Date();
-    const eventosDeHoy = calendario.getEventsForDay(hoy);
-    
-    return eventosDeHoy.length > 0;
-    
-  } catch (error) {
-    Logger.log("⚠️ Error al chequear el calendario de feriados: " + error.message);
-    return false; // Ante la duda, que corran las operaciones.
-  }
-}
-
-/**
  * ================================================================
  * AUDITOR DE CARPETAS RVTOOLS EN DRIVE
  * Verifica, cliente por cliente, que exista dentro de su carpeta de

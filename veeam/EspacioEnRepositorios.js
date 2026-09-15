@@ -161,7 +161,7 @@ class EspacioEnRepositoriosProcessor extends MailProcessor {
   }
 
   findExistingTicket(clientConfig) {
-    return findTargetReportTicketLocal(REPO_SPACE_TICKET_SUMMARY, clientConfig.jiraProjectKey);
+    return findTargetReportTicket(REPO_SPACE_TICKET_SUMMARY, clientConfig.jiraProjectKey);
   }
 
   handleNoAlerts(existingTicketKey, clientConfig, summaryReport) {
@@ -177,7 +177,7 @@ class EspacioEnRepositoriosProcessor extends MailProcessor {
 
   handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
     const alertCount = finalAlerts.length;
-    const newFileName = attachmentName.replace(/\.xlsx$/i, " - FILTRADO.xlsx");
+    const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, " - FILTRADO.xlsx");
     
     // El método `generateStyledReportBlob` lo espera con la cabecera incluida
     const xlsxBlob = generateStyledReportBlob([headers, ...finalAlerts], newFileName, [], "Repository: Name");
@@ -220,36 +220,6 @@ function processRepositorySpaceEmails() {
 }
 
 // --- FUNCIONES LOCALES ---
-
-/**
- * Función local para buscar tickets ignorando "Tarea Programada".
- */
-function findTargetReportTicketLocal(summary, projectKey) {
-  const endpoint = `${JIRA_DOMAIN}/rest/api/3/search/jql`;
-  
-  let jql = `summary ~ "${summary.replace(/"/g, '\\"')}" AND statusCategory != "Done"`;
-  if (projectKey) jql += ` AND project = "${projectKey}"`;
-  
-  // Excluir tarea interna
-  jql += ` AND issuetype != "Tarea Programada"`;
-  
-  jql += " ORDER BY created DESC";
-  
-  const payload = { "jql": jql, "maxResults": 1, "fields": ["key"] };
-  const options = {
-    "method": "post", "contentType": "application/json",
-    "headers": { "Authorization": `Basic ${JIRA_AUTH_TOKEN_BASE_64}` },
-    "payload": JSON.stringify(payload), "muteHttpExceptions": true
-  };
-  try {
-    const response = fetchWithRetries(endpoint, options);
-    if (response.getResponseCode() === 200) {
-      const data = JSON.parse(response.getContentText());
-      if (data.issues && data.issues.length > 0) return data.issues[0].key;
-    }
-    return null;
-  } catch (e) { return null; }
-}
 
 /**
  * Filtra los repositorios detectados en el reporte.
@@ -347,6 +317,10 @@ function convertRepoExcelToDataLocal(blob) {
   }
 }
 
-function processEspacioRepositoriosEmails() {
-  new EspacioRepositoriosProcessor().processEmails();
-}
+// Acá vivía processEspacioRepositoriosEmails(), que hacía
+// `new EspacioRepositoriosProcessor()` — una clase que NO EXISTE (la real es
+// EspacioEnRepositoriosProcessor, con el "En"). Cualquier invocación tiraba
+// ReferenceError. Era además un duplicado muerto de processRepositorySpaceEmails(), que
+// está unas líneas más arriba, hace lo mismo con el nombre correcto y es la que figura
+// en el registro de core/Main.js. No la referenciaba nadie: ni el registro, ni otro
+// archivo, ni la documentación. Se elimina.

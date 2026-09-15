@@ -143,17 +143,3 @@ function enviarMensajeSlack(webhookUrl, texto) {
   }
 }
 
-function esFeriadoHoy() {
-  const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID"); 
-  try {
-    const calendario = CalendarApp.getCalendarById(calendarId);
-    if (!calendario) return false;
-    const hoy = new Date();
-    const eventosDeHoy = calendario.getEventsForDay(hoy);
-    return eventosDeHoy.length > 0;
-  } catch (error) {
-    return false;
-  }
-}
-
-

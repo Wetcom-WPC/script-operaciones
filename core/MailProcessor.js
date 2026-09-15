@@ -440,14 +440,26 @@ class MailProcessor {
   cerrarTareaProgramadaSiCorresponde(clientConfig, summaryReport) {
     if (!this.scheduledTaskName) return { status: 'SUCCESS' };
 
-    const resultado = buscarYCerrarTareaProgramada(this.scheduledTaskName, clientConfig, false);
+    // El lado AVS tiene su PROPIA Tarea Programada ("AVS - <nombre>"). Los processors que
+    // sobrescriben handleAlerts ya lo resolvían por su cuenta, pero este camino —el de un
+    // reporte que llega LIMPIO— cerraba siempre la del parque común, aunque el reporte fuera
+    // AVS. El 15/09/2026 se vio con Macro: el reporte de AVS llega limpio todos los días
+    // (sus filas son todas snapshots de templates, que se ignoran por regla de negocio), así
+    // que cada mañana cerraba la TP "VMs con snapshots" del parque común en vez de la suya.
+    //
+    // Va acá y no en cada processor porque es el camino compartido por todos (AGENTS.md §5).
+    // Para los processors que no marcan `isAVS`, nombreTareaSegunAVS devuelve el nombre tal
+    // cual, así que no cambia nada para ellos.
+    const nombreTarea = nombreTareaSegunAVS(this.scheduledTaskName, clientConfig);
+
+    const resultado = buscarYCerrarTareaProgramada(nombreTarea, clientConfig, false);
     const estado = resultado && resultado.status ? resultado.status : 'SIN_RESPUESTA';
 
     if (estado === 'SUCCESS') {
       summaryReport.tareasCerradas++;
       if (!summaryReport.tareasCerradasDetalle) summaryReport.tareasCerradasDetalle = [];
-      summaryReport.tareasCerradasDetalle.push(`${this.scheduledTaskName} (${clientConfig.clientName})`);
-      Logger.log(`[${this.operationName}] Tarea programada "${this.scheduledTaskName}" cerrada para ${clientConfig.clientName}.`);
+      summaryReport.tareasCerradasDetalle.push(`${nombreTarea} (${clientConfig.clientName})`);
+      Logger.log(`[${this.operationName}] Tarea programada "${nombreTarea}" cerrada para ${clientConfig.clientName}.`);
       return { status: 'SUCCESS' };
     }
 
@@ -464,7 +476,7 @@ class MailProcessor {
       // Drive): se avisa, pero no se aparta a [OPS-ERROR] como si faltara algo por corregir.
       summaryReport.advertencias.push({
         cliente: clientConfig.clientName,
-        problema: `El reporte "${this.scheduledTaskName}" llegó más de una vez hoy: la tarea ${resultado.taskKey} ya estaba en estado "${resultado.estadoTarea}".`,
+        problema: `El reporte "${nombreTarea}" llegó más de una vez hoy: la tarea ${resultado.taskKey} ya estaba en estado "${resultado.estadoTarea}".`,
         accion: "No se reabrió la tarea y se dejó un comentario en ella. Los adjuntos nuevos, si los había, igual se archivaron en Drive. Revisar si el origen está enviando el reporte duplicado."
       });
       Logger.log(`[${this.operationName}] Reporte duplicado de ${clientConfig.clientName}: la tarea ${resultado.taskKey} ya estaba cerrada. El correo se da por procesado.`);
@@ -474,7 +486,7 @@ class MailProcessor {
     if (estado === 'NOT_FOUND') {
       summaryReport.advertencias.push({
         cliente: clientConfig.clientName,
-        problema: `No existe ninguna tarea programada "${this.scheduledTaskName}" creada hoy en el proyecto ${clientConfig.jiraProjectKey}.`,
+        problema: `No existe ninguna tarea programada "${nombreTarea}" creada hoy en el proyecto ${clientConfig.jiraProjectKey}.`,
         accion: `No se bloqueó el correo. Verificar que la tarea se haya creado y que el nombre coincida exactamente.`
       });
       // Devolvemos SUCCESS para que el correo se dé por procesado y no se vuelva a reintentar.
@@ -483,7 +495,7 @@ class MailProcessor {
 
     summaryReport.errores.push({
       cliente: clientConfig.clientName,
-      error: `No se pudo cerrar la tarea programada "${this.scheduledTaskName}"`,
+      error: `No se pudo cerrar la tarea programada "${nombreTarea}"`,
       detalle: `Proyecto ${clientConfig.jiraProjectKey} | Estado devuelto: ${estado}. El correo queda pendiente y se reintenta.`
     });
     return { status: 'FAILURE' };
@@ -495,7 +507,7 @@ class MailProcessor {
     }
     
     const alertCount = finalAlerts.length;
-    const newFileName = attachmentName.replace(/\.csv$/i, "-FILTRADO.xlsx");
+    const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
     const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
 
     // convertDataToXlsxBlob() devuelve null si falla (datos mal formados, error de Drive, etc).
