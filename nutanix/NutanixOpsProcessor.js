@@ -33,16 +33,13 @@ class NutanixOpsProcessor extends MailProcessor {
         const rawText = attachment.getDataAsString("UTF-8");
         const data = JSON.parse(rawText);
         if (data && data.clientName) {
-           // Buscamos el cliente real por nombre exacto segun el JSON
+           // Buscamos el cliente real por nombre exacto segun el JSON. La config trae
+           // el requestTypeId que ClientConfigService resuelve desde la Columna F del
+           // Índice Maestro: es lo que hace que el ticket entre por el portal y el
+           // cliente reciba la notificación, igual que en vSphere y Veeam.
            const newConfig = getClientConfigByName(data.clientName, this.operationName);
            if (newConfig) {
              config = newConfig;
-             
-             // BORRAR requestTypeId: Si no tiene request type, Jira lo crea como
-             // ticket interno y el cliente (portal) no se entera ni recibe mails.
-             // (Solo temporal para testing en produccion sin molestar)
-             delete config.requestTypeId;
-             
            } else {
              summaryReport.errores.push({
                error: "Cliente Nutanix no encontrado",
