@@ -353,6 +353,54 @@ function runAllTests() {
     );
   } catch(e) { Logger.log("Error en Test reporte duplicado: " + e.message); }
 
+  // --- TESTS: la Tarea Programada a cerrar respeta el lado AVS ---
+  // Regresión del 15/09/2026 (Macro). Los processors que sobrescriben handleAlerts ya usaban
+  // nombreTareaSegunAVS, pero el camino compartido —el de un reporte que llega LIMPIO, vía
+  // handleNoAlerts— cerraba siempre la TP del parque común aunque el reporte fuera AVS.
+  // El reporte AVS de Macro llega limpio todas las mañanas (sus filas son todas snapshots de
+  // templates, que se ignoran por regla de negocio), así que cada día cerraba la TP del parque
+  // común y la de AVS quedaba abierta.
+  Logger.log("--- Test: Tarea Programada por lado AVS ---");
+  try {
+    class _ProcessorTPAvs extends MailProcessor {
+      constructor() {
+        super({ operationName: "test-tp-avs", emailSubject: "x", scheduledTaskName: "VMs con snapshots" });
+      }
+    }
+
+    // Captura el NOMBRE con el que se intentó cerrar la tarea, que es lo que está en juego.
+    const capturarNombre = function (clientConfig) {
+      const original = buscarYCerrarTareaProgramada;
+      const summary = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 };
+      let capturado = null;
+      try {
+        buscarYCerrarTareaProgramada = function (nombre) { capturado = nombre; return { status: 'SUCCESS' }; };
+        new _ProcessorTPAvs().cerrarTareaProgramadaSiCorresponde(clientConfig, summary);
+        return { nombre: capturado, summary: summary };
+      } finally {
+        buscarYCerrarTareaProgramada = original;
+      }
+    };
+
+    const base = { clientName: "Cliente Test", jiraProjectKey: "TEST" };
+
+    assertEqual(capturarNombre({ clientName: base.clientName, jiraProjectKey: base.jiraProjectKey, isAVS: true }).nombre,
+      "AVS - VMs con snapshots",
+      "TP por lado AVS: un reporte AVS limpio cierra SU tarea, no la del parque común");
+    assertEqual(capturarNombre({ clientName: base.clientName, jiraProjectKey: base.jiraProjectKey, isAVS: false }).nombre,
+      "VMs con snapshots",
+      "TP por lado AVS: un reporte común cierra la suya");
+    assertEqual(capturarNombre(base).nombre,
+      "VMs con snapshots",
+      "TP por lado AVS: un processor que no marca isAVS se comporta igual que antes");
+
+    // El nombre correcto también tiene que verse en el resumen que llega a Slack: si el log
+    // dice una tarea y se cerró otra, el incidente vuelve a ser invisible (AGENTS.md §7).
+    assertEqual(capturarNombre({ clientName: base.clientName, jiraProjectKey: base.jiraProjectKey, isAVS: true }).summary.tareasCerradasDetalle[0],
+      "AVS - VMs con snapshots (Cliente Test)",
+      "TP por lado AVS: el resumen nombra la tarea realmente cerrada");
+  } catch(e) { Logger.log("Error en Test TP por lado AVS: " + e.message); }
+
   // --- TESTS: red de seguridad del entorno TESTING ---
   // En TESTING nada puede terminar en el proyecto de Jira ni en la carpeta de Drive de un
   // cliente real: un correo de prueba puede llegar de cualquier casilla, y varios processors
