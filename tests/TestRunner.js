@@ -540,6 +540,53 @@ function runAllTests() {
       "esReporteAVS: detecta por nombre de adjunto");
   } catch(e) { Logger.log("Error en Test frontera AVS: " + e.message); }
 
+  // --- TESTS: ticket de snapshots separado por lado AVS ---
+  // Regresión del 15/09/2026 (Macro, OBM-18791): el cliente manda DOS reportes de "VMs con
+  // snapshots" con 30 min de diferencia — el del parque común y el de AVS — y hasta ese día
+  // los dos llegaban con el mismo asunto y el mismo nombre de adjunto, así que Gmail los
+  // agrupaba en un solo hilo. El común levantó 12 anomalías y creó el ticket; el de AVS traía
+  // 20 filas, todas snapshots de templates (que se ignoran por regla de negocio), así que
+  // quedó en 0 alertas y cayó en handleNoAlerts. Como el summary del ticket se buscaba SIEMPRE
+  // sin prefijo, encontró el ticket recién creado del parque común y comentó "la anomalía no
+  // persiste" sobre las 12 VMs que seguían fuera de norma. El ticket se cerró sin atenderlas.
+  //
+  // Los dos lados tienen que tener ticket propio, y el lado AVS no debe caer nunca sobre el
+  // ticket del común cuando el suyo no existe.
+  Logger.log("--- Test: ticket de snapshots separado por lado AVS ---");
+  try {
+    const BASE = "Se detectaron VMs con Snapshots";
+    const TICKET_COMUN = { key: "OBM-18791", fields: { summary: BASE } };
+    const TICKET_AVS   = { key: "OBM-19000", fields: { summary: "AVS - " + BASE } };
+
+    assertEqual(summarySnapshotsSegunAVS(BASE, { isAVS: true }), "AVS - " + BASE,
+      "summarySnapshotsSegunAVS: el reporte AVS usa su propio summary");
+    assertEqual(summarySnapshotsSegunAVS(BASE, { isAVS: false }), BASE,
+      "summarySnapshotsSegunAVS: el reporte común mantiene el summary sin prefijo");
+    assertEqual(summarySnapshotsSegunAVS(BASE, null), BASE,
+      "summarySnapshotsSegunAVS: tolera clientConfig nulo");
+
+    // EL CASO DEL INCIDENTE: solo existe el ticket del parque común y entra el reporte AVS.
+    // Tiene que devolver null para que handleNoAlerts no comente nada.
+    assertEqual(
+      elegirTicketDelMismoLadoAVS([TICKET_COMUN], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
+      null,
+      "snapshots AVS: un reporte AVS limpio NO comenta sobre el ticket del parque común");
+
+    assertEqual(
+      elegirTicketDelMismoLadoAVS([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
+      "OBM-19000",
+      "snapshots AVS: el reporte AVS actualiza su propio ticket");
+    assertEqual(
+      elegirTicketDelMismoLadoAVS([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: false })),
+      "OBM-18791",
+      "snapshots AVS: el reporte común actualiza el suyo, no el de AVS");
+
+    // El summary de Soporte lleva el prefijo AVS adelante y el sufijo "(Soporte)" atrás.
+    assertEqual(summarySnapshotsSegunAVS(BASE, { isAVS: true }) + " (Soporte)",
+      "AVS - " + BASE + " (Soporte)",
+      "snapshots AVS: el ticket de Soporte también se separa por lado");
+  } catch(e) { Logger.log("Error en Test ticket de snapshots AVS: " + e.message); }
+
   // --- TESTS: Tecnología de los tickets de Soporte ---
   // Regresión del 02/09/2026 (ticket SCB-403): createJiraTicketForSoporte mandaba
   // "Veeam Backup & Replication" hardcodeado para TODOS los tickets de Soporte. Servía cuando

@@ -22,6 +22,28 @@ const SOP_AGE_MAX = 14;     // Días
 const SOP_SIZE_MAX = 1024;  // GB
 const SOP_CANTIDAD_MAX = 7; // Unidades
 
+/**
+ * Summary del ticket de alerta, respetando el lado AVS del reporte.
+ *
+ * Delega en nombreTareaSegunAVS() a propósito: el prefijo "AVS - " ya es el que usan las
+ * Tareas Programadas y tiene que vivir en un solo lugar (AGENTS.md §5), no repetido acá.
+ *
+ * Antes el summary se buscaba y se creaba SIEMPRE sin prefijo, así que el reporte AVS y el
+ * común compartían el mismo ticket. El 15/09/2026 Macro mandó los dos reportes con el mismo
+ * asunto y el mismo nombre de adjunto ("VMs con snapshots.csv"): el común levantó 12
+ * anomalías y creó OBM-18791, y el de AVS —cuyas 20 filas son todas snapshots de templates,
+ * que se ignoran por regla de negocio— cayó en handleNoAlerts, encontró ESE mismo ticket y
+ * comentó "la anomalía no persiste" sobre anomalías que seguían vigentes. El ticket se cerró
+ * con las 12 VMs sin atender.
+ *
+ * @param {string} base Summary sin prefijo.
+ * @param {Object} clientConfig Config que trae `isAVS`.
+ * @returns {string}
+ */
+function summarySnapshotsSegunAVS(base, clientConfig) {
+  return nombreTareaSegunAVS(base, clientConfig);
+}
+
 class VMsConSnapshotsProcessor extends MailProcessor {
   constructor() {
     super({
@@ -394,8 +416,12 @@ class VMsConSnapshotsProcessor extends MailProcessor {
   }
 
   findExistingTicket(clientConfig) {
-    return findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfig.jiraProjectKey) ||
-           findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfig.jiraProjectKey);
+    // El lado AVS busca su propio ticket ("AVS - ..."). Si no existe devuelve null, y
+    // handleNoAlerts no comenta nada: es preferible no decir nada a comentar "la anomalía no
+    // persiste" sobre el ticket del parque común, que es otro reporte (ver
+    // summarySnapshotsSegunAVS).
+    return findExistingJiraTicket(summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfig), clientConfig.jiraProjectKey) ||
+           findExistingJiraTicket(summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfig), clientConfig.jiraProjectKey);
   }
 
   handleAlerts(existingTicketKeyIgnored, clientConfig_Ignored, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
@@ -428,8 +454,8 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       huboAlertaOps = true;
       const clientConfigOps = getClientConfigByName(clientConfig_Ignored.clientName, this.operationName) || clientConfig_Ignored;
       if (clientConfig_Ignored.isAVS) clientConfigOps.isAVS = true;
-      const existingTicketKeyOps = findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfigOps.jiraProjectKey) ||
-                                   findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps.jiraProjectKey);
+      const existingTicketKeyOps = findExistingJiraTicket(summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfigOps), clientConfigOps.jiraProjectKey) ||
+                                   findExistingJiraTicket(summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps), clientConfigOps.jiraProjectKey);
       const rowsExp = [...opsAlertsFinal];
         
       const nombreReporteOps = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "") + "-OPS.xlsx";
@@ -471,14 +497,14 @@ class VMsConSnapshotsProcessor extends MailProcessor {
         let summary, description;
         description = `Se detectaron ${opsAlertsFinal.length} VMs con snapshots fuera del estándar (Ops):\n${opsReasonsFinal}\n\n`;
         if (opsAlertsFinal.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-          summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE;
+          summary = summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfigOps);
           description += `|| ${headers.join(" || ")} ||\n`;
           opsAlertsFinal.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
           const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfigOps, this.operationName);
           if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
           else globalStatus = 'FAILURE';
         } else {
-          summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT;
+          summary = summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps);
           description += `Debido a la cantidad de registros, se adjunta el reporte.`;
           const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfigOps, this.operationName);
           if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
@@ -490,8 +516,10 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     // PROCESAR SOPORTE (solo si el cliente tiene Columna N configurada)
     if (tieneSoporte && this.soporteAlerts && this.soporteAlerts.length > 0) {
       huboAlertaSop = true;
-      const existingTicketKeySop = findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE + " (Soporte)", clientConfigSop.jiraProjectKeySop) ||
-                                   findExistingJiraTicket(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT + " (Soporte)", clientConfigSop.jiraProjectKeySop);
+      // El lado AVS también separa el ticket de Soporte. clientConfigSop viene de la Columna N
+      // y no trae `isAVS`, así que el lado se toma del config del reporte (clientConfig_Ignored).
+      const existingTicketKeySop = findExistingJiraTicket(summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfig_Ignored) + " (Soporte)", clientConfigSop.jiraProjectKeySop) ||
+                                   findExistingJiraTicket(summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfig_Ignored) + " (Soporte)", clientConfigSop.jiraProjectKeySop);
       const rowsExp = [...this.soporteAlerts];
       
       const nombreReporteSop = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "") + "-SOP.xlsx";
@@ -531,14 +559,14 @@ class VMsConSnapshotsProcessor extends MailProcessor {
         let summary, description;
         description = `Se detectaron ${this.soporteAlerts.length} VMs con snapshots fuera del estándar (Soporte):\n${this.soporteReasonsText}\n\n`;
         if (this.soporteAlerts.length <= SNAPSHOTS_ROW_LIMIT_FOR_TABLE) {
-          summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE + " (Soporte)";
+          summary = summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE, clientConfig_Ignored) + " (Soporte)";
           description += `|| ${headers.join(" || ")} ||\n`;
           this.soporteAlerts.forEach(row => description += `| ${row.map(c => (c || "").trim()).join(" | ")} |\n`);
           const creationResult = createTicketAndNotifySoporte(summary, description, xlsxBlobSop, clientConfigSop);
           if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Soporte: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
           else globalStatus = 'FAILURE';
         } else {
-          summary = SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT + " (Soporte)";
+          summary = summarySnapshotsSegunAVS(SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfig_Ignored) + " (Soporte)";
           description += `Debido a la cantidad de registros, se adjunta el reporte.`;
           const creationResult = createTicketAndNotifySoporte(summary, description, xlsxBlobSop, clientConfigSop);
           if (creationResult.status === 'SUCCESS') summaryReport.exitos.push({ mensaje: "Soporte: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)) });
