@@ -159,6 +159,44 @@ function manual_prepararTareasProgramadasNutanixDePrueba() {
 }
 
 /**
+ * Borra (DELETE real, no transición de estado) las 4 Tarea Programada de prueba de Nutanix del
+ * proyecto de WPC - Operaciones Testing, sin importar si están abiertas o cerradas.
+ *
+ * Para qué sirve: manual_prepararTareasProgramadasNutanixDePrueba() no crea una tarea nueva si
+ * ya existe una con ese nombre creada hoy, sin importar su estado — así que una vez que
+ * manual_simularNutanixOpsConsolidado() las cierra, no hay forma de volver a tener las 4
+ * ABIERTAS para probar el caso "falta un cluster" sin, o bien reabrirlas a mano en Jira, o
+ * borrarlas y recrearlas. Esto hace lo segundo.
+ *
+ * Correr esta función y después manual_prepararTareasProgramadasNutanixDePrueba() de nuevo para
+ * volver a tener las 4 tareas limpias y abiertas.
+ */
+function manual_borrarTareasProgramadasNutanixDePrueba() {
+  const clientConfig = getClientConfigByName(MANUAL_TEST_CLIENT_NAME, NTX_OPERATION_NAME);
+  if (!clientConfig) {
+    Logger.log(`❌ No se encontró configuración para "${MANUAL_TEST_CLIENT_NAME}" en el Índice Maestro.`);
+    return;
+  }
+
+  NTX_TASKS.forEach(function (nombreTarea) {
+    const existente = buscarTareaProgramadaDelDia(nombreTarea, clientConfig.jiraProjectKey);
+    if (!existente) {
+      Logger.log(`  (sin cambios) "${nombreTarea}": no hay ninguna creada hoy.`);
+      return;
+    }
+    const options = { "method": "delete", "headers": getJiraHeaders(), "muteHttpExceptions": true };
+    const respuesta = fetchWithRetries(`${JIRA_DOMAIN}/rest/api/3/issue/${existente.key}`, options);
+    const codigo = respuesta.getResponseCode();
+    if (codigo === 204) {
+      Logger.log(`  - "${nombreTarea}" (${existente.key}) borrada.`);
+    } else {
+      Logger.log(`  ❌ No se pudo borrar "${nombreTarea}" (${existente.key}): HTTP ${codigo} — ${respuesta.getContentText()}`);
+    }
+    Utilities.sleep(300); // No saturar la API de Jira.
+  });
+}
+
+/**
  * Simula un correo CONSOLIDADO de Nutanix (manifiesto + varios clusters) y lo procesa con la
  * lógica real (processSingleMessage), SIN pasar por Gmail: arma los adjuntos en memoria con
  * Utilities.newBlob() y un objeto de correo simulado con la misma interfaz que usa el processor
