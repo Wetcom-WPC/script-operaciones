@@ -324,9 +324,13 @@ function runAllTests() {
     assertTrue(dup.summary.advertencias.length > 0, "duplicado: deja una advertencia visible en el resumen");
     assertEqual(dup.summary.errores.length, 0, "duplicado: NO se reporta como error");
 
-    // 2) No existe ninguna tarea de hoy: eso sí es un problema de configuración.
+    // 2) No existe ninguna tarea de hoy: problema de configuración, pero desde la decisión del
+    // 18/08/2026 (ver el comentario de buscarYCerrarTareaProgramada en JiraService.js) esto ya
+    // NO aparta el correo a [OPS-ERROR]: se advierte en Slack y el correo se da por procesado,
+    // para no dejar reintentando para siempre un reporte cuya tarea nunca se va a crear sola.
     const noExiste = correrCierre({ status: 'NOT_FOUND' });
-    assertEqual(noExiste.resultado.status, 'ERROR_TERMINAL', "sin tarea del día: se aparta para revisión manual");
+    assertEqual(noExiste.resultado.status, 'SUCCESS', "sin tarea del día: se avisa pero el correo se da por procesado");
+    assertTrue(noExiste.summary.advertencias.length > 0, "sin tarea del día: deja una advertencia visible en el resumen");
 
     // 3) El camino normal no cambió.
     const ok = correrCierre({ status: 'SUCCESS' });
