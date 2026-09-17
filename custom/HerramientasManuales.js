@@ -110,18 +110,157 @@ function manual_simularNutanixOps() {
     Logger.log('[manual_simularNutanixOps] Sin alertas → handleNoAlerts() (no crea ticket).');
   } else {
     Logger.log('[manual_simularNutanixOps] Con alertas → handleAlerts() → crearía ticket en Jira.');
-    Logger.log('âš ï¸ Para ver el ticket creado, quitar el comentario de la línea handleAlerts() abajo.');
-    // Descomentar para ejecutar el flujo completo contra Jira:
-    // const existingKey = processor.findExistingTicket(clientConfig);
-    // const r = processor.handleAlerts(existingKey, clientConfig, summaryReport, processed.headers, processed.finalAlerts, processed.rowsForExport, processed.reasonsText, "simulacion.json");
-    // Logger.log(`handleAlerts() → status: ${r.status}`);
   }
+
+  Logger.log('[manual_simularNutanixOps] Este helper solo ejercita processData() con un JSON');
+  Logger.log('suelto (formato legacy, sin manifiesto). Para ver el ticket creado de verdad y');
+  Logger.log('probar el formato consolidado (varios clusters + cierre de tareas), usar');
+  Logger.log('manual_simularNutanixOpsConsolidado() más abajo.');
 
   Logger.log('[manual_simularNutanixOps] Resumen:');
   Logger.log(`  Éxitos: ${summaryReport.exitos.length}`);
   Logger.log(`  Advertencias: ${summaryReport.advertencias.length}`);
   Logger.log(`  Errores: ${summaryReport.errores.length}`);
 }
+
+/**
+ * Crea (o reutiliza, si ya existen hoy) las 4 Tarea Programada de Nutanix en el proyecto de
+ * WPC - Operaciones Testing. Es un prerequisito de manual_simularNutanixOpsConsolidado(): sin
+ * estas 4 tareas creadas HOY, el cierre va a devolver NOT_FOUND (no rompe nada — desde el
+ * 18/08/2026 eso solo deja una advertencia — pero no vas a poder confirmar que el cierre
+ * funciona).
+ *
+ * Reutiliza _e2eCrearTareaProgramada() de tests/E2ETestHarness.js en vez de reinventar la
+ * llamada a Jira.
+ */
+function manual_prepararTareasProgramadasNutanixDePrueba() {
+  const clientConfig = getClientConfigByName(MANUAL_TEST_CLIENT_NAME, NTX_OPERATION_NAME);
+  if (!clientConfig) {
+    Logger.log(`❌ No se encontró configuración para "${MANUAL_TEST_CLIENT_NAME}" en el Índice Maestro.`);
+    return;
+  }
+
+  Logger.log(`[manual_prepararTareasProgramadasNutanixDePrueba] Proyecto: ${clientConfig.jiraProjectKey}`);
+
+  NTX_TASKS.forEach(function (nombreTarea) {
+    const existente = buscarTareaProgramadaDelDia(nombreTarea, clientConfig.jiraProjectKey);
+    if (existente) {
+      Logger.log(`  = "${nombreTarea}" ya existe hoy: ${existente.key} (${existente.status}). No se crea otra.`);
+      return;
+    }
+    const key = _e2eCrearTareaProgramada(
+      nombreTarea,
+      clientConfig.jiraProjectKey,
+      "Tarea Programada de prueba para testear el cierre consolidado de Nutanix (manual_simularNutanixOpsConsolidado)."
+    );
+    if (key) Logger.log(`  + "${nombreTarea}" creada: ${key}`);
+    Utilities.sleep(300); // No saturar la API de Jira.
+  });
+}
+
+/**
+ * Simula un correo CONSOLIDADO de Nutanix (manifiesto + varios clusters) y lo procesa con la
+ * lógica real (processSingleMessage), SIN pasar por Gmail: arma los adjuntos en memoria con
+ * Utilities.newBlob() y un objeto de correo simulado con la misma interfaz que usa el processor
+ * (getFrom/getSubject/getAttachments).
+ *
+ * Es la forma correcta de probar el flujo nuevo de un-correo-por-cliente sin tocar la casilla
+ * real de operaciones ni ningún cliente real:
+ *
+ *   - El clientName que viaja en el manifiesto (abajo, "Transener") NO importa: en TESTING,
+ *     getClientConfigByName() lo redirige igual a MANUAL_TEST_CLIENT_NAME (ver el comentario en
+ *     ClientConfigService.js). El ticket y el cierre de tareas van a WPC - Operaciones Testing.
+ *   - No depende de que exista ninguna CVM real ni de que corra nutanix_ops_sender.ps1.
+ *
+ * Antes de correrla, para poder ver el cierre de tareas funcionando, correr una vez
+ * manual_prepararTareasProgramadasNutanixDePrueba().
+ *
+ * Cómo usar:
+ *   1. Ajustar el array `escenario` de abajo para probar el caso que quieras: los 3 clusters
+ *      OK, uno caído (cambiar su entrada a estado "ERROR"), o ninguno.
+ *   2. Correr la función. Revisar los logs: qué ticket(s) se crearon/comentaron y si las 4
+ *      tareas se cerraron o quedaron abiertas.
+ *   3. Confirmar a mano en Jira, en el proyecto que loguea la función.
+ */
+function manual_simularNutanixOpsConsolidado() {
+  const FECHA = Utilities.formatDate(new Date(), "America/Argentina/Buenos_Aires", "yyyy-MM-dd");
+  const HORA  = Utilities.formatDate(new Date(), "America/Argentina/Buenos_Aires", "HHmmss");
+
+  // --- Ajustar este escenario para probar distintos casos ---
+  // Para simular un cluster caído, reemplazar su entrada por:
+  //   { nombre: "Sede", estado: "ERROR", detalle: "SIMULADO: fallo la conexion SSH." }
+  const escenario = [
+    { nombre: "Ezeiza", estado: "OK", validaciones: [
+        { id: "OPS-NTX-001", nombre: "Estado del Cluster", estado: "Chequeado", detalle: "SIMULADO: todo UP." },
+        { id: "OPS-NTX-002", nombre: "Alertas Activas",    estado: "Derivado",  detalle: "SIMULADO: 1 alerta Critical, 1 Warning." },
+        { id: "OPS-NTX-003", nombre: "Data Resiliency",    estado: "Chequeado", detalle: "SIMULADO: OK." },
+        { id: "OPS-NTX-004", nombre: "Salud de Discos",    estado: "Chequeado", detalle: "SIMULADO: OK." }
+      ] },
+    { nombre: "Rosario", estado: "OK", validaciones: [
+        { id: "OPS-NTX-001", nombre: "Estado del Cluster", estado: "Chequeado", detalle: "SIMULADO: todo UP." },
+        { id: "OPS-NTX-002", nombre: "Alertas Activas",    estado: "Chequeado", detalle: "SIMULADO: OK." },
+        { id: "OPS-NTX-003", nombre: "Data Resiliency",    estado: "Chequeado", detalle: "SIMULADO: OK." },
+        { id: "OPS-NTX-004", nombre: "Salud de Discos",    estado: "Chequeado", detalle: "SIMULADO: OK." }
+      ] },
+    { nombre: "Sede", estado: "OK", validaciones: [
+        { id: "OPS-NTX-001", nombre: "Estado del Cluster", estado: "Chequeado", detalle: "SIMULADO: todo UP." },
+        { id: "OPS-NTX-002", nombre: "Alertas Activas",    estado: "Chequeado", detalle: "SIMULADO: OK." },
+        { id: "OPS-NTX-003", nombre: "Data Resiliency",    estado: "Chequeado", detalle: "SIMULADO: OK." },
+        { id: "OPS-NTX-004", nombre: "Salud de Discos",    estado: "Chequeado", detalle: "SIMULADO: OK." }
+      ] }
+  ];
+
+  const clusters = [];
+  const adjuntos = [];
+
+  escenario.forEach(function (c) {
+    if (c.estado !== "OK") {
+      clusters.push({ nombre: c.nombre, host: c.nombre.toLowerCase() + ".simulado", estado: "ERROR", detalle: c.detalle });
+      return;
+    }
+    const archivo = `nutanix_ops_${FECHA}_${HORA}_${c.nombre.toLowerCase()}.json`;
+    const reporte = {
+      fecha: FECHA, origen: "10.0.0.1 (simulado)",
+      clusterName: c.nombre.toUpperCase(),
+      clusterFqdn: `ntnx-prism-${c.nombre.toLowerCase()}.transx.net (simulado)`,
+      clientName: "Transener", // No importa en TESTING: se redirige igual. Ver docstring arriba.
+      validaciones: c.validaciones
+    };
+    clusters.push({ nombre: c.nombre, host: `ntnx-prism-${c.nombre.toLowerCase()}.transx.net`, estado: "OK", archivo: archivo });
+    adjuntos.push(Utilities.newBlob(JSON.stringify(reporte), "application/json", archivo));
+  });
+
+  const manifiesto = {
+    tipo: "nutanix_ops_manifest", version: 1, fecha: FECHA, clientName: "Transener",
+    generado: new Date().toISOString(), clusters: clusters
+  };
+  const blobManifiesto = Utilities.newBlob(JSON.stringify(manifiesto), "application/json", `nutanix_manifest_${FECHA}_${HORA}.json`);
+
+  // Objeto con la misma interfaz que MailProcessor espera de un GmailMessage real
+  // (getFrom/getSubject/getAttachments): los Blob de Utilities.newBlob() ya implementan
+  // getName/getContentType/getDataAsString/copyBlob nativamente, así que no hace falta
+  // simularlos también.
+  const correoSimulado = {
+    getFrom: function () { return "alarmas@wetcom.com (SIMULADO — no se envía ni se lee ningún correo real)"; },
+    getSubject: function () { return "Operaciones Nutanix [SIMULADO]"; },
+    getAttachments: function () { return [blobManifiesto].concat(adjuntos); }
+  };
+
+  const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, tareasCerradasDetalle: [] };
+
+  Logger.log('[manual_simularNutanixOpsConsolidado] Procesando correo simulado (esto SÍ va a crear/comentar tickets reales en Jira de testing)...');
+  const resultado = new NutanixOpsProcessor().processSingleMessage(correoSimulado, summaryReport);
+
+  Logger.log(`[manual_simularNutanixOpsConsolidado] Resultado del correo: ${resultado.status}`);
+  Logger.log(`  Éxitos (${summaryReport.exitos.length}):`);
+  summaryReport.exitos.forEach(function (e) { Logger.log(`    - ${e.mensaje}`); });
+  Logger.log(`  Advertencias (${summaryReport.advertencias.length}):`);
+  summaryReport.advertencias.forEach(function (a) { Logger.log(`    - ${a.problema} → ${a.accion}`); });
+  Logger.log(`  Errores (${summaryReport.errores.length}):`);
+  summaryReport.errores.forEach(function (e) { Logger.log(`    - ${e.error}: ${e.detalle}`); });
+  Logger.log(`  Tareas cerradas: ${summaryReport.tareasCerradas}`);
+}
+
 
 
 /**
