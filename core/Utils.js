@@ -186,6 +186,21 @@ const HORARIO_OPERATIVO_TZ = "America/Argentina/Buenos_Aires";
  */
 function esFeriadoHoy(fecha) {
   const hoy = fecha instanceof Date ? fecha : new Date();
+  const mes    = String(hoy.getMonth() + 1).padStart(2, '0');
+  const dia    = String(hoy.getDate()).padStart(2, '0');
+  const fechaBuscada = `${hoy.getFullYear()}-${mes}-${dia}`;
+
+  // 0. Si el operador forzó manualmente el día como hábil para hoy, se respeta de inmediato
+  try {
+    const diaForzado = PropertiesService.getScriptProperties().getProperty("FORZAR_DIA_HABIL");
+    if (diaForzado === fechaBuscada) {
+      Logger.log(`ℹ️ [Feriados] Día ${fechaBuscada} forzado manualmente como hábil por operador. Se asume día laborable.`);
+      return false;
+    }
+  } catch (e) {
+    Logger.log(`[Feriados] Error leyendo FORZAR_DIA_HABIL: ${e.message}`);
+  }
+
   const feriados = _consultarFeriados(hoy.getFullYear());
 
   // Si la API pública no responde tras reintento, intentamos el fallback a Google Calendar
@@ -202,8 +217,11 @@ function esFeriadoHoy(fecha) {
     const aviso =
       `⚠️ *Alerta de Operaciones: No se pudo identificar si hoy es feriado o no.*\n` +
       `• *Causa:* Falló la consulta a la API pública de feriados y falló la lectura del Google Calendar de respaldo.\n` +
-      `• *Acción preventiva:* Se asume por precaución que *HOY ES FERIADO* para no procesar tareas en un día no laborable por error.\n` +
-      `• *Instrucción:* En caso de que hoy sea un día hábil normal, la operación se debe *ejecutar a mano*.`;
+      `• *Acción preventiva:* Se asume por precaución que *HOY ES FERIADO* para no procesar tareas en un día no laborable por error.\n\n` +
+      `👉 *¿Hoy es un día hábil normal?*\n` +
+      `Para desbloquear los frenos y procesar el día, ejecutá desde el editor de Apps Script:\n` +
+      `1️⃣ \`manual_forzarDiaHabil()\` (destraba los frenos de feriados para toda la jornada)\n` +
+      `2️⃣ \`iniciarDiaOperativo()\` (o \`ejecutarCicloDeOperaciones()\` para lanzar el procesamiento de correos ya mismo)`;
     Logger.log(aviso);
 
     if (typeof sendSlackMessage === "function") {
@@ -215,10 +233,6 @@ function esFeriadoHoy(fecha) {
     }
     return true; // Se asume que ES feriado por precaución
   }
-
-  const mes    = String(hoy.getMonth() + 1).padStart(2, '0');
-  const dia    = String(hoy.getDate()).padStart(2, '0');
-  const fechaBuscada = `${hoy.getFullYear()}-${mes}-${dia}`;
 
   const esFeriado = feriados.some(f => f.fecha === fechaBuscada);
   if (esFeriado) Logger.log(`Hoy (${fechaBuscada}) es feriado en Argentina según la API pública.`);
