@@ -174,6 +174,13 @@ const HORARIO_OPERATIVO_TZ = "America/Argentina/Buenos_Aires";
  *
  * Ante cualquier problema siempre loguea el motivo (§7 de AGENTS.md).
  *
+ * Flujo de decisión:
+ * 1. Intenta la API pública https://api.argentinadatos.com/v1/feriados/{año} con UN reintento.
+ * 2. Si la API falla tras 2 intentos, consulta como respaldo a Google Calendar (HOLIDAYS_CALENDAR_ID).
+ * 3. Si Google Calendar también falla, se asume por precaución que ES feriado (true),
+ *    se loguea y se envía alerta a Slack al canal #wpc-interno-yasc (SLACK_WEBHOOK_YASC)
+ *    para que en caso de ser día hábil la operación se ejecute a mano.
+ *
  * @param {Date} [fecha] Fecha a evaluar. Por defecto, hoy.
  * @returns {boolean}
  */
@@ -181,16 +188,32 @@ function esFeriadoHoy(fecha) {
   const hoy = fecha instanceof Date ? fecha : new Date();
   const feriados = _consultarFeriados(hoy.getFullYear());
 
+  // Si la API pública no responde tras reintento, intentamos el fallback a Google Calendar
   if (feriados === null) {
-    const aviso =
-      `No se pudo consultar la API de feriados (se reintentó una vez). ` +
-      `Se asume día hábil para no interrumpir el procesamiento de reportes.`;
-    Logger.log(`⚠️ ${aviso}`);
-    if (typeof sendSlackMessage === "function") {
-      const webhook = PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_GENERAL');
-      if (webhook) sendSlackMessage(webhook, `⚠️ ${aviso}`);
+    Logger.log("⚠️ No se pudo consultar la API de feriados tras 2 intentos. Intentando respaldo en Google Calendar...");
+    const feriadoSegunCalendar = _consultarFeriadoGoogleCalendar(hoy);
+
+    if (feriadoSegunCalendar !== null) {
+      Logger.log(`[Respaldo Calendar] Resultado de consulta en Google Calendar: ${feriadoSegunCalendar ? "ES FERIADO" : "NO ES FERIADO"}.`);
+      return feriadoSegunCalendar;
     }
-    return false;
+
+    // Nivel 3: Fallaron ambos (API pública y Google Calendar)
+    const aviso =
+      `⚠️ *Alerta de Operaciones: No se pudo identificar si hoy es feriado o no.*\n` +
+      `• *Causa:* Falló la consulta a la API pública de feriados y falló la lectura del Google Calendar de respaldo.\n` +
+      `• *Acción preventiva:* Se asume por precaución que *HOY ES FERIADO* para no procesar tareas en un día no laborable por error.\n` +
+      `• *Instrucción:* En caso de que hoy sea un día hábil normal, la operación se debe *ejecutar a mano*.`;
+    Logger.log(aviso);
+
+    if (typeof sendSlackMessage === "function") {
+      const webhookYasc = PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_YASC')
+        || PropertiesService.getScriptProperties().getProperty('SLACK_WEBHOOK_GENERAL');
+      if (webhookYasc) {
+        sendSlackMessage(webhookYasc, aviso);
+      }
+    }
+    return true; // Se asume que ES feriado por precaución
   }
 
   const mes    = String(hoy.getMonth() + 1).padStart(2, '0');
@@ -198,8 +221,86 @@ function esFeriadoHoy(fecha) {
   const fechaBuscada = `${hoy.getFullYear()}-${mes}-${dia}`;
 
   const esFeriado = feriados.some(f => f.fecha === fechaBuscada);
-  if (esFeriado) Logger.log(`Hoy (${fechaBuscada}) es feriado en Argentina.`);
+  if (esFeriado) Logger.log(`Hoy (${fechaBuscada}) es feriado en Argentina según la API pública.`);
   return esFeriado;
+}
+
+/**
+ * Consulta el calendario de Google Calendar si la API pública falla.
+ * @param {Date} fecha Fecha a verificar.
+ * @returns {boolean|null} true si hay eventos, false si no hay eventos, o null si falló o no está configurado.
+ */
+function _consultarFeriadoGoogleCalendar(fecha) {
+  try {
+    const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID");
+    if (!calendarId) {
+      Logger.log("⚠️ No está configurada la Script Property HOLIDAYS_CALENDAR_ID para respaldo.");
+      return null;
+    }
+    const calendario = CalendarApp.getCalendarById(calendarId);
+    if (!calendario) {
+      Logger.log(`⚠️ No se pudo acceder al calendario de feriados (${calendarId}). Revisar ID y permisos.`);
+      return null;
+    }
+    return calendario.getEventsForDay(fecha).length > 0;
+  } catch (e) {
+    Logger.log(`⚠️ Error consultando Google Calendar de respaldo: ${e.message}`);
+    return null;
+  }
+}
+
+/**
+ * Vuelca/sincroniza los feriados de la API pública en el Google Calendar configurado (HOLIDAYS_CALENDAR_ID).
+ * Evita duplicar eventos si ya fueron creados previamente para esa fecha.
+ *
+ * @param {number} [año] Año a sincronizar (por defecto, el año actual).
+ * @returns {Object} Resumen de eventos creados y existentes.
+ */
+function sincronizarFeriadosConGoogleCalendar(año) {
+  const anioTarget = año || (new Date()).getFullYear();
+  const calendarId = PropertiesService.getScriptProperties().getProperty("HOLIDAYS_CALENDAR_ID");
+  if (!calendarId) {
+    throw new Error("No está configurada la Script Property HOLIDAYS_CALENDAR_ID.");
+  }
+  const calendario = CalendarApp.getCalendarById(calendarId);
+  if (!calendario) {
+    throw new Error(`No se pudo acceder al calendario con ID ${calendarId}.`);
+  }
+
+  const feriados = _consultarFeriados(anioTarget);
+  if (!feriados || !Array.isArray(feriados)) {
+    throw new Error(`No se pudieron obtener los feriados de la API para el año ${anioTarget}.`);
+  }
+
+  let creados = 0;
+  let yaExistentes = 0;
+
+  feriados.forEach(f => {
+    const partes = f.fecha.split('-');
+    if (partes.length !== 3) return;
+    const fechaEvento = new Date(parseInt(partes[0], 10), parseInt(partes[1], 10) - 1, parseInt(partes[2], 10));
+
+    const eventosExistentes = calendario.getEventsForDay(fechaEvento);
+    const nombreFeriado = f.nombre || "Feriado Nacional";
+
+    const yaExiste = eventosExistentes.some(ev =>
+      ev.isAllDayEvent() && (ev.getTitle().toLowerCase().includes(nombreFeriado.toLowerCase()) || ev.getTitle().toLowerCase().includes("feriado"))
+    );
+
+    if (!yaExiste) {
+      calendario.createAllDayEvent(`Feriado: ${nombreFeriado}`, fechaEvento, {
+        description: `Sincronizado automáticamente desde API de Feriados Argentina (${f.tipo || 'Feriado'}).`
+      });
+      creados++;
+      Logger.log(`[Sincronización Calendar] Creado evento: "${nombreFeriado}" para ${f.fecha}`);
+    } else {
+      yaExistentes++;
+    }
+  });
+
+  const resumen = `Sincronización finalizada para ${anioTarget}: ${creados} feriados creados, ${yaExistentes} ya existían.`;
+  Logger.log(`✅ ${resumen}`);
+  return { creados, yaExistentes, total: feriados.length };
 }
 
 let _feriadosCacheado = null;
