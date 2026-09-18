@@ -324,9 +324,13 @@ function runAllTests() {
     assertTrue(dup.summary.advertencias.length > 0, "duplicado: deja una advertencia visible en el resumen");
     assertEqual(dup.summary.errores.length, 0, "duplicado: NO se reporta como error");
 
-    // 2) No existe ninguna tarea de hoy: eso sí es un problema de configuración.
+    // 2) No existe ninguna tarea de hoy: problema de configuración, pero desde la decisión del
+    // 18/08/2026 (ver el comentario de buscarYCerrarTareaProgramada en JiraService.js) esto ya
+    // NO aparta el correo a [OPS-ERROR]: se advierte en Slack y el correo se da por procesado,
+    // para no dejar reintentando para siempre un reporte cuya tarea nunca se va a crear sola.
     const noExiste = correrCierre({ status: 'NOT_FOUND' });
-    assertEqual(noExiste.resultado.status, 'ERROR_TERMINAL', "sin tarea del día: se aparta para revisión manual");
+    assertEqual(noExiste.resultado.status, 'SUCCESS', "sin tarea del día: se avisa pero el correo se da por procesado");
+    assertTrue(noExiste.summary.advertencias.length > 0, "sin tarea del día: deja una advertencia visible en el resumen");
 
     // 3) El camino normal no cambió.
     const ok = correrCierre({ status: 'SUCCESS' });
@@ -679,10 +683,191 @@ function runAllTests() {
     }
   } catch(e) { Logger.log("Error en Test Tecnología Soporte: " + e.message); }
 
+  // --- TESTS: Nutanix, un correo por cliente con varios clusters ---
+  // El 16/09/2026 se vio que con 3 CVMs el primer correo que llegaba cerraba las 4 tareas
+  // programadas, sin esperar a los otros dos clusters: si uno no reportaba, nadie se enteraba.
+  Logger.log("--- Test: Nutanix / cierre de tareas con varios clusters ---");
+  try {
+    _testsNutanixMultiCluster(assertEqual, assertTrue);
+  } catch(e) { assertTrue(false, "Nutanix multi-cluster: el test no terminó (" + e.message + ")"); }
+
   Logger.log("=== FIN DE SUITE DE PRUEBAS ===");
   Logger.log(`Resultados: ${passed} Pasaron, ${failed} Fallaron.`);
   
   if (failed > 0) {
     throw new Error(`Fallaron ${failed} pruebas unitarias.`);
+  }
+}
+
+
+/**
+ * Nutanix: las tareas programadas se cierran UNA vez por cliente y solo si llegaron todos los
+ * clusters del manifiesto. Corre contra MailProcessor.processSingleMessage() real, con Jira y el
+ * Índice Maestro interceptados, así se prueba la regla completa y no un método suelto.
+ *
+ * Está en una función aparte (y no inline en runAllTests) para poder correrla también fuera de
+ * Apps Script, con los mismos asserts.
+ */
+function _testsNutanixMultiCluster(assertEqual, assertTrue) {
+  const originales = {
+    getClientConfig: getClientConfig,
+    getClientConfigByName: getClientConfigByName,
+    findExistingJiraTicket: findExistingJiraTicket,
+    addCommentToJiraTicket: addCommentToJiraTicket,
+    createTicketAndNotify: createTicketAndNotify,
+    haSidoActualizadoHoy: haSidoActualizadoHoy,
+    buscarYCerrarTareaProgramada: buscarYCerrarTareaProgramada
+  };
+
+  const CLIENTE = "Cliente Nutanix Test";
+  let jira;
+  let ticketsExistentes;
+  let actualizadosHoy;
+
+  const adjunto = function (nombre, contenido) {
+    const texto = typeof contenido === "string" ? contenido : JSON.stringify(contenido);
+    const blob = {
+      getName: function () { return nombre; },
+      getContentType: function () { return "application/json"; },
+      getDataAsString: function () { return texto; },
+      copyBlob: function () { return blob; }
+    };
+    return blob;
+  };
+
+  const reporte = function (cluster, estados) {
+    return {
+      fecha: "2026-09-16", origen: "10.0.0.1", clusterName: cluster, clusterFqdn: cluster.toLowerCase() + ".test",
+      clientName: CLIENTE,
+      validaciones: ["OPS-NTX-001", "OPS-NTX-002", "OPS-NTX-003", "OPS-NTX-004"].map(function (id, i) {
+        return { id: id, nombre: "Validación " + (i + 1), estado: (estados && estados[i]) || "Chequeado", detalle: "detalle " + id };
+      })
+    };
+  };
+
+  const manifiesto = function (clusters) {
+    return adjunto("nutanix_manifest_2026-09-16_081500.json",
+      { tipo: "nutanix_ops_manifest", version: 1, fecha: "2026-09-16", clientName: CLIENTE, clusters: clusters });
+  };
+
+  const ok = function (nombre, archivo) {
+    return { nombre: nombre, host: nombre.toLowerCase() + ".test", estado: "OK", archivo: archivo };
+  };
+
+  const procesar = function (adjuntos) {
+    jira = { cierres: [], comentarios: [], creados: [] };
+    const correo = {
+      getFrom: function () { return "alarmas@wetcom.com"; },
+      getSubject: function () { return "Operaciones Nutanix"; },
+      getAttachments: function () { return adjuntos; }
+    };
+    const summary = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, tareasCerradasDetalle: [] };
+    const resultado = new NutanixOpsProcessor().processSingleMessage(correo, summary);
+    return { resultado: resultado, summary: summary };
+  };
+
+  const textoDeAdvertencias = function (summary) {
+    return summary.advertencias.map(function (a) { return a.problema + " " + a.accion; }).join(" || ");
+  };
+
+  try {
+    getClientConfig = function () { return null; };
+    getClientConfigByName = function () {
+      return { clientName: CLIENTE, jiraProjectKey: "NTXTEST", serviceDeskId: "1", requestTypeId: "2" };
+    };
+    findExistingJiraTicket = function (resumen) { return ticketsExistentes[resumen] || null; };
+    addCommentToJiraTicket = function (key, texto) { jira.comentarios.push({ key: key, texto: texto }); };
+    createTicketAndNotify = function (resumen) {
+      jira.creados.push(resumen);
+      return { status: "SUCCESS", detail: { mensaje: "Ticket creado: " + resumen } };
+    };
+    haSidoActualizadoHoy = function (key) { return actualizadosHoy.indexOf(key) !== -1; };
+    buscarYCerrarTareaProgramada = function (nombre) { jira.cierres.push(nombre); return { status: "SUCCESS" }; };
+
+    // 1) Llegaron los 3 clusters: las 4 tareas se cierran una sola vez, no una por cluster.
+    ticketsExistentes = {}; actualizadosHoy = [];
+    const completo = procesar([
+      manifiesto([ok("Ezeiza", "nutanix_ops_ez.json"), ok("Rosario", "nutanix_ops_ro.json"), ok("Sede", "nutanix_ops_se.json")]),
+      adjunto("nutanix_ops_ez.json", reporte("EZEIZA")),
+      adjunto("nutanix_ops_ro.json", reporte("ROSARIO", ["Chequeado", "Derivado"])),
+      adjunto("nutanix_ops_se.json", reporte("SEDE"))
+    ]);
+    assertEqual(completo.resultado.status, "SUCCESS", "Nutanix 3 de 3 clusters: el correo se da por procesado");
+    assertEqual(jira.cierres.length, NTX_TASKS.length, "Nutanix 3 de 3 clusters: las 4 tareas se cierran una sola vez");
+    assertEqual(jira.creados.length, 1, "Nutanix 3 de 3 clusters: solo el cluster con hallazgos crea ticket");
+    assertTrue(jira.creados[0] && jira.creados[0].indexOf("ROSARIO") !== -1, "Nutanix 3 de 3 clusters: el ticket es del cluster con hallazgos");
+
+    // 2) Un cluster no se pudo bajar: los demás se procesan, pero las tareas quedan abiertas.
+    ticketsExistentes = {}; actualizadosHoy = [];
+    const unoFalla = procesar([
+      manifiesto([
+        ok("Ezeiza", "nutanix_ops_ez.json"),
+        { nombre: "Rosario", host: "rosario.test", estado: "ERROR", detalle: "Fallo la conexion SSH." },
+        ok("Sede", "nutanix_ops_se.json")
+      ]),
+      adjunto("nutanix_ops_ez.json", reporte("EZEIZA")),
+      adjunto("nutanix_ops_se.json", reporte("SEDE", ["Derivado"]))
+    ]);
+    assertEqual(unoFalla.resultado.status, "SUCCESS", "Nutanix con un cluster faltante: no se reintenta (reintentar no trae el reporte)");
+    assertEqual(jira.cierres.length, 0, "Nutanix con un cluster faltante: las tareas quedan ABIERTAS");
+    assertEqual(jira.creados.length, 1, "Nutanix con un cluster faltante: los clusters que llegaron igual actualizan su ticket");
+    assertTrue(textoDeAdvertencias(unoFalla.summary).indexOf("Rosario") !== -1, "Nutanix con un cluster faltante: el aviso nombra el cluster que faltó");
+
+    // 3) El manifiesto dice OK pero el adjunto no vino: cuenta como faltante.
+    ticketsExistentes = {}; actualizadosHoy = [];
+    const sinAdjunto = procesar([
+      manifiesto([ok("Ezeiza", "nutanix_ops_ez.json"), ok("Sede", "nutanix_ops_se.json")]),
+      adjunto("nutanix_ops_ez.json", reporte("EZEIZA"))
+    ]);
+    assertEqual(jira.cierres.length, 0, "Nutanix con adjunto perdido: las tareas quedan abiertas");
+    assertTrue(textoDeAdvertencias(sinAdjunto.summary).indexOf("nutanix_ops_se.json") !== -1, "Nutanix con adjunto perdido: el aviso nombra el archivo que no vino");
+
+    // 4) No llegó ningún cluster: igual avisa, en vez de desaparecer en silencio.
+    ticketsExistentes = {}; actualizadosHoy = [];
+    const ninguno = procesar([
+      manifiesto([{ nombre: "Ezeiza", host: "ezeiza.test", estado: "ERROR", detalle: "Timeout." }])
+    ]);
+    assertEqual(ninguno.resultado.status, "SUCCESS", "Nutanix sin ningún cluster: el correo se procesa");
+    assertEqual(jira.cierres.length, 0, "Nutanix sin ningún cluster: las tareas quedan abiertas");
+    assertTrue(ninguno.summary.advertencias.length > 0, "Nutanix sin ningún cluster: deja el aviso para Slack");
+
+    // 5) Reintento: el ticket del cluster ya se comentó hoy, no se vuelve a comentar.
+    ticketsExistentes = { "[OPS-NTX] EZEIZA — Validaciones operativas": "NTXTEST-9" };
+    actualizadosHoy = ["NTXTEST-9"];
+    procesar([
+      manifiesto([ok("Ezeiza", "nutanix_ops_ez.json")]),
+      adjunto("nutanix_ops_ez.json", reporte("EZEIZA", ["Derivado"]))
+    ]);
+    assertEqual(jira.comentarios.length, 0, "Nutanix reintento: no se repite el comentario del día en el ticket del cluster");
+
+    // 6) Primer comentario del día: lleva la huella que lee haSidoActualizadoHoy().
+    ticketsExistentes = { "[OPS-NTX] EZEIZA — Validaciones operativas": "NTXTEST-9" };
+    actualizadosHoy = [];
+    procesar([
+      manifiesto([ok("Ezeiza", "nutanix_ops_ez.json")]),
+      adjunto("nutanix_ops_ez.json", reporte("EZEIZA", ["Derivado"]))
+    ]);
+    const comentario = jira.comentarios[0] ? jira.comentarios[0].texto : "";
+    assertTrue(comentario.indexOf("[AUTO-UPDATE:") === 0 && comentario.indexOf("OPS-NTX EZEIZA") !== -1,
+      "Nutanix: el comentario empieza con el marcador anti-duplicado del cluster");
+
+    // 7) Formato individual (sender viejo): sigue funcionando, pero avisa que hay que actualizarlo.
+    ticketsExistentes = {}; actualizadosHoy = [];
+    const individual = procesar([adjunto("nutanix_ops_2026-09-16_081001.json", reporte("EZEIZA"))]);
+    assertEqual(individual.resultado.status, "SUCCESS", "Nutanix formato individual: se sigue procesando");
+    assertEqual(jira.cierres.length, NTX_TASKS.length, "Nutanix formato individual: cierra las tareas como antes");
+    assertTrue(textoDeAdvertencias(individual.summary).indexOf("formato individual") !== -1, "Nutanix formato individual: avisa que hay que actualizar el sender");
+
+    // 8) manual_simularNutanixOps() llama a processData() directo, sin pasar por un correo.
+    const simulado = new NutanixOpsProcessor().processData(reporte("SIM", ["Derivado", "Derivado"]), getClientConfigByName(), { exitos: [], advertencias: [], errores: [] });
+    assertEqual(simulado.finalAlerts.length, 2, "Nutanix: processData() sigue aceptando un JSON suelto (manual_simularNutanixOps)");
+  } finally {
+    getClientConfig = originales.getClientConfig;
+    getClientConfigByName = originales.getClientConfigByName;
+    findExistingJiraTicket = originales.findExistingJiraTicket;
+    addCommentToJiraTicket = originales.addCommentToJiraTicket;
+    createTicketAndNotify = originales.createTicketAndNotify;
+    haSidoActualizadoHoy = originales.haSidoActualizadoHoy;
+    buscarYCerrarTareaProgramada = originales.buscarYCerrarTareaProgramada;
   }
 }
