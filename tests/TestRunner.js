@@ -693,12 +693,11 @@ function runAllTests() {
 
   Logger.log("=== FIN DE SUITE DE PRUEBAS ===");
   Logger.log(`Resultados: ${passed} Pasaron, ${failed} Fallaron.`);
-  
+
   if (failed > 0) {
     throw new Error(`Fallaron ${failed} pruebas unitarias.`);
   }
 }
-
 
 /**
  * Nutanix: las tareas programadas se cierran UNA vez por cliente y solo si llegaron todos los
@@ -723,6 +722,7 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
   let jira;
   let ticketsExistentes;
   let actualizadosHoy;
+  let clientesConocidos;
 
   const adjunto = function (nombre, contenido) {
     const texto = typeof contenido === "string" ? contenido : JSON.stringify(contenido);
@@ -745,9 +745,9 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
     };
   };
 
-  const manifiesto = function (clusters) {
+  const manifiesto = function (clusters, nombreCliente) {
     return adjunto("nutanix_manifest_2026-09-16_081500.json",
-      { tipo: "nutanix_ops_manifest", version: 1, fecha: "2026-09-16", clientName: CLIENTE, clusters: clusters });
+      { tipo: "nutanix_ops_manifest", version: 1, fecha: "2026-09-16", clientName: nombreCliente || CLIENTE, clusters: clusters });
   };
 
   const ok = function (nombre, archivo) {
@@ -771,8 +771,10 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
   };
 
   try {
+    clientesConocidos = [CLIENTE];
     getClientConfig = function () { return null; };
-    getClientConfigByName = function () {
+    getClientConfigByName = function (nombre) {
+      if (clientesConocidos.indexOf(nombre) === -1) return null;
       return { clientName: CLIENTE, jiraProjectKey: "NTXTEST", serviceDeskId: "1", requestTypeId: "2" };
     };
     findExistingJiraTicket = function (resumen) { return ticketsExistentes[resumen] || null; };
@@ -859,8 +861,29 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
     assertTrue(textoDeAdvertencias(individual.summary).indexOf("formato individual") !== -1, "Nutanix formato individual: avisa que hay que actualizar el sender");
 
     // 8) manual_simularNutanixOps() llama a processData() directo, sin pasar por un correo.
-    const simulado = new NutanixOpsProcessor().processData(reporte("SIM", ["Derivado", "Derivado"]), getClientConfigByName(), { exitos: [], advertencias: [], errores: [] });
+    const simulado = new NutanixOpsProcessor().processData(reporte("SIM", ["Derivado", "Derivado"]), { clientName: CLIENTE, jiraProjectKey: "NTXTEST" }, { exitos: [], advertencias: [], errores: [] });
     assertEqual(simulado.finalAlerts.length, 2, "Nutanix: processData() sigue aceptando un JSON suelto (manual_simularNutanixOps)");
+
+    // 9) El manifiesto nombra un cliente que NO está en el Índice Maestro: el correo se corta sin
+    // tocar Jira. Antes seguía con la config resuelta por el remitente, y como todos los reportes
+    // llegan de la misma casilla, terminaba escribiendo en el proyecto de otro cliente: el
+    // 21/09/2026 el manifiesto decía "Transener" (el Índice Maestro tiene "Operaciones Transener")
+    // y los 3 clusters cerraron tareas en WPC - Operaciones Testing mientras las de Transener
+    // quedaban abiertas.
+    ticketsExistentes = {}; actualizadosHoy = [];
+    clientesConocidos = [CLIENTE];
+    const configDelRemitente = { clientName: "Cliente Del Remitente", jiraProjectKey: "OTRO", serviceDeskId: "1", requestTypeId: "2" };
+    getClientConfig = function () { return configDelRemitente; };
+    const clienteDesconocido = procesar([
+      manifiesto([ok("Ezeiza", "nutanix_ops_ez.json")], "Cliente Que No Existe"),
+      adjunto("nutanix_ops_ez.json", reporte("EZEIZA", ["Derivado"]))
+    ]);
+    getClientConfig = function () { return null; };
+    assertEqual(clienteDesconocido.resultado.status, "ERROR", "Nutanix cliente desconocido: el correo NO se da por procesado");
+    assertEqual(jira.creados.length, 0, "Nutanix cliente desconocido: no crea tickets en el proyecto del remitente");
+    assertEqual(jira.cierres.length, 0, "Nutanix cliente desconocido: no cierra tareas en el proyecto del remitente");
+    assertTrue(clienteDesconocido.summary.errores.some(function (e) { return String(e.detalle || "").indexOf("Cliente Que No Existe") !== -1; }),
+      "Nutanix cliente desconocido: el error nombra el cliente que no se encontró");
   } finally {
     getClientConfig = originales.getClientConfig;
     getClientConfigByName = originales.getClientConfigByName;
