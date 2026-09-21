@@ -82,14 +82,29 @@ class NutanixOpsProcessor extends MailProcessor {
            // Maestro: es lo que hace que el ticket entre por el portal y el cliente reciba la
            // notificación, igual que en vSphere y Veeam.
            const newConfig = getClientConfigByName(data.clientName, this.operationName);
-           if (newConfig) {
-             config = newConfig;
-           } else {
+           if (!newConfig) {
+             // Se corta acá: NO se sigue con la config resuelta por el remitente. Todos los
+             // reportes de Nutanix llegan desde la misma casilla (alarmas@wetcom.com), así que
+             // caer en ella significa procesar el reporte de un cliente dentro del proyecto de
+             // Jira de OTRO. El 21/09/2026 pasó exactamente eso: el manifiesto decía "Transener",
+             // el Índice Maestro tiene "Operaciones Transener", y los 3 clusters terminaron
+             // cerrando tareas en WPC - Operaciones Testing mientras las de Transener quedaban
+             // abiertas y nadie se enteraba salvo por el resumen de Slack.
              summaryReport.errores.push({
                error: "Cliente Nutanix no encontrado",
-               detalle: `El JSON indica cliente "${data.clientName}" pero no existe exactamente así en la Columna B del Índice Maestro.`
+               detalle: `El reporte indica cliente "${data.clientName}" pero no existe exactamente así en la Columna B del Índice Maestro. NO se procesó: seguir con el cliente del remitente crearía tickets y cerraría tareas en el proyecto equivocado. Revisar CLIENT_NAME en nutanix_ops_sender.ps1 (la Pivot) y en nutanix_ops_check.sh (las CVMs).`
              });
+             // Terminal: un nombre de cliente mal cargado no se arregla reintentando. Sin esto el
+             // correo daba 10 vueltas por [OPS-PENDIENTE] repitiendo el mismo error en Slack
+             // antes de apartarse.
+             registrarFalloDePaso(
+               "resolveClientConfig",
+               `Cliente "${data.clientName}" no existe en la Columna B del Índice Maestro.`,
+               true
+             );
+             return null;
            }
+           config = newConfig;
         }
       } catch (e) {
         // Si falla el parseo aca, el metodo parseAttachment lo va a loggear despues
