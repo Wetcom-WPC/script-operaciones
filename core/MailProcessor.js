@@ -181,9 +181,19 @@ class MailProcessor {
       clientConfig = this.resolveClientConfig(clientConfig, senderEmail, attachment, message, summaryReport);
       
       if (!clientConfig) {
-        summaryReport.errores.push({ error: 'Error de Configuración', detalle: `No se encontró config para: ${senderEmail}` });
+        // Si resolveClientConfig() ya dejó anotado POR QUÉ no hay config (ej. el reporte nombra
+        // un cliente que no existe en el Índice Maestro), no se agrega el mensaje genérico: ese
+        // mensaje culpa al remitente, que en esos casos está perfecto, y manda a buscar el
+        // problema por el lado equivocado.
+        if (summaryReport.errores.length === errorCountBefore) {
+          summaryReport.errores.push({ error: 'Error de Configuración', detalle: `No se encontró config para: ${senderEmail}` });
+        }
         enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
-        return { status: 'ERROR' };
+        // Pasa por el registro de fallos para que un fallo TERMINAL registrado durante la
+        // resolución (una config mal cargada no se arregla sola al reintentar) aparte el correo
+        // en el primer intento, en vez de repetir el mismo error 10 veces antes de rendirse.
+        // Sin fallos registrados, aplicarFallosRegistrados() devuelve el resultado tal cual.
+        return this.aplicarFallosRegistrados({ status: 'ERROR' }, message, clientName, summaryReport);
       }
 
       clientName = clientConfig.clientName;

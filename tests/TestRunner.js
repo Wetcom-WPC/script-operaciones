@@ -879,11 +879,13 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
       adjunto("nutanix_ops_ez.json", reporte("EZEIZA", ["Derivado"]))
     ]);
     getClientConfig = function () { return null; };
-    assertEqual(clienteDesconocido.resultado.status, "ERROR", "Nutanix cliente desconocido: el correo NO se da por procesado");
+    assertEqual(clienteDesconocido.resultado.status, "ERROR_TERMINAL", "Nutanix cliente desconocido: se aparta en el primer intento (no se reintenta 10 veces)");
     assertEqual(jira.creados.length, 0, "Nutanix cliente desconocido: no crea tickets en el proyecto del remitente");
     assertEqual(jira.cierres.length, 0, "Nutanix cliente desconocido: no cierra tareas en el proyecto del remitente");
     assertTrue(clienteDesconocido.summary.errores.some(function (e) { return String(e.detalle || "").indexOf("Cliente Que No Existe") !== -1; }),
       "Nutanix cliente desconocido: el error nombra el cliente que no se encontró");
+    assertTrue(!clienteDesconocido.summary.errores.some(function (e) { return String(e.detalle || "").indexOf("No se encontró config para") !== -1; }),
+      "Nutanix cliente desconocido: NO agrega el mensaje genérico que culpa al remitente");
   } finally {
     getClientConfig = originales.getClientConfig;
     getClientConfigByName = originales.getClientConfigByName;

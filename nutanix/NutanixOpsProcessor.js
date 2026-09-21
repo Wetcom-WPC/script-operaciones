@@ -94,6 +94,14 @@ class NutanixOpsProcessor extends MailProcessor {
                error: "Cliente Nutanix no encontrado",
                detalle: `El reporte indica cliente "${data.clientName}" pero no existe exactamente así en la Columna B del Índice Maestro. NO se procesó: seguir con el cliente del remitente crearía tickets y cerraría tareas en el proyecto equivocado. Revisar CLIENT_NAME en nutanix_ops_sender.ps1 (la Pivot) y en nutanix_ops_check.sh (las CVMs).`
              });
+             // Terminal: un nombre de cliente mal cargado no se arregla reintentando. Sin esto el
+             // correo daba 10 vueltas por [OPS-PENDIENTE] repitiendo el mismo error en Slack
+             // antes de apartarse.
+             registrarFalloDePaso(
+               "resolveClientConfig",
+               `Cliente "${data.clientName}" no existe en la Columna B del Índice Maestro.`,
+               true
+             );
              return null;
            }
            config = newConfig;
