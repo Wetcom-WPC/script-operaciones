@@ -1,4 +1,4 @@
-﻿/**
+/**
  * =================================================================
  * HERRAMIENTAS MANUALES / DE TESTING (acceso rÃ¡pido desde el editor)
  * =================================================================
@@ -1254,4 +1254,61 @@ function manual_UnificarCriterioExceptuar() {
     }
   });
   Logger.log(`Total actualizado: ${arregladas}`);
+}
+
+// =================================================================
+// GESTIÓN MANUAL DE FERIADOS / FALLBACK
+// =================================================================
+
+/**
+ * Destraba los frenos de feriado forzando la fecha actual como día hábil.
+ * Útil cuando fallaron la API pública y Google Calendar y el sistema asumió feriado por precaución.
+ * La marca vence sola al terminar el día.
+ */
+function manual_forzarDiaHabil() {
+  const ahora = new Date();
+  const mes = String(ahora.getMonth() + 1).padStart(2, '0');
+  const dia = String(ahora.getDate()).padStart(2, '0');
+  const hoyStr = `${ahora.getFullYear()}-${mes}-${dia}`;
+
+  PropertiesService.getScriptProperties().setProperty("FORZAR_DIA_HABIL", hoyStr);
+  Logger.log(`✅ [Día Hábil Forzado] Se marcó la fecha ${hoyStr} como día hábil.`);
+  Logger.log(`   Ahora podés ejecutar "iniciarDiaOperativo()" o "ejecutarCicloDeOperaciones()" y todos los auditores operarán con normalidad.`);
+}
+
+/**
+ * Elimina la marca de día hábil forzado.
+ */
+function manual_desactivarForzarDiaHabil() {
+  PropertiesService.getScriptProperties().deleteProperty("FORZAR_DIA_HABIL");
+  Logger.log("🗑️ [Día Hábil Forzado] Marca eliminada. El sistema vuelve a la detección normal de feriados.");
+}
+
+/**
+ * Envía el mensaje de prueba de "falla de feriados" directamente al canal mock de Slack
+ * (SLACK_WEBHOOK_MOCK_TAREAS_PROGRAMADAS o SLACK_WEBHOOK_GENERAL) para validar cómo lo ve el equipo.
+ */
+function manual_probarAvisoFeriadoEnMockSlack() {
+  const props = PropertiesService.getScriptProperties();
+  const webhookMock = props.getProperty("SLACK_WEBHOOK_MOCK_TAREAS_PROGRAMADAS")
+    || props.getProperty("SLACK_WEBHOOK_GENERAL");
+
+  if (!webhookMock) {
+    Logger.log("❌ Error: No se encontró webhook configurado en SLACK_WEBHOOK_MOCK_TAREAS_PROGRAMADAS ni SLACK_WEBHOOK_GENERAL.");
+    return false;
+  }
+
+  const aviso =
+    `🧪 *[PRUEBA / SIMULACIÓN] Alerta de Operaciones: No se pudo identificar si hoy es feriado o no.*\n` +
+    `• *Causa:* Falló la consulta a la API pública de feriados y falló la lectura del Google Calendar de respaldo.\n` +
+    `• *Acción preventiva:* Se asume por precaución que *HOY ES FERIADO* para no procesar tareas en un día no laborable por error.\n\n` +
+    `👉 *¿Hoy es un día hábil normal?*\n` +
+    `Para desbloquear los frenos y procesar el día, ejecutá desde el editor de Apps Script:\n` +
+    `1️⃣ \`manual_forzarDiaHabil()\` (destraba los frenos de feriados para toda la jornada)\n` +
+    `2️⃣ \`iniciarDiaOperativo()\` (o \`ejecutarCicloDeOperaciones()\` para lanzar el procesamiento de correos ya mismo)`;
+
+  Logger.log("Enviando mensaje de prueba a mock-tareas-programadas...");
+  const resultado = sendSlackMessage(webhookMock, aviso);
+  Logger.log("Resultado envío: " + (resultado ? "Éxito (200)" : "Revisar logs"));
+  return resultado;
 }
