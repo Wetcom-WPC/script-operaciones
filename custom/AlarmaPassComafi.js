@@ -10,10 +10,9 @@ function enviarAlertaPasswordMiqueas() {
     return;
   }
 
-  const idThiago = "U087XUMAQSJ"; 
-  const mensaje = `🚨 *ATENCIÓN <@${idThiago}>:* Se venció la password de Miqueas de Comafi y hay que restablecerla.\n\n` +
+  const mensaje = `🚨 *ATENCIÓN <!channel>:* Se venció la password de Miqueas de Comafi y hay que restablecerla.\n\n` +
                   `🔗 *Link para restablecer:* https://passwordreset.microsoftonline.com/passwordreset#!/\n` +
-                  `🔑 *Aclaración:* Pedir token a Nico Moraez.`;
+                  `🔑 *Aclaración:* Pedir token a POD 2.`;
 
   const payload = { "text": mensaje };
   const options = {
