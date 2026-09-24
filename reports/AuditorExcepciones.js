@@ -51,14 +51,15 @@ function auditarVencimientoExcepciones(opciones = {}) {
 
   Logger.log(`Se encontraron ${planillas.length} planillas únicas de excepciones para auditar.`);
 
-  const vencidas = [];
+  const vencidasActivas = [];
+  const vencidasRecientes = [];
   const proximasAVencer = [];
   let totalPestanasAuditadas = 0;
   let totalExcepcionesAuditadas = 0;
   let planillasConError = 0;
 
   // 4. Recorrer cada planilla de excepciones
-  planillas.forEach((item, index) => {
+  planillas.forEach((item) => {
     try {
       const ss = SpreadsheetApp.openById(item.fileId);
       const sheets = ss.getSheets();
@@ -122,12 +123,21 @@ function auditarVencimientoExcepciones(opciones = {}) {
             fileUrl: ss.getUrl()
           };
 
+          // =================================================================
+          // FILTROS PRÁCTICOS DE VENCIMIENTO
+          // =================================================================
           if (diffDias < 0) {
-            // Ya vencida
-            // Priorizamos: o está marcada como SI (anomalía crítica), o venció en los últimos 14 días
-            vencidas.push(detalle);
+            // CASO 1: VENCIDA Y SIGUE ACTIVA (¡Riesgo crítico! Alguien olvidó darla de baja)
+            if (esActiva) {
+              vencidasActivas.push(detalle);
+            } 
+            // CASO 2: VENCIDA RECIENTEMENTE (venció en los últimos 7 días / esta semana)
+            else if (diffDias >= -7) {
+              vencidasRecientes.push(detalle);
+            }
+            // NOTA: Si venció hace más de 7 días y está inactiva ("NO"), se ignora (histórico cerrado).
           } else if (diffDias <= 7) {
-            // Vence dentro de los próximos 7 días (hasta el próximo viernes)
+            // CASO 3: PRÓXIMA A VENCER EN LOS PRÓXIMOS 7 DÍAS (y está activa)
             if (esActiva) {
               proximasAVencer.push(detalle);
             }
@@ -141,7 +151,7 @@ function auditarVencimientoExcepciones(opciones = {}) {
   });
 
   Logger.log(`Auditoría finalizada: ${planillas.length} planillas, ${totalPestanasAuditadas} pestañas, ${totalExcepcionesAuditadas} excepciones.`);
-  Logger.log(`Resultados -> Vencidas: ${vencidas.length} | Próximas a vencer (7d): ${proximasAVencer.length}`);
+  Logger.log(`Resultados -> Vencidas activas: ${vencidasActivas.length} | Vencidas esta semana: ${vencidasRecientes.length} | Próximas a vencer (7d): ${proximasAVencer.length}`);
 
   // 5. Enviar reporte a Slack si corresponde
   if (!opciones.soloLog) {
@@ -153,7 +163,8 @@ function auditarVencimientoExcepciones(opciones = {}) {
 
     if (webhook) {
       const payloadSlack = _construirMensajeSlackExcepciones({
-        vencidas,
+        vencidasActivas,
+        vencidasRecientes,
         proximasAVencer,
         totalPlanillas: planillas.length,
         totalPestanas: totalPestanasAuditadas,
@@ -171,7 +182,8 @@ function auditarVencimientoExcepciones(opciones = {}) {
     totalPlanillas: planillas.length,
     totalPestanas: totalPestanasAuditadas,
     totalExcepciones: totalExcepcionesAuditadas,
-    vencidas,
+    vencidasActivas,
+    vencidasRecientes,
     proximasAVencer
   };
 }
@@ -348,71 +360,250 @@ function _parsearFechaExcepcion(val) {
 }
 
 /**
- * Construye el mensaje formateado para Slack.
+ * Construye el mensaje formateado con Slack Block Kit & Attachments (estética moderna tipo tarjetas con borde).
  */
 function _construirMensajeSlackExcepciones(datos) {
-  const { vencidas, proximasAVencer, totalPlanillas, totalPestanas, planillasConError } = datos;
+  const { vencidasActivas, vencidasRecientes, proximasAVencer, totalPlanillas, totalPestanas, planillasConError } = datos;
   const hoyStr = Utilities.formatDate(new Date(), "America/Argentina/Buenos_Aires", "dd/MM/yyyy");
+  const masterId = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID") || "";
+  const linkIndiceMaestro = masterId ? `https://docs.google.com/spreadsheets/d/${masterId}` : null;
 
-  // CASO 1: TODO AL DÍA
-  if (vencidas.length === 0 && proximasAVencer.length === 0) {
+  const hayAlertas = vencidasActivas.length > 0 || proximasAVencer.length > 0 || vencidasRecientes.length > 0;
+
+  // CASO 1: TODO AL DÍA (Verde Wetcom)
+  if (!hayAlertas) {
     return {
-      text: `✨ *[Auditoría Semanal de Excepciones — ${hoyStr}]*\n` +
-            `¡Excelente! Todas las excepciones están al día. No se detectaron excepciones vencidas ni próximas a vencer a 7 días en las *${totalPlanillas} planillas* revisadas (${totalPestanas} pestañas).`
+      text: `✨ Todo al día: No se detectaron excepciones vencidas ni próximas a vencer a 7 días.`,
+      attachments: [
+        {
+          color: "#109E58", // Verde Wetcom
+          blocks: [
+            {
+              type: "section",
+              text: {
+                type: "mrkdwn",
+                text: `✨ *[Auditoría Semanal de Excepciones — ${hoyStr}]*\n` +
+                      `¡Excelente trabajo! Todas las excepciones están vigentes y ninguna vence en los próximos 7 días.\n` +
+                      `_Se auditaron *${totalPlanillas} planillas* de clientes (${totalPestanas} pestañas de tecnologías)._`
+              }
+            }
+          ]
+        }
+      ]
     };
   }
 
-  // CASO 2: HAY ALERTAS
-  let texto = `📋 *[Auditoría Semanal] Vencimiento de Excepciones — ${hoyStr}*\n` +
-              `_Se revisaron ${totalPlanillas} planillas de clientes (${totalPestanas} pestañas)._\n\n`;
-
-  // SECCIÓN 1: VENCIDAS
-  if (vencidas.length > 0) {
-    // Ordenar: primero las que siguen activas (más críticas)
-    vencidas.sort((a, b) => (b.activa ? 1 : 0) - (a.activa ? 1 : 0));
-
-    texto += `🚨 *EXCEPCIONES YA VENCIDAS (${vencidas.length}):*\n`;
-    vencidas.forEach(v => {
-      const iconoEstado = v.activa ? "⚠️ *ACTIVA (Requiere acción)*" : "Inactiva";
-      const diasVencida = Math.abs(v.diasRestantes);
-      const tiempoTxt = diasVencida === 0 ? "hoy" : `hace ${diasVencida} día(s)`;
-
-      texto += `• *${v.cliente}* › _${v.pestana}_: \`${v.id}\`\n`;
-      texto += `  └ Venció *${tiempoTxt}* (${v.fechaVencimiento}) | Estado: ${iconoEstado}\n`;
-      if (v.valores) texto += `  └ Valores: \`${_truncar(v.valores, 40)}\`\n`;
-      if (v.responsable || v.ticket) {
-        texto += `  └ Responsable: ${v.responsable || "N/A"} | Ticket: ${v.ticket || "N/A"}\n`;
+  // CASO 2: HAY ALERTAS (Bloques principales + Attachments de color por cada alerta)
+  const blocks = [
+    {
+      type: "header",
+      text: {
+        type: "plain_text",
+        text: "🚨 Control Semanal: Vencimiento de Excepciones",
+        emoji: true
       }
-    });
-    texto += `\n`;
-  }
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `⏰ *Revisión semanal:* ${hoyStr} · Se auditaron *${totalPlanillas} planillas* (${totalPestanas} pestañas de tecnologías)`
+        }
+      ]
+    }
+  ];
 
-  // SECCIÓN 2: PRÓXIMAS A VENCER (7 DÍAS)
-  if (proximasAVencer.length > 0) {
-    // Ordenar por días restantes (la que vence antes primero)
-    proximasAVencer.sort((a, b) => a.diasRestantes - b.diasRestantes);
+  const attachments = [];
+  const MAX_CARDS = 18; // Margen de seguridad para no exceder límites de Slack
+  let cardsCreadas = 0;
 
-    texto += `⏳ *PRÓXIMAS A VENCER EN 7 DÍAS (${proximasAVencer.length}):*\n`;
-    proximasAVencer.forEach(p => {
-      const tiempoTxt = p.diasRestantes === 0 ? "¡Vence HOY!" : `Vence en ${p.diasRestantes} día(s)`;
+  // SECCIÓN 1: VENCIDAS PERO SIGUEN ACTIVAS (Rojo Alerta Crítica #E01E5A)
+  vencidasActivas.forEach(item => {
+    if (cardsCreadas >= MAX_CARDS) return;
 
-      texto += `• *${p.cliente}* › _${p.pestana}_: \`${p.id}\`\n`;
-      texto += `  └ ⏰ *${tiempoTxt}* (${p.fechaVencimiento})\n`;
-      if (p.valores) texto += `  └ Valores: \`${_truncar(p.valores, 40)}\`\n`;
-      if (p.responsable || p.ticket) {
-        texto += `  └ Responsable: ${p.responsable || "N/A"} | Ticket: ${p.ticket || "N/A"}\n`;
+    const diasVencida = Math.abs(item.diasRestantes);
+    const tiempoTxt = diasVencida === 0 ? "hoy" : `hace ${diasVencida} día(s)`;
+    const jiraUrl = _obtenerUrlJira(item.ticket);
+
+    const cardBlocks = [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${item.cliente}* › _${item.pestana}_\n🆔 Excepción: \`${item.id}\``
+        }
+      },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `⏰ *Vencimiento:*\n🚨 Venció *${tiempoTxt}* (${item.fechaVencimiento})` },
+          { type: "mrkdwn", text: `👤 *Responsable:*\n${item.responsable || "_Sin asignar_"}` }
+        ]
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `💬 *Valores ignorados:*\n> \`${_truncar(item.valores, 80)}\``
+        }
+      },
+      {
+        type: "context",
+        elements: [
+          { type: "mrkdwn", text: `⚠️ *Estado:* *ACTIVA EN PLANILLA* (Sigue ignorando alertas en producción)` }
+        ]
       }
+    ];
+
+    // Botones de acción
+    const actionsElements = [];
+    if (jiraUrl) {
+      actionsElements.push({
+        type: "button",
+        text: { type: "plain_text", text: "⚡ Ver en Jira", emoji: true },
+        url: jiraUrl,
+        style: "danger"
+      });
+    }
+    if (item.fileUrl) {
+      actionsElements.push({
+        type: "button",
+        text: { type: "plain_text", text: "📊 Abrir Planilla", emoji: true },
+        url: item.fileUrl
+      });
+    }
+
+    if (actionsElements.length > 0) {
+      cardBlocks.push({ type: "actions", elements: actionsElements });
+    }
+
+    attachments.push({
+      color: "#E01E5A", // Rojo Alerta
+      blocks: cardBlocks
     });
-    texto += `\n`;
+    cardsCreadas++;
+  });
+
+  // SECCIÓN 2: PRÓXIMAS A VENCER EN 7 DÍAS (Naranja Advertencia #E67E22)
+  proximasAVencer.sort((a, b) => a.diasRestantes - b.diasRestantes);
+
+  proximasAVencer.forEach(item => {
+    if (cardsCreadas >= MAX_CARDS) return;
+
+    const tiempoTxt = item.diasRestantes === 0 ? "¡Vence HOY!" : `Vence en ${item.diasRestantes} día(s)`;
+    const jiraUrl = _obtenerUrlJira(item.ticket);
+
+    const cardBlocks = [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*${item.cliente}* › _${item.pestana}_\n🆔 Excepción: \`${item.id}\``
+        }
+      },
+      {
+        type: "section",
+        fields: [
+          { type: "mrkdwn", text: `⏰ *Vencimiento:*\n⏳ *${tiempoTxt}* (${item.fechaVencimiento})` },
+          { type: "mrkdwn", text: `👤 *Responsable:*\n${item.responsable || "_Sin asignar_"}` }
+        ]
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `💬 *Valores ignorados:*\n> \`${_truncar(item.valores, 80)}\``
+        }
+      },
+      {
+        type: "context",
+        elements: [
+          { type: "mrkdwn", text: `🟢 *Estado:* Activa (Requiere renovación antes del vencimiento)` }
+        ]
+      }
+    ];
+
+    // Botones de acción
+    const actionsElements = [];
+    if (jiraUrl) {
+      actionsElements.push({
+        type: "button",
+        text: { type: "plain_text", text: "⚡ Ver en Jira", emoji: true },
+        url: jiraUrl,
+        style: "primary"
+      });
+    }
+    if (item.fileUrl) {
+      actionsElements.push({
+        type: "button",
+        text: { type: "plain_text", text: "📊 Abrir Planilla", emoji: true },
+        url: item.fileUrl
+      });
+    }
+
+    if (actionsElements.length > 0) {
+      cardBlocks.push({ type: "actions", elements: actionsElements });
+    }
+
+    attachments.push({
+      color: "#E67E22", // Naranja advertencia
+      blocks: cardBlocks
+    });
+    cardsCreadas++;
+  });
+
+  // SECCIÓN 3: VENCIDAS RECIENTEMENTE ESTA SEMANA (Gris informativo)
+  if (vencidasRecientes.length > 0 && cardsCreadas < MAX_CARDS) {
+    const lineasRecientes = vencidasRecientes.map(v => 
+      `• *${v.cliente}* › _${v.pestana}_ (\`${v.id}\`): Venció el ${v.fechaVencimiento} (Inactiva)`
+    ).join("\n");
+
+    attachments.push({
+      color: "#95A5A6", // Gris neutro
+      blocks: [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `ℹ️ *Excepciones que vencieron esta semana (${vencidasRecientes.length}):*\n${lineasRecientes}`
+          }
+        }
+      ]
+    });
   }
 
-  if (planillasConError > 0) {
-    texto += `⚠️ _Nota: Hubo ${planillasConError} planilla(s) que no se pudieron abrir por permisos o ID inexistente. Revisar logs de Apps Script._\n`;
+  // Footer con link al Índice Maestro
+  if (linkIndiceMaestro) {
+    attachments.push({
+      color: "#109E58", // Verde Wetcom
+      blocks: [
+        {
+          type: "context",
+          elements: [
+            { type: "mrkdwn", text: `📝 <${linkIndiceMaestro}|Ver Índice Maestro en Google Sheets>` }
+          ]
+        }
+      ]
+    });
   }
 
-  texto += `👉 _Por favor revisar las planillas correspondientes para coordinar renovación con el cliente o dar de baja la excepción._`;
+  return {
+    text: `🚨 Control Semanal de Excepciones: ${vencidasActivas.length} vencidas activas, ${proximasAVencer.length} próximas a vencer.`,
+    blocks: blocks,
+    attachments: attachments
+  };
+}
 
-  return { text: texto };
+/**
+ * Resuelve la URL web de un ticket en Jira.
+ */
+function _obtenerUrlJira(ticket) {
+  if (!ticket || ticket.toLowerCase() === "n/a" || ticket.trim() === "") return null;
+  const clean = ticket.trim();
+  if (clean.startsWith("http://") || clean.startsWith("https://")) return clean;
+  const domain = PropertiesService.getScriptProperties().getProperty("JIRA_DOMAIN") || "https://wetcom.atlassian.net";
+  return `${domain.replace(/\/$/, "")}/browse/${clean}`;
 }
 
 /**
@@ -422,3 +613,4 @@ function _truncar(str, maxLen) {
   if (!str) return "";
   return str.length > maxLen ? str.substring(0, maxLen - 3) + "..." : str;
 }
+
