@@ -11,9 +11,6 @@
  * Se programa para ejecutarse los viernes por la mañana o manualmente a demanda.
  */
 
-// HARDCODE TEMPORAL DE PRUEBA (fácilmente reversible seteándolo en null)
-const ID_INDICE_MAESTRO_PRUEBA = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
-
 /**
  * Función principal para ejecutar la auditoría de excepciones.
  * 
@@ -267,15 +264,9 @@ function eliminarActivadorAuditorExcepciones() {
  * @returns {Array<{fileId: string, clientes: string[]}>}
  */
 function _obtenerPlanillasExcepcionesUnicas() {
-  let masterData;
-  if (typeof ID_INDICE_MAESTRO_PRUEBA !== "undefined" && ID_INDICE_MAESTRO_PRUEBA) {
-    Logger.log(`[AuditorExcepciones] 🧪 MODO PRUEBA: Leyendo planilla maestra hardcodeada (${ID_INDICE_MAESTRO_PRUEBA})...`);
-    masterData = SpreadsheetApp.openById(ID_INDICE_MAESTRO_PRUEBA).getSheets()[0].getDataRange().getValues();
-  } else {
-    masterData = (typeof MasterSheetSingleton !== "undefined" && MasterSheetSingleton.getMasterData)
-      ? MasterSheetSingleton.getMasterData()
-      : _leerMasterDataDirecto();
-  }
+  const masterData = (typeof MasterSheetSingleton !== "undefined" && MasterSheetSingleton.getMasterData)
+    ? MasterSheetSingleton.getMasterData()
+    : _leerMasterDataDirecto();
 
   if (!masterData || masterData.length < 2) return [];
 
@@ -394,9 +385,7 @@ function _parsearFechaExcepcion(val) {
 function _construirMensajeSlackExcepciones(datos) {
   const { vencidasActivas, vencidasRecientes, proximasAVencer, totalPlanillas, totalPestanas } = datos;
   const hoyStr = Utilities.formatDate(new Date(), "America/Argentina/Buenos_Aires", "dd/MM/yyyy");
-  const masterId = (typeof ID_INDICE_MAESTRO_PRUEBA !== "undefined" && ID_INDICE_MAESTRO_PRUEBA)
-    ? ID_INDICE_MAESTRO_PRUEBA
-    : (PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID") || "");
+  const masterId = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID") || "";
   const linkIndiceMaestro = masterId ? `https://docs.google.com/spreadsheets/d/${masterId}` : null;
 
   const hayAlertas = vencidasActivas.length > 0 || proximasAVencer.length > 0 || vencidasRecientes.length > 0;
