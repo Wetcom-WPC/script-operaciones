@@ -1312,4 +1312,47 @@ function manual_probarAvisoFeriadoEnMockSlack() {
   const resultado = sendSlackMessage(webhookMock, aviso);
   Logger.log("Resultado envío: " + (resultado ? "Éxito (200)" : "Revisar logs"));
   return resultado;
-}
+}
+
+// =================================================================
+// AUDITORÍA DE VENCIMIENTO DE EXCEPCIONES
+// =================================================================
+
+/**
+ * Ejecuta la auditoría de excepciones en modo manual (forzando ejecución
+ * sin importar el día de la semana) y emite los resultados por Logger.
+ */
+function manual_auditarVencimientoExcepciones() {
+  Logger.log("=== EJECUTANDO AUDITORÍA MANUAL DE EXCEPCIONES ===");
+  const res = auditarVencimientoExcepciones({ forzar: true, soloLog: false });
+  Logger.log("=== RESULTADO AUDITORÍA ===");
+  Logger.log(`Planillas auditadas: ${res.totalPlanillas}`);
+  Logger.log(`Pestañas auditadas: ${res.totalPestanas}`);
+  Logger.log(`Excepciones analizadas: ${res.totalExcepciones}`);
+  Logger.log(`Ya vencidas: ${res.vencidas ? res.vencidas.length : 0}`);
+  Logger.log(`Próximas a vencer (7 días): ${res.proximasAVencer ? res.proximasAVencer.length : 0}`);
+  return res;
+}
+
+/**
+ * Ejecuta la auditoría de excepciones forzada y envía el aviso al canal de pruebas (Slack mock).
+ */
+function manual_probarAuditorExcepcionesEnSlack() {
+  return probarAuditorExcepcionesEnSlack();
+}
+
+/**
+ * Configura el activador para que la auditoría corra automáticamente
+ * todos los viernes a las 09:00 AM.
+ */
+function manual_configurarActivadorVencimientoExcepciones() {
+  configurarActivadorAuditorExcepciones();
+}
+
+/**
+ * Elimina el activador semanal de auditoría de excepciones si ya no se requiere.
+ */
+function manual_eliminarActivadorVencimientoExcepciones() {
+  eliminarActivadorAuditorExcepciones();
+}
+
