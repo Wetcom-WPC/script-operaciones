@@ -380,10 +380,10 @@ function _parsearFechaExcepcion(val) {
 }
 
 /**
- * Construye el mensaje formateado con Slack Block Kit & Attachments (estética moderna tipo tarjetas con borde).
+ * Construye el mensaje formateado con Slack Block Kit & Attachments (formato compacto agrupado por cliente).
  */
 function _construirMensajeSlackExcepciones(datos) {
-  const { vencidasActivas, vencidasRecientes, proximasAVencer, totalPlanillas, totalPestanas, planillasConError } = datos;
+  const { vencidasActivas, vencidasRecientes, proximasAVencer, totalPlanillas, totalPestanas } = datos;
   const hoyStr = Utilities.formatDate(new Date(), "America/Argentina/Buenos_Aires", "dd/MM/yyyy");
   const masterId = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID") || "";
   const linkIndiceMaestro = masterId ? `https://docs.google.com/spreadsheets/d/${masterId}` : null;
@@ -395,7 +395,7 @@ function _construirMensajeSlackExcepciones(datos) {
     return null;
   }
 
-  // CASO 2: HAY ALERTAS (Bloques principales + Attachments de color por cada alerta)
+  // Encabezado general con métricas
   const blocks = [
     {
       type: "header",
@@ -410,155 +410,125 @@ function _construirMensajeSlackExcepciones(datos) {
       elements: [
         {
           type: "mrkdwn",
-          text: `⏰ *Revisión semanal:* ${hoyStr} · Se auditaron *${totalPlanillas} planillas* (${totalPestanas} pestañas de tecnologías)`
+          text: `⏰ *Revisión semanal:* ${hoyStr} · Se auditaron *${totalPlanillas} planillas* (${totalPestanas} pestañas) · *${vencidasActivas.length} vencidas activas* · *${proximasAVencer.length} por vencer*`
         }
       ]
     }
   ];
 
   const attachments = [];
-  const MAX_CARDS = 18; // Margen de seguridad para no exceder límites de Slack
-  let cardsCreadas = 0;
 
-  // SECCIÓN 1: VENCIDAS PERO SIGUEN ACTIVAS (Rojo Alerta Crítica #E01E5A)
-  vencidasActivas.forEach(item => {
-    if (cardsCreadas >= MAX_CARDS) return;
+  // =================================================================
+  // SECCIÓN 1: PRÓXIMAS A VENCER EN 7 DÍAS (Naranja #E67E22)
+  // Agrupadas por Cliente para máxima practicidad
+  // =================================================================
+  if (proximasAVencer.length > 0) {
+    const gruposPorVencer = _agruparPorClienteYPestana(proximasAVencer);
 
-    const diasVencida = Math.abs(item.diasRestantes);
-    const tiempoTxt = diasVencida === 0 ? "hoy" : `hace ${diasVencida} día(s)`;
-    const jiraUrl = _obtenerUrlJira(item.ticket);
+    gruposPorVencer.forEach(grupo => {
+      let lineas = [];
 
-    const cardBlocks = [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*${item.cliente}* › _${item.pestana}_\n🆔 Excepción: \`${item.id}\``
-        }
-      },
-      {
-        type: "section",
-        fields: [
-          { type: "mrkdwn", text: `⏰ *Vencimiento:*\n🚨 Venció *${tiempoTxt}* (${item.fechaVencimiento})` },
-          { type: "mrkdwn", text: `👤 *Responsable:*\n${item.responsable || "_Sin asignar_"}` }
-        ]
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `💬 *Valores ignorados:*\n> \`${_truncar(item.valores, 80)}\``
-        }
-      },
-      {
-        type: "context",
-        elements: [
-          { type: "mrkdwn", text: `⚠️ *Estado:* *ACTIVA EN PLANILLA* (Sigue ignorando alertas en producción)` }
-        ]
+      for (const pestana in grupo.pestanas) {
+        lineas.push(`• *${pestana}*:`);
+        grupo.pestanas[pestana].forEach(it => {
+          const tiempoTxt = it.diasRestantes === 0 ? "¡Vence HOY!" : `vence en ${it.diasRestantes} día(s)`;
+          const respTxt = it.responsable ? ` · _Resp: ${it.responsable}_` : "";
+          const valTxt = it.valores ? ` → \`${_truncar(it.valores, 30)}\`` : "";
+          lineas.push(`   └ \`${it.id}\` (*${tiempoTxt}* - ${it.fechaVencimiento}${respTxt})${valTxt}`);
+        });
       }
-    ];
 
-    // Botones de acción
-    const actionsElements = [];
-    if (jiraUrl) {
-      actionsElements.push({
-        type: "button",
-        text: { type: "plain_text", text: "⚡ Ver en Jira", emoji: true },
-        url: jiraUrl,
-        style: "danger"
-      });
-    }
-    if (item.fileUrl) {
-      actionsElements.push({
-        type: "button",
-        text: { type: "plain_text", text: "📊 Abrir Planilla", emoji: true },
-        url: item.fileUrl
-      });
-    }
-
-    if (actionsElements.length > 0) {
-      cardBlocks.push({ type: "actions", elements: actionsElements });
-    }
-
-    attachments.push({
-      color: "#E01E5A", // Rojo Alerta
-      blocks: cardBlocks
-    });
-    cardsCreadas++;
-  });
-
-  // SECCIÓN 2: PRÓXIMAS A VENCER EN 7 DÍAS (Naranja Advertencia #E67E22)
-  proximasAVencer.sort((a, b) => a.diasRestantes - b.diasRestantes);
-
-  proximasAVencer.forEach(item => {
-    if (cardsCreadas >= MAX_CARDS) return;
-
-    const tiempoTxt = item.diasRestantes === 0 ? "¡Vence HOY!" : `Vence en ${item.diasRestantes} día(s)`;
-    const jiraUrl = _obtenerUrlJira(item.ticket);
-
-    const cardBlocks = [
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*${item.cliente}* › _${item.pestana}_\n🆔 Excepción: \`${item.id}\``
+      const cardBlocks = [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `⏳ *${grupo.cliente}* — ${grupo.total} excepción(es) próxima(s) a vencer:\n${lineas.join("\n")}`
+          }
         }
-      },
-      {
-        type: "section",
-        fields: [
-          { type: "mrkdwn", text: `⏰ *Vencimiento:*\n⏳ *${tiempoTxt}* (${item.fechaVencimiento})` },
-          { type: "mrkdwn", text: `👤 *Responsable:*\n${item.responsable || "_Sin asignar_"}` }
-        ]
-      },
-      {
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `💬 *Valores ignorados:*\n> \`${_truncar(item.valores, 80)}\``
-        }
-      },
-      {
-        type: "context",
-        elements: [
-          { type: "mrkdwn", text: `🟢 *Estado:* Activa (Requiere renovación antes del vencimiento)` }
-        ]
+      ];
+
+      // Botón único para abrir la planilla del cliente
+      if (grupo.fileUrl) {
+        cardBlocks.push({
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: { type: "plain_text", text: "📊 Abrir Planilla de Excepciones", emoji: true },
+              url: grupo.fileUrl
+            }
+          ]
+        });
       }
-    ];
 
-    // Botones de acción
-    const actionsElements = [];
-    if (jiraUrl) {
-      actionsElements.push({
-        type: "button",
-        text: { type: "plain_text", text: "⚡ Ver en Jira", emoji: true },
-        url: jiraUrl,
-        style: "primary"
+      attachments.push({
+        color: "#E67E22", // Naranja advertencia
+        blocks: cardBlocks
       });
-    }
-    if (item.fileUrl) {
-      actionsElements.push({
-        type: "button",
-        text: { type: "plain_text", text: "📊 Abrir Planilla", emoji: true },
-        url: item.fileUrl
-      });
-    }
-
-    if (actionsElements.length > 0) {
-      cardBlocks.push({ type: "actions", elements: actionsElements });
-    }
-
-    attachments.push({
-      color: "#E67E22", // Naranja advertencia
-      blocks: cardBlocks
     });
-    cardsCreadas++;
-  });
+  }
 
-  // SECCIÓN 3: VENCIDAS RECIENTEMENTE ESTA SEMANA (Gris informativo)
-  if (vencidasRecientes.length > 0 && cardsCreadas < MAX_CARDS) {
+  // =================================================================
+  // SECCIÓN 2: VENCIDAS PERO SIGUEN ACTIVAS (Rojo Alerta Crítica #E01E5A)
+  // Agrupadas por Cliente y Pestaña (1 tarjeta compacta por cliente)
+  // =================================================================
+  if (vencidasActivas.length > 0) {
+    const gruposVencidas = _agruparPorClienteYPestana(vencidasActivas);
+
+    gruposVencidas.forEach(grupo => {
+      let lineas = [];
+
+      for (const pestana in grupo.pestanas) {
+        const items = grupo.pestanas[pestana];
+        lineas.push(`• *${pestana}* (${items.length}):`);
+        items.forEach(it => {
+          const diasVencida = Math.abs(it.diasRestantes);
+          const valTxt = it.valores ? ` → \`${_truncar(it.valores, 30)}\`` : "";
+          lineas.push(`   └ \`${it.id}\` (hace ${diasVencida}d · ${it.fechaVencimiento})${valTxt}`);
+        });
+      }
+
+      const cardBlocks = [
+        {
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: `🚨 *${grupo.cliente}* — ${grupo.total} excepción(es) vencida(s) y *ACTIVAS*:\n` +
+                  `_⚠️ Siguen configuradas en "SI", ignorando alertas en producción._\n\n` +
+                  `${lineas.join("\n")}`
+          }
+        }
+      ];
+
+      // Botón único para abrir la planilla de excepciones del cliente
+      if (grupo.fileUrl) {
+        cardBlocks.push({
+          type: "actions",
+          elements: [
+            {
+              type: "button",
+              text: { type: "plain_text", text: "📊 Abrir Planilla para Actualizar / Dar de Baja", emoji: true },
+              url: grupo.fileUrl,
+              style: "danger"
+            }
+          ]
+        });
+      }
+
+      attachments.push({
+        color: "#E01E5A", // Rojo Alerta
+        blocks: cardBlocks
+      });
+    });
+  }
+
+  // =================================================================
+  // SECCIÓN 3: VENCIDAS ESTA SEMANA (Inactivas - Informativo)
+  // =================================================================
+  if (vencidasRecientes.length > 0) {
     const lineasRecientes = vencidasRecientes.map(v => 
-      `• *${v.cliente}* › _${v.pestana}_ (\`${v.id}\`): Venció el ${v.fechaVencimiento} (Inactiva)`
+      `• *${v.cliente}* › _${v.pestana}_ (\`${v.id}\`): venció el ${v.fechaVencimiento}`
     ).join("\n");
 
     attachments.push({
@@ -598,14 +568,30 @@ function _construirMensajeSlackExcepciones(datos) {
 }
 
 /**
- * Resuelve la URL web de un ticket en Jira.
+ * Agrupa una lista de excepciones por cliente y luego por pestaña.
+ * @param {Array} items
+ * @returns {Array<{cliente: string, fileUrl: string, total: number, pestanas: Object}>}
  */
-function _obtenerUrlJira(ticket) {
-  if (!ticket || ticket.toLowerCase() === "n/a" || ticket.trim() === "") return null;
-  const clean = ticket.trim();
-  if (clean.startsWith("http://") || clean.startsWith("https://")) return clean;
-  const domain = PropertiesService.getScriptProperties().getProperty("JIRA_DOMAIN") || "https://wetcom.atlassian.net";
-  return `${domain.replace(/\/$/, "")}/browse/${clean}`;
+function _agruparPorClienteYPestana(items) {
+  const map = {};
+
+  items.forEach(it => {
+    if (!map[it.cliente]) {
+      map[it.cliente] = {
+        cliente: it.cliente,
+        fileUrl: it.fileUrl,
+        pestanas: {},
+        total: 0
+      };
+    }
+    map[it.cliente].total++;
+    if (!map[it.cliente].pestanas[it.pestana]) {
+      map[it.cliente].pestanas[it.pestana] = [];
+    }
+    map[it.cliente].pestanas[it.pestana].push(it);
+  });
+
+  return Object.values(map);
 }
 
 /**
@@ -615,4 +601,5 @@ function _truncar(str, maxLen) {
   if (!str) return "";
   return str.length > maxLen ? str.substring(0, maxLen - 3) + "..." : str;
 }
+
 
