@@ -153,7 +153,24 @@ function auditarVencimientoExcepciones(opciones = {}) {
   Logger.log(`Auditoría finalizada: ${planillas.length} planillas, ${totalPestanasAuditadas} pestañas, ${totalExcepcionesAuditadas} excepciones.`);
   Logger.log(`Resultados -> Vencidas activas: ${vencidasActivas.length} | Vencidas esta semana: ${vencidasRecientes.length} | Próximas a vencer (7d): ${proximasAVencer.length}`);
 
-  // 5. Enviar reporte a Slack si corresponde
+  const hayAlertas = vencidasActivas.length > 0 || proximasAVencer.length > 0 || vencidasRecientes.length > 0;
+
+  // 5. Si todo está al día, NO se envía mensaje a Slack (evita ruido innecesario)
+  if (!hayAlertas) {
+    Logger.log("✨ Todas las excepciones están al día. No es necesario enviar aviso a Slack.");
+    return {
+      status: "OK",
+      totalPlanillas: planillas.length,
+      totalPestanas: totalPestanasAuditadas,
+      totalExcepciones: totalExcepcionesAuditadas,
+      vencidasActivas,
+      vencidasRecientes,
+      proximasAVencer,
+      mensajeEnviado: false
+    };
+  }
+
+  // 6. Enviar reporte a Slack únicamente si se detectaron excepciones que requieren atención
   if (!opciones.soloLog) {
     const props = PropertiesService.getScriptProperties();
     const webhook = opciones.webhookUrl
@@ -170,8 +187,10 @@ function auditarVencimientoExcepciones(opciones = {}) {
         totalPestanas: totalPestanasAuditadas,
         planillasConError
       });
-      sendSlackMessage(webhook, payloadSlack);
-      Logger.log("✅ Reporte de excepciones enviado a Slack exitosamente.");
+      if (payloadSlack) {
+        sendSlackMessage(webhook, payloadSlack);
+        Logger.log("✅ Reporte de excepciones enviado a Slack exitosamente.");
+      }
     } else {
       Logger.log("⚠️ No se encontró webhook configurado para enviar la auditoría a Slack.");
     }
@@ -184,7 +203,8 @@ function auditarVencimientoExcepciones(opciones = {}) {
     totalExcepciones: totalExcepcionesAuditadas,
     vencidasActivas,
     vencidasRecientes,
-    proximasAVencer
+    proximasAVencer,
+    mensajeEnviado: true
   };
 }
 
@@ -370,27 +390,9 @@ function _construirMensajeSlackExcepciones(datos) {
 
   const hayAlertas = vencidasActivas.length > 0 || proximasAVencer.length > 0 || vencidasRecientes.length > 0;
 
-  // CASO 1: TODO AL DÍA (Verde Wetcom)
+  // Si no hay alertas, no se envía absolutamente nada a Slack (cero ruido)
   if (!hayAlertas) {
-    return {
-      text: `✨ Todo al día: No se detectaron excepciones vencidas ni próximas a vencer a 7 días.`,
-      attachments: [
-        {
-          color: "#109E58", // Verde Wetcom
-          blocks: [
-            {
-              type: "section",
-              text: {
-                type: "mrkdwn",
-                text: `✨ *[Auditoría Semanal de Excepciones — ${hoyStr}]*\n` +
-                      `¡Excelente trabajo! Todas las excepciones están vigentes y ninguna vence en los próximos 7 días.\n` +
-                      `_Se auditaron *${totalPlanillas} planillas* de clientes (${totalPestanas} pestañas de tecnologías)._`
-              }
-            }
-          ]
-        }
-      ]
-    };
+    return null;
   }
 
   // CASO 2: HAY ALERTAS (Bloques principales + Attachments de color por cada alerta)
