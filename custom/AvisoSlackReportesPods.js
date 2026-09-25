@@ -28,46 +28,46 @@ function getAvisoWebhooks() {
 
 // ─── FUNCIÓN PRINCIPAL ───────────────────────────────────────────────────────
 
-function verificarReporte() {
-
-  // FRENO FIN DE SEMANA
-  var diaSemana = new Date().getDay();
-  if (diaSemana === 0 || diaSemana === 6) {
-    Logger.log("EJECUCIÓN OMITIDA: Fin de semana.");
-    return;
-  }
-
-  // FRENO DE FERIADOS
-  if (esFeriadoHoy()) {
-    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el API de feriados.");
-    return;
-  }
+/**
+ * Calcula, para cada cliente activo de "Configuracion Reportes", qué reportes llegaron hoy
+ * a Drive y cuáles no. NO manda nada a Slack: solo devuelve el estado.
+ *
+ * Se separó de verificarReporte() para que el dashboard muestre EXACTAMENTE el mismo estado
+ * que se avisa por Slack, sin reimplementar el chequeo de Drive. Si esta lógica viviera en
+ * dos lados, el día que alguien arregle uno los dos empezarían a decir cosas distintas sobre
+ * el mismo cliente y no habría forma de saber a cuál creerle — es el patrón del §5 de
+ * AGENTS.md, que en este proyecto ya rompió cosas dos veces.
+ *
+ * Los frenos de fin de semana y feriado NO están acá a propósito: son del AVISO (no tiene
+ * sentido spamear un sábado), no del estado. Si alguien abre el dashboard un sábado, tiene
+ * que poder ver qué llegó y qué no.
+ *
+ * @param {Date} [fecha] Día a evaluar. Por defecto, hoy.
+ * @returns {{fecha: string, calculadoA: string, clientes: Object}} Estado por cliente.
+ */
+function calcularEstadoReportesPorPod(fecha) {
+  var fechaHoy     = fecha instanceof Date ? fecha : new Date();
+  var tz           = Session.getScriptTimeZone();
+  var fechaCarpeta = Utilities.formatDate(fechaHoy, tz, "yyyyMMdd");
+  var diaSemanaStr = obtenerNombreDia(fechaHoy);
+  var semanaMes    = obtenerSemanaDelMes(fechaHoy);
+  var diaDelMes    = fechaHoy.getDate();
 
   var maxReintentos = 3;
   var intentoActual = 0;
-  var exito = false;
 
-  while (intentoActual < maxReintentos && !exito) {
+  while (true) {
     try {
-
       // 1. Abrir hoja de Configuracion Reportes
       var spreadsheet = SpreadsheetApp.openById(AVISO_CONFIG_SHEET_ID);
       var sheet = spreadsheet.getSheetByName(AVISO_CONFIG_TAB_NAME);
       if (!sheet) {
-        Logger.log("Error: No se encontró la pestaña '" + AVISO_CONFIG_TAB_NAME + "'.");
-        return;
+        throw new Error("No se encontró la pestaña '" + AVISO_CONFIG_TAB_NAME + "'.");
       }
 
-      var data        = sheet.getDataRange().getValues();
-      var baseFolder  = DriveApp.getFolderById(AVISO_BASE_FOLDER_ID);
-      var fechaHoy    = new Date();
-      var fechaCarpeta = Utilities.formatDate(fechaHoy, Session.getScriptTimeZone(), "yyyyMMdd");
-      var diaSemanaStr = obtenerNombreDia(fechaHoy);
-      var semanaMes   = obtenerSemanaDelMes(fechaHoy);
-      var diaDelMes   = fechaHoy.getDate();
-
-      var mensajesPorPod     = {};
-      var reportesPorCliente = {};
+      var data       = sheet.getDataRange().getValues();
+      var baseFolder = DriveApp.getFolderById(AVISO_BASE_FOLDER_ID);
+      var clientes   = {};
 
       // 2. Procesar cada cliente de la hoja
       for (var i = 1; i < data.length; i++) {
@@ -84,65 +84,43 @@ function verificarReporte() {
           continue;
         }
 
-        if (!reportesPorCliente[clienteNombre]) {
-          reportesPorCliente[clienteNombre] = {
+        if (!clientes[clienteNombre]) {
+          clientes[clienteNombre] = {
             pod: pod,
             encontrados: [],
             noEncontrados: [],
-            urlCarpeta: null
+            urlCarpeta: null,
+            errores: []
           };
         }
 
         var clienteFolder = obtenerSubCarpeta(baseFolder, clienteNombre);
         if (!clienteFolder) {
-          agregarMensaje(mensajesPorPod, pod, ":warning: *" + clienteNombre + "*: No se encontró la carpeta en Drive.");
+          clientes[clienteNombre].errores.push("No se encontró la carpeta en Drive.");
           continue;
         }
 
         var fechaFolder = obtenerSubCarpeta(clienteFolder, fechaCarpeta);
         if (!fechaFolder) {
-          agregarMensaje(mensajesPorPod, pod, ":warning: *" + clienteNombre + "*: No se encontró la carpeta " + fechaCarpeta + ".");
+          clientes[clienteNombre].errores.push("No se encontró la carpeta " + fechaCarpeta + ".");
           continue;
         }
 
         var resultado = verificarArchivoPorPalabraClave(fechaFolder, palabraClaveArchivo);
-        reportesPorCliente[clienteNombre].urlCarpeta = fechaFolder.getUrl();
+        clientes[clienteNombre].urlCarpeta = fechaFolder.getUrl();
 
         if (resultado.encontrado) {
-          reportesPorCliente[clienteNombre].encontrados.push(palabraClaveArchivo);
+          clientes[clienteNombre].encontrados.push(palabraClaveArchivo);
         } else {
-          reportesPorCliente[clienteNombre].noEncontrados.push(palabraClaveArchivo);
+          clientes[clienteNombre].noEncontrados.push(palabraClaveArchivo);
         }
       }
 
-      // 3. Construcción y envío de mensajes
-      for (var cliente in reportesPorCliente) {
-        var datos = reportesPorCliente[cliente];
-        var pod   = datos.pod;
-        var url   = datos.urlCarpeta || "";
-
-        if (datos.encontrados.length > 0) {
-          agregarMensaje(mensajesPorPod, pod,
-            ":white_check_mark: *" + cliente + "*: Los reportes *" + datos.encontrados.join(", ") +
-            "* fueron recibidos correctamente. :open_file_folder: <" + url + "|Carpeta>");
-        }
-        if (datos.noEncontrados.length > 0) {
-          agregarMensaje(mensajesPorPod, pod,
-            ":warning: *" + cliente + "*: Los reportes *" + datos.noEncontrados.join(", ") + 
-            "* NO han llegado." + (url ? " :open_file_folder: <" + url + "|Carpeta>" : "")
-          );
-        }
-      }
-
-      for (var pod in mensajesPorPod) {
-        if (mensajesPorPod[pod].length > 0) {
-          var webhooksMap = getAvisoWebhooks();
-          var webhookUrl = webhooksMap[pod] || webhooksMap["DEFAULT"];
-          _enviarMensajeSlackPod(mensajesPorPod[pod].join("\n"), webhookUrl);
-        }
-      }
-
-      exito = true;
+      return {
+        fecha: fechaCarpeta,
+        calculadoA: Utilities.formatDate(new Date(), tz, "HH:mm"),
+        clientes: clientes
+      };
 
     } catch (error) {
       intentoActual++;
@@ -156,6 +134,61 @@ function verificarReporte() {
       } else {
         throw error;
       }
+    }
+  }
+}
+
+/**
+ * Avisa por Slack, a cada canal de POD, qué reportes llegaron hoy y cuáles no.
+ *
+ * El cálculo vive en calcularEstadoReportesPorPod(); acá solo se arma el texto y se manda.
+ * Los mensajes salen idénticos a como salían antes del refactor.
+ */
+function verificarReporte() {
+
+  // FRENO FIN DE SEMANA
+  var diaSemana = new Date().getDay();
+  if (diaSemana === 0 || diaSemana === 6) {
+    Logger.log("EJECUCIÓN OMITIDA: Fin de semana.");
+    return;
+  }
+
+  // FRENO DE FERIADOS
+  if (esFeriadoHoy()) {
+    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el API de feriados.");
+    return;
+  }
+
+  var estado         = calcularEstadoReportesPorPod(new Date());
+  var mensajesPorPod = {};
+
+  for (var cliente in estado.clientes) {
+    var datos = estado.clientes[cliente];
+    var pod   = datos.pod;
+    var url   = datos.urlCarpeta || "";
+
+    datos.errores.forEach(function (motivo) {
+      agregarMensaje(mensajesPorPod, pod, ":warning: *" + cliente + "*: " + motivo);
+    });
+
+    if (datos.encontrados.length > 0) {
+      agregarMensaje(mensajesPorPod, pod,
+        ":white_check_mark: *" + cliente + "*: Los reportes *" + datos.encontrados.join(", ") +
+        "* fueron recibidos correctamente. :open_file_folder: <" + url + "|Carpeta>");
+    }
+    if (datos.noEncontrados.length > 0) {
+      agregarMensaje(mensajesPorPod, pod,
+        ":warning: *" + cliente + "*: Los reportes *" + datos.noEncontrados.join(", ") +
+        "* NO han llegado." + (url ? " :open_file_folder: <" + url + "|Carpeta>" : "")
+      );
+    }
+  }
+
+  for (var podDestino in mensajesPorPod) {
+    if (mensajesPorPod[podDestino].length > 0) {
+      var webhooksMap = getAvisoWebhooks();
+      var webhookUrl = webhooksMap[podDestino] || webhooksMap["DEFAULT"];
+      _enviarMensajeSlackPod(mensajesPorPod[podDestino].join("\n"), webhookUrl);
     }
   }
 }

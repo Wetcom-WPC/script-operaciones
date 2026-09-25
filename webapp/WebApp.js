@@ -1112,6 +1112,78 @@ function webapp_calcularProximoEnvio() {
   };
 }
 
+// Cuánto se guarda el estado de Drive antes de volver a escanearlo. Escanear Drive cliente
+// por cliente es lo más caro de todo el dashboard, así que no puede recalcularse en cada
+// refresco: con el auto-refresco cada 60s y varias personas mirando, serían cientos de
+// recorridas por hora.
+//
+// Se eligió caché perezoso en vez de un trigger programado a propósito. Un trigger cada 15
+// minutos corre 96 veces por día aunque nadie abra el dashboard — incluido el domingo a las
+// 3 AM — y la cuota de Apps Script es la misma que necesitan las operaciones. Así, el primero
+// que mira paga el escaneo y el resto lee lo guardado; cuando nadie mira, no cuesta nada.
+const WEBAPP_CACHE_DRIVE_SEGUNDOS = 600; // 10 minutos
+
+/**
+ * Estado de los reportes en Drive (qué llegó hoy y qué no), listo para el semáforo.
+ *
+ * El cálculo NO vive acá: se reusa calcularEstadoReportesPorPod() de
+ * custom/AvisoSlackReportesPods.js, que es la misma función que alimenta el aviso a los
+ * canales de POD. Así el dashboard y Slack no pueden contradecirse (AGENTS.md §5).
+ *
+ * @param {boolean} [forzar] true para saltear el caché (botón "Actualizar" del dashboard).
+ * @returns {Object} { fecha, calculadoA, desdeCache, clientes }
+ */
+function webapp_obtenerEstadoReportesDrive(forzar) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+
+  const cacheKey = "webapp_reportes_drive_v1";
+  const cache = CacheService.getScriptCache();
+
+  if (!forzar) {
+    const guardado = cache.get(cacheKey);
+    if (guardado) {
+      try {
+        const parseado = JSON.parse(guardado);
+        parseado.desdeCache = true;
+        return parseado;
+      } catch (e) {}
+    }
+  }
+
+  let estado;
+  try {
+    estado = calcularEstadoReportesPorPod(new Date());
+  } catch (err) {
+    // No se puede saber el estado de Drive. Se devuelve el error en vez de una lista vacía:
+    // "no pude fijarme" y "no llegó nada" son cosas distintas, y pintar todo de rojo por un
+    // fallo de Drive haría que el equipo salga a buscar reportes que sí estaban (AGENTS.md §7).
+    Logger.log("[WebApp] No se pudo calcular el estado de Drive: " + err.message);
+    return {
+      fecha: Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, "yyyyMMdd"),
+      calculadoA: Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, "HH:mm"),
+      desdeCache: false,
+      error: "No se pudo leer Drive: " + err.message,
+      clientes: {}
+    };
+  }
+
+  estado.desdeCache = false;
+
+  try {
+    const serializado = JSON.stringify(estado);
+    // CacheService corta en 100 KB por clave. Si el estado creció más que eso, se sirve sin
+    // cachear antes que perder la entrada entera en silencio.
+    if (serializado.length < 90000) {
+      cache.put(cacheKey, serializado, WEBAPP_CACHE_DRIVE_SEGUNDOS);
+    } else {
+      Logger.log("[WebApp] Estado de Drive demasiado grande para el caché (" + serializado.length + " bytes): se sirve sin cachear.");
+    }
+  } catch (e) {}
+
+  return estado;
+}
+
 /**
  * Devuelve la matriz de salud operativa agrupada por cliente y tecnología para la pestaña "Salud Operativa".
  * @param {string} filtroPeriodo 'hoy' | 'ayer' | 'semana'
