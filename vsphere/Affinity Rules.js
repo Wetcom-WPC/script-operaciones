@@ -12,8 +12,8 @@ const AFFINITY_EMAIL_SUBJECT = "Affinity Rules";
 const AFFINITY_FILENAME_MATCH = ".json";
 const AFFINITY_SCHEDULED_TASK_NAME_TO_CLOSE = "Affinity Rules";
 const AFFINITY_ROW_LIMIT_FOR_TABLE = 10;
-const AFFINITY_JIRA_TICKET_SUMMARY_TABLE = "Se detectaron VMs sin Affinity Rules configuradas";
-const AFFINITY_JIRA_TICKET_SUMMARY_ATTACHMENT = "Se detectaron VMs sin Affinity Rules configuradas";
+const AFFINITY_JIRA_TICKET_SUMMARY_TABLE = "Se detectaron incumplimientos/inconsistencias en las reglas de afinidad";
+const AFFINITY_JIRA_TICKET_SUMMARY_ATTACHMENT = "Se detectaron incumplimientos/inconsistencias en las reglas de afinidad";
 
 
 class AffinityRulesProcessor extends MailProcessor {

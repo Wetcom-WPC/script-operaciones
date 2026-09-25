@@ -497,6 +497,13 @@ function createTicketAndNotify(summary, description, attachmentBlob, clientConfi
         return attachmentStatus;
     }
 
+    // Si no es informativa, el ticket queda SIN ASIGNAR a propósito: la asignación automática
+    // es exclusiva de las tareas informativas (por Informante ID, columna D de la pestaña
+    // "Informativas" del Índice Maestro — ver chequearSiEsInformativa()). Antes se le asignaba
+    // igual un "dueño por defecto" (JIRA_DEFAULT_ASSIGNEE_ID) a TODO ticket nuevo, real o de
+    // testing, lo que lo hacía parecer atendido sin que nadie lo hubiera tomado. Sin asignar es
+    // más visible en la cola de trabajo real.
+
     // 3. SI NO ES INFORMATIVO, SIGUE EL FLUJO NORMAL
     if (attachmentStatus) return attachmentStatus; // Retornamos el error si hubo fallo
     return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.`, cliente: clientConfig.clientName } };
