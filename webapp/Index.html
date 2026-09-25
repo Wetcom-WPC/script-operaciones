@@ -205,6 +205,9 @@
             <select id="filtroPodHorarios" class="select-control" aria-label="Filtrar por POD" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
               <option value="">Todos los PODs</option>
             </select>
+            <select id="filtroOperadorHorarios" class="select-control" aria-label="Filtrar por operador" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
+              <option value="">Todos los operadores</option>
+            </select>
             <!-- El PDF es de UN cliente (se habilita al elegirlo); Slack manda lo que se ve,
                  agrupado por POD, y pide confirmación antes. -->
             <button id="btnPdfHorarios" class="btn-secundario" style="margin-left: auto;" disabled title="Elegí un cliente para armar su PDF">📄 PDF del cliente</button>
@@ -252,6 +255,22 @@
             </table>
           </div>
           <p id="horariosVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">No hay envíos registrados para los filtros seleccionados.</p>
+
+          <!-- Cuánta gente operó: quién tildó la casilla en el Índice (automáticos) o quién mandó
+               el mail con alarmas@ en copia (a mano). -->
+          <div class="chart-card" style="margin-top: 20px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+            <h3 id="tituloOperadoresHorarios" style="margin-bottom: 12px; font-size: 16px;">Operadores por día</h3>
+            <p id="operadoresVacio" class="ayuda" style="display: none; margin: 0;">
+              Todavía no hay datos de operador para este período. Se registran desde que el Índice anota quién tildó la casilla,
+              y en los envíos a mano, desde que van con alarmas@wetcom.com en copia.
+            </p>
+            <div class="table-responsive" style="overflow-x: auto;">
+              <table class="tabla-logs" id="tablaOperadores" style="width: 100%; border-collapse: collapse;">
+                <thead><tr><th id="thDiaOperadores">Día</th><th>Operadores</th><th>Quiénes</th></tr></thead>
+                <tbody id="tbodyOperadores"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
 

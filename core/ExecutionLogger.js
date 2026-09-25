@@ -101,6 +101,12 @@ function flushLogs() {
       const sheetMail = ss.getSheetByName(LOG_MAILS_TAB_NAME);
       if (sheetMail) {
         sheetMail.getRange(sheetMail.getLastRow() + 1, 1, _bufferMails.length, _bufferMails[0].length).setValues(_bufferMails);
+        // Las planillas creadas antes de la columna Operador no tienen su encabezado: se
+        // agrega la primera vez que se escribe una fila con ella.
+        const celdaK = sheetMail.getRange(1, 11);
+        if (_bufferMails[0].length >= 11 && celdaK.getValue() === "") {
+          celdaK.setValue("Operador").setFontWeight("bold").setBackground("#1A5276").setFontColor("#FFFFFF");
+        }
       }
     }
     
@@ -252,7 +258,10 @@ function _registrarErrorScript(operationName, origen, cliente, errores) {
   }
 }
 // ─── FUNCIÓN PÚBLICA PARA REGISTRO DE ENVÍO DE MAILS ─────────────────────────
-function registrarEnvioMail(tecnologia, cliente, pod, totalTickets, itemsErrores, itemsAdvertencias, asunto, modoTest) {
+// `operador` es el mail de quien tildó la casilla en el Índice (lo captura vigilarCheckbox con
+// e.user). Es opcional y va al final a propósito: un Índice que todavía no lo manda sigue
+// funcionando igual, y la fila queda con la columna K vacía.
+function registrarEnvioMail(tecnologia, cliente, pod, totalTickets, itemsErrores, itemsAdvertencias, asunto, modoTest, operador) {
   try {
     const ss    = SpreadsheetApp.openById(LOG_SHEET_ID);
     const sheet = ss.getSheetByName(LOG_MAILS_TAB_NAME);
@@ -273,6 +282,7 @@ function registrarEnvioMail(tecnologia, cliente, pod, totalTickets, itemsErrores
       fecha, hora, diaSemana,
       cliente, tecnologia, pod, estado,
       cantTotal, cantSoporte, cantOperaciones,
+      String(operador || "").trim().toLowerCase(),
     ]);
   } catch (e) {
     Logger.log("[LOG-MAIL] Error al registrar envío de mail: " + e.message);

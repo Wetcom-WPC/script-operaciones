@@ -93,11 +93,12 @@ function inicializarHojaLog() {
     "Total Tickets",  // H
     "Soporte",        // I
     "Operaciones",    // J
+    "Operador",       // K  (quién tildó la casilla en el Índice)
   ];
   tabMails.getRange(1, 1, 1, colsMails.length).setValues([colsMails])
           .setFontWeight("bold").setBackground("#1A5276").setFontColor("#FFFFFF");
   tabMails.setFrozenRows(1);
-  [[1,100],[2,80],[3,100],[4,180],[5,120],[6,70],[7,160],[8,100],[9,100],[10,110]]
+  [[1,100],[2,80],[3,100],[4,180],[5,120],[6,70],[7,160],[8,100],[9,100],[10,110],[11,200]]
   .forEach(function(cw) { tabMails.setColumnWidth(cw[0], cw[1]); });
   const rEstMail = tabMails.getRange("G2:G");
   tabMails.setConditionalFormatRules([

@@ -924,6 +924,7 @@ function webapp_obtenerEstadoIndice() {
         const tieneVeeam   = servicios.includes("veeam");
         const tieneNutanix = servicios.includes("nutanix");
         const tieneHorizon = servicios.includes("horizon");
+        const tieneTanzu   = servicios.includes("tanzu");
         const tieneRVTools = servicios.includes("rvtools") || tieneVsphere;
 
         // Normalización de POD (ej: "POD1", "pod1@wetcom.com" -> "POD1")
@@ -948,7 +949,10 @@ function webapp_obtenerEstadoIndice() {
             veeam:   { habilitado: tieneVeeam,   checked: checkVeeam,   enviado: enviadoVeeam,   col: 19 },
             nutanix: { habilitado: tieneNutanix, checked: checkNutanix, enviado: enviadoNutanix, col: 20 },
             rvtools: { habilitado: tieneRVTools, checked: checkRVTools, col: 21 },
-            horizon: { habilitado: tieneHorizon }
+            horizon: { habilitado: tieneHorizon },
+            // Tanzu no tiene casilla de "enviado" en el Índice: se manda a mano y se sabe que
+            // salió por el mail en copia a alarmas@ (ver _webappSincronizarEnviosManuales).
+            tanzu:   { habilitado: tieneTanzu, enviado: false }
           }
         });
       }
@@ -1226,10 +1230,10 @@ function webapp_obtenerEstadoRVTools(forzar) {
 }
 
 // Columnas del semáforo. Solo van las tecnologías de las que EXISTE un registro de envío:
-// vSphere, Veeam y Nutanix lo marcan en el Índice (columnas V/W/X) y RVTools se verifica en
-// Drive. Horizon y Tanzu quedan afuera a propósito: no hay de dónde saber si salieron, y una
-// columna permanentemente gris se leería como "no contratado" — mentiría en vez de informar.
-const WEBAPP_TECHS_SEMAFORO = ['vSphere', 'Veeam', 'Nutanix', 'RVTools'];
+// vSphere, Veeam y Nutanix lo marca el Índice (columnas V/W/X) y lo anota el log; Tanzu, el
+// mail que se manda a mano con alarmas@ en copia; RVTools se verifica en Drive. Horizon queda
+// afuera a propósito: sale dentro del mail de vSphere, y una columna propia repetiría el dato.
+const WEBAPP_TECHS_SEMAFORO = ['vSphere', 'Veeam', 'Nutanix', 'Tanzu', 'RVTools'];
 
 /**
  * Semáforo de envíos del día: por cliente y tecnología, si salió o no, y a qué hora.
@@ -1282,6 +1286,24 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
     });
   } catch (e) {
     Logger.log("[WebApp] No se pudo leer el log de envíos para la matriz: " + e.message);
+  }
+
+  // --- Envíos hechos a mano (alarmas@ en copia): cuentan igual que los automáticos ---
+  let manualesError = null;
+  try {
+    const idLogs = overrideSheetId || WEBAPP_LOGS_PROD_ID;
+    _webappSincronizarEnviosManuales(idLogs, !!forzar);
+    const hoyISO = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
+    _webappLeerEnviosManuales(SpreadsheetApp.openById(idLogs)).forEach(function (m) {
+      if (m.fecha !== hoyISO) return;
+      const clave = normalizar(m.cliente) + '|' + m.tecnologia.toLowerCase();
+      if (!horaPorClienteTech[clave] || m.hora < horaPorClienteTech[clave]) {
+        horaPorClienteTech[clave] = m.hora;
+      }
+    });
+  } catch (e) {
+    Logger.log("[WebApp] No se pudieron leer los envíos a mano para la matriz: " + e.message);
+    manualesError = e.message;
   }
 
   // --- RVTools: se verifica en Drive, no por mail, y es semanal (ver la función) ---
@@ -1339,7 +1361,10 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
         detalle = rv ? rv.detalle : 'El cliente no figura con carpeta de RVTools en el Índice';
         fuente = 'drive';
       } else {
-        enviado = !!(datosIndice && datosIndice.enviado);
+        // Salió si lo marca el Índice o si hay un envío de hoy en el log (automático o a
+        // mano). El Índice no se entera de lo que se manda a mano, el log sí.
+        enviado = !!(datosIndice && datosIndice.enviado) ||
+          buscarPorNombre(horaPorClienteTech, clavesCli, '|' + key) !== undefined;
         fuente = 'mail';
       }
 
@@ -1379,6 +1404,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
     tecnologias: WEBAPP_TECHS_SEMAFORO,
     clientes: clientes,
     driveError: rvtools.error || null,
+    manualesError: manualesError,
     driveCalculadoA: rvtools.calculadoA || null,
     resumen: {
       totalClientes: clientes.length,
@@ -1396,30 +1422,257 @@ const WEBAPP_LIMITE_ENVIO_MINUTOS = 11 * 60;
 const WEBAPP_CACHE_HORARIOS_SEGUNDOS = 1800; // 30 minutos
 const WEBAPP_HORARIOS_DIAS_HISTORIA = 366;
 
+// ─── Fechas y horas de los logs ──────────────────────────────────────────────────────────
+// Compartidas por el histórico, el semáforo y los envíos a mano: si cada uno parseara a su
+// manera, el mismo envío podría caer en días distintos según la pantalla (AGENTS.md §5).
+
+function _webappPad2(n) { return (n < 10 ? '0' : '') + n; }
+
+/** Fecha de una celda de log a 'yyyy-MM-dd'. Acepta Date, 'yyyy-MM-dd' y 'dd/MM/yyyy'. */
+function _webappFechaISO(valor) {
+  if (valor instanceof Date) return Utilities.formatDate(valor, HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
+  const s = String(valor || '').trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return m[1] + '-' + _webappPad2(+m[2]) + '-' + _webappPad2(+m[3]);
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return m[3] + '-' + _webappPad2(+m[2]) + '-' + _webappPad2(+m[1]);
+  return null;
+}
+
+/** 'HH:mm[:ss]' a minutos desde la medianoche, o null si no se reconoce. */
+function _webappMinutos(texto) {
+  const m = String(texto || '').trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return null;
+  return (+m[1]) * 60 + (+m[2]) + (m[3] ? (+m[3]) / 60 : 0);
+}
+
+function _webappEsFinDeSemana(fechaISO) {
+  const p = fechaISO.split('-');
+  const dia = new Date(+p[0], +p[1] - 1, +p[2]).getDay();
+  return dia === 0 || dia === 6;
+}
+
+function _webappEsClienteDePrueba(cliente, pod) {
+  const bajo = String(cliente || '').toLowerCase();
+  return bajo.includes('testing') || bajo.startsWith('wpc -') || String(pod || '').toUpperCase() === 'WPC';
+}
+
+// ─── Envíos hechos a mano (con alarmas@ en copia) ────────────────────────────────────────
+//
+// GIRE y Tanzu se mandan a mano, así que no pasan por el Índice ni quedan en "Envío de
+// Mails". Se acordó que quien los manda ponga en copia a alarmas@wetcom.com —la casilla con
+// la que corre este web app— y respete el mismo asunto que los automáticos:
+//
+//   ⚠️ Operaciones Diarias y Semanales - Wetcom / Gire - vSphere - 25/09/2026
+//   Operaciones semanales - Wetcom / Prisma - Tanzu - 25/09/2026
+//
+// Del asunto sale el cliente y la tecnología; del remitente, el operador; de la fecha del
+// correo, la hora. Se guardan en su propia pestaña ("Envíos Manuales") y no en "Envío de
+// Mails" a propósito: esa pestaña la lee también rellenarTareasProgramadas() del Índice, y
+// sumarle filas desde acá haría que las Tareas Programadas se marquen según quién abrió el
+// dashboard y cuándo. Una pestaña aparte no cambia nada de lo que ya corre.
+
+const WEBAPP_CASILLA_CC_MANUALES = 'alarmas@wetcom.com';
+const WEBAPP_DOMINIO_OPERADORES = '@wetcom.com';
+const WEBAPP_TAB_ENVIOS_MANUALES = 'Envíos Manuales';
+const WEBAPP_COLS_ENVIOS_MANUALES = ['Fecha', 'Hora', 'Cliente', 'Tecnología', 'POD', 'Estado', 'Operador', 'Asunto', 'Id Mensaje'];
+// Cada cuánto se vuelve a mirar Gmail como máximo. Abrir el dashboard diez veces seguidas
+// no tiene que hacer diez búsquedas.
+const WEBAPP_SYNC_MANUALES_SEGUNDOS = 300;
+
+const WEBAPP_TECH_CANONICA = { vsphere: 'vSphere', veeam: 'Veeam', nutanix: 'Nutanix', tanzu: 'Tanzu', horizon: 'Horizon', rvtools: 'RVTools' };
+
+/** Nombre de tecnología tal como lo escribe el log automático ("vSphere/Horizon" -> "vSphere"). */
+function _webappTechCanonica(tech) {
+  const base = String(tech || '').trim().split('/')[0].trim();
+  return WEBAPP_TECH_CANONICA[base.toLowerCase()] || base;
+}
+
+/**
+ * Interpreta el asunto de un mail de operaciones. Devuelve null si no tiene el formato (o
+ * si es una respuesta/reenvío: "RE:" de un cliente no es un envío nuestro).
+ * @returns {{empresa:string, tecnologia:string, tipo:string, fecha:string, estado:string}|null}
+ */
+function _webappParsearAsuntoOperaciones(asunto) {
+  const s = String(asunto || '').trim();
+  if (/^(re|rv|fw|fwd|reenv\w*)\s*:/i.test(s)) return null;
+  const m = s.match(/^(✅|⚠️?|❌)?\s*Operaciones\b(.*?)-\s*Wetcom\s*\/\s*(.+)$/i);
+  if (!m) return null;
+  const partes = m[3].split(/\s+-\s+/);
+  if (partes.length < 3) return null;
+  const fecha = partes.pop().trim();
+  if (!/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(fecha)) return null;
+  const tecnologia = _webappTechCanonica(partes.pop());
+  const empresa = partes.join(' - ').trim();
+  if (!empresa || !tecnologia) return null;
+  const icono = m[1] || '';
+  const estado = icono === '✅' ? '🟢 Sin Anomalías'
+    : icono === '❌' ? '🔴 Con Incidencias'
+    : icono ? '🟡 Con Advertencias' : '—';
+  return { empresa: empresa, tecnologia: tecnologia, tipo: m[2].trim(), fecha: fecha, estado: estado };
+}
+
+/** Saca el mail de "Nombre Apellido <nombre.apellido@wetcom.com>". */
+function _webappEmailDe(remitente) {
+  const s = String(remitente || '');
+  const m = s.match(/<([^>]+)>/);
+  return (m ? m[1] : s).trim().toLowerCase();
+}
+
+/**
+ * Trae a la pestaña "Envíos Manuales" los mails de operaciones que llegaron a alarmas@ en
+ * copia desde la última vez. Es incremental (busca desde el último registrado) e idempotente
+ * (no repite un Id de mensaje), así que puede correr cuantas veces haga falta.
+ *
+ * Corre al abrir el dashboard, no con un trigger: si nadie mira, no gasta cuota.
+ *
+ * @param {string} sheetId Planilla de logs.
+ * @param {boolean} [forzar] Ignorar el mínimo de 5 minutos entre búsquedas.
+ * @returns {{nuevos:number, omitido:(string|undefined)}}
+ */
+function _webappSincronizarEnviosManuales(sheetId, forzar) {
+  const cache = CacheService.getScriptCache();
+  const marca = 'webapp_sync_manuales_v1_' + sheetId;
+  if (!forzar && cache.get(marca)) return { nuevos: 0, omitido: 'reciente' };
+
+  // Dos personas abriendo el dashboard a la vez no pueden anotar el mismo mail dos veces.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { nuevos: 0, omitido: 'ocupado' };
+  try {
+    const ss = SpreadsheetApp.openById(sheetId);
+    let tab = ss.getSheetByName(WEBAPP_TAB_ENVIOS_MANUALES);
+    if (!tab) {
+      tab = ss.insertSheet(WEBAPP_TAB_ENVIOS_MANUALES);
+      tab.getRange(1, 1, 1, WEBAPP_COLS_ENVIOS_MANUALES.length).setValues([WEBAPP_COLS_ENVIOS_MANUALES])
+        .setFontWeight('bold').setBackground('#1A5276').setFontColor('#FFFFFF');
+      tab.setFrozenRows(1);
+    }
+
+    // Ids ya registrados y última fecha, para buscar solo lo nuevo.
+    const ids = {};
+    let ultimaISO = null;
+    const ultimaFila = tab.getLastRow();
+    if (ultimaFila > 1) {
+      tab.getRange(2, 1, ultimaFila - 1, WEBAPP_COLS_ENVIOS_MANUALES.length).getValues().forEach(function (r) {
+        if (r[8]) ids[String(r[8])] = true;
+        const f = _webappFechaISO(r[0]);
+        if (f && (!ultimaISO || f > ultimaISO)) ultimaISO = f;
+      });
+    }
+    // Un día de margen por mails que llegan tarde; la primera vez, el último mes.
+    const desde = ultimaISO
+      ? new Date(new Date(ultimaISO + 'T12:00:00').getTime() - 86400000)
+      : new Date(Date.now() - 30 * 86400000);
+    const consulta = 'cc:' + WEBAPP_CASILLA_CC_MANUALES + ' from:' + WEBAPP_DOMINIO_OPERADORES.substring(1) +
+      ' subject:Operaciones subject:Wetcom after:' + Utilities.formatDate(desde, HORARIO_OPERATIVO_TZ, 'yyyy/MM/dd');
+
+    // POD y nombre de empresa como los tiene el Índice, así "Gire" del asunto y "GIRE" del
+    // log automático terminan siendo el mismo cliente.
+    const porEmpresa = {};
+    try {
+      (webapp_obtenerEstadoIndice().clientes || []).forEach(function (c) {
+        const clave = String(c.empresa || '').toLowerCase().trim();
+        if (clave && !porEmpresa[clave]) porEmpresa[clave] = { nombre: c.empresa, pod: c.pod };
+      });
+    } catch (e) {
+      Logger.log('[WebApp] Envíos manuales: no se pudo leer el Índice para el POD: ' + e.message);
+    }
+
+    const nuevas = [];
+    let inicio = 0;
+    while (inicio < 500) {
+      const hilos = GmailApp.search(consulta, inicio, 100);
+      hilos.forEach(function (hilo) {
+        hilo.getMessages().forEach(function (msg) {
+          const id = msg.getId();
+          if (ids[id]) return;
+          const operador = _webappEmailDe(msg.getFrom());
+          if (!operador.endsWith(WEBAPP_DOMINIO_OPERADORES) || operador === WEBAPP_CASILLA_CC_MANUALES) return;
+          const destinos = (String(msg.getCc() || '') + ',' + String(msg.getTo() || '')).toLowerCase();
+          if (destinos.indexOf(WEBAPP_CASILLA_CC_MANUALES) === -1) return;
+          const datos = _webappParsearAsuntoOperaciones(msg.getSubject());
+          if (!datos) return;
+
+          const indice = porEmpresa[datos.empresa.toLowerCase()];
+          const fecha = msg.getDate();
+          ids[id] = true;
+          nuevas.push([
+            Utilities.formatDate(fecha, HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd'),
+            Utilities.formatDate(fecha, HORARIO_OPERATIVO_TZ, 'HH:mm:ss'),
+            indice ? indice.nombre : datos.empresa,
+            datos.tecnologia,
+            indice ? indice.pod : '',
+            datos.estado,
+            operador,
+            String(msg.getSubject() || '').substring(0, 250),
+            id
+          ]);
+        });
+      });
+      if (hilos.length < 100) break;
+      inicio += 100;
+    }
+
+    if (nuevas.length > 0) {
+      nuevas.sort(function (a, b) { return (a[0] + a[1]).localeCompare(b[0] + b[1]); });
+      tab.getRange(tab.getLastRow() + 1, 1, nuevas.length, WEBAPP_COLS_ENVIOS_MANUALES.length).setValues(nuevas);
+      Logger.log('[WebApp] Envíos manuales: ' + nuevas.length + ' nuevo(s) registrado(s).');
+    }
+    cache.put(marca, '1', WEBAPP_SYNC_MANUALES_SEGUNDOS);
+    return { nuevos: nuevas.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Lee "Envíos Manuales". Si la pestaña todavía no existe (nadie mandó nada en copia), no es
+ * un error: devuelve una lista vacía.
+ * @returns {Array<{fecha:string, minutos:number, hora:string, cliente:string, tecnologia:string, pod:string, estado:string, operador:string}>}
+ */
+function _webappLeerEnviosManuales(ss) {
+  const tab = ss.getSheetByName(WEBAPP_TAB_ENVIOS_MANUALES);
+  if (!tab || tab.getLastRow() < 2) return [];
+  const n = tab.getLastRow() - 1;
+  const valores = tab.getRange(2, 1, n, 7).getValues();
+  const horas = tab.getRange(2, 2, n, 1).getDisplayValues();
+  const filas = [];
+  valores.forEach(function (r, i) {
+    const fecha = _webappFechaISO(r[0]);
+    const minutos = _webappMinutos(horas[i][0]);
+    if (!fecha || minutos === null || !r[2] || !r[3]) return;
+    filas.push({
+      fecha: fecha, minutos: minutos, hora: String(horas[i][0]).substring(0, 8),
+      cliente: String(r[2]).trim(), tecnologia: String(r[3]).trim(), pod: String(r[4] || '').trim(),
+      estado: String(r[5] || ''), operador: String(r[6] || '').trim().toLowerCase()
+    });
+  });
+  return filas;
+}
+
 /**
  * Horario de envío del mail de operaciones: a qué hora le sale, en promedio, a cada cliente
- * el mail de cada tecnología, y cuántos días salió después de las 11:00.
+ * el mail de cada tecnología, cuántos días salió después de las 11:00, y quién lo mandó.
  *
- * Reemplaza a la vieja "Tendencia Semanal", que graficaba Success/Warning/Error. Ese estado
- * habla de los tickets que llevaba el mail adentro, no de cuándo salió, así que no respondía
- * la pregunta que importa para el cliente: si le llega antes de las 11.
+ * Junta dos fuentes: "Envío de Mails" (lo que manda el Índice; desde que el Índice registra
+ * quién tildó, trae el operador en la columna K) y "Envíos Manuales" (lo que se manda a mano
+ * con alarmas@ en copia).
  *
  * Devuelve los envíos crudos del último año —uno por cliente, tecnología y día hábil— y el
  * front agrupa por período y filtra. Así cambiar de semana a año, o elegir un cliente, no
- * vuelve a llamar al servidor: una sola lectura de una sola pestaña, cacheada 30 minutos (la
- * historia de ayer para atrás no cambia; el botón Actualizar la fuerza).
+ * vuelve a llamar al servidor: una sola lectura, cacheada 30 minutos (la historia de ayer
+ * para atrás no cambia; el botón Actualizar la fuerza).
  *
  * Criterios:
- *   - Si el mismo mail salió más de una vez en el día (reenvío), cuenta el PRIMERO: es el que
- *     recibió el cliente a esa hora; el reenvío no lo hace llegar antes.
- *   - Sábados y domingos no cuentan: el compromiso de las 11 es de día hábil, y un envío de
- *     fin de semana a cualquier hora distorsionaría el promedio.
+ *   - Si el mismo mail salió más de una vez en el día (reenvío, o a mano y automático),
+ *     cuenta el PRIMERO: es el que recibió el cliente a esa hora.
+ *   - Sábados y domingos no cuentan: el compromiso de las 11 es de día hábil.
  *   - Se descartan las filas de testing / WPC, con el mismo criterio que el Índice.
  *
  * @param {string} [overrideSheetId] Planilla de logs (selector de entorno).
  * @param {boolean} [forzar] Ignorar la caché.
- * @returns {{limiteMinutos:number, hoy:string, clientes:Array, tecnologias:Array<string>, envios:Array}}
- *   envios: [fechaISO, índice de cliente, índice de tecnología, minutos desde medianoche].
+ * @returns {Object} envios: [fechaISO, cliente, tecnología, minutos, operador (-1 si no se
+ *   sabe), origen (0 automático, 1 a mano)] — cliente/tecnología/operador son índices.
  */
 function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
   const usuario = webapp_usuarioActual();
@@ -1427,7 +1680,7 @@ function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
 
   const sheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID;
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'webapp_horarios_envio_v1_' + sheetId;
+  const cacheKey = 'webapp_horarios_envio_v2_' + sheetId;
   if (!forzar) {
     const cached = cache.get(cacheKey);
     if (cached) {
@@ -1438,80 +1691,84 @@ function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
   const tz = HORARIO_OPERATIVO_TZ;
   const hoyISO = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
   const desdeISO = Utilities.formatDate(new Date(Date.now() - WEBAPP_HORARIOS_DIAS_HISTORIA * 86400000), tz, 'yyyy-MM-dd');
-  const resultado = { limiteMinutos: WEBAPP_LIMITE_ENVIO_MINUTOS, hoy: hoyISO, clientes: [], tecnologias: [], envios: [] };
+  const resultado = {
+    limiteMinutos: WEBAPP_LIMITE_ENVIO_MINUTOS, hoy: hoyISO,
+    clientes: [], tecnologias: [], operadores: [], envios: [], manualesError: null
+  };
 
-  const sheet = SpreadsheetApp.openById(sheetId).getSheetByName(LOG_MAILS_TAB_NAME);
+  // Primero se traen los envíos a mano nuevos. Si Gmail falla, el histórico se muestra igual
+  // con lo que haya, pero avisando (AGENTS.md §7): no es lo mismo "no hubo" que "no pude ver".
+  try {
+    _webappSincronizarEnviosManuales(sheetId, !!forzar);
+  } catch (e) {
+    Logger.log('[WebApp] No se pudieron sincronizar los envíos a mano: ' + e.message);
+    resultado.manualesError = e.message;
+  }
+
+  const ss = SpreadsheetApp.openById(sheetId);
+  const sheet = ss.getSheetByName(LOG_MAILS_TAB_NAME);
   if (!sheet) throw new Error('No existe la pestaña "' + LOG_MAILS_TAB_NAME + '" en la planilla de logs.');
-  const ultimaFila = sheet.getLastRow();
-  if (ultimaFila < 2) return resultado;
-
-  // Fecha con getValues (llega como Date, sin ambigüedad dd/MM vs MM/dd) y hora con
-  // getDisplayValues: una celda de solo hora es una fecha de 1899, y formatearla con zona
-  // horaria puede correrla por el huso histórico de esa época. El texto que muestra la
-  // planilla es exactamente lo que escribió registrarEnvioMail().
-  const rango = sheet.getRange(2, 1, ultimaFila - 1, 6);
-  const valores = rango.getValues();
-  const horasTexto = sheet.getRange(2, 2, ultimaFila - 1, 1).getDisplayValues();
-
-  const pad = function (n) { return (n < 10 ? '0' : '') + n; };
-  const aISO = function (v) {
-    if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
-    const s = String(v || '').trim();
-    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-    if (m) return m[1] + '-' + pad(+m[2]) + '-' + pad(+m[3]);
-    m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (m) return m[3] + '-' + pad(+m[2]) + '-' + pad(+m[1]);
-    return null;
-  };
-  const aMinutos = function (s) {
-    const m = String(s || '').trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
-    if (!m) return null;
-    return (+m[1]) * 60 + (+m[2]) + (m[3] ? (+m[3]) / 60 : 0);
-  };
 
   const idxCliente = {};
   const idxTech = {};
-  const primerEnvio = {}; // "fecha|cliente|tech" -> fila de envios
+  const idxOperador = {};
+  const primerEnvio = {};
+  const claveCliente = function (nombre) {
+    return String(nombre || '').toLowerCase().replace(/^operaciones\s+/i, '').trim();
+  };
+  const indiceDe = function (mapa, lista, clave, valor) {
+    if (!mapa.hasOwnProperty(clave)) { mapa[clave] = lista.length; lista.push(valor); }
+    return mapa[clave];
+  };
 
-  for (let i = 0; i < valores.length; i++) {
-    const r = valores[i];
-    const fecha = aISO(r[0]);
-    if (!fecha || fecha < desdeISO || fecha > hoyISO) continue;
+  const agregar = function (fecha, minutos, cliente, tech, pod, operador, origen) {
+    if (!fecha || fecha < desdeISO || fecha > hoyISO || _webappEsFinDeSemana(fecha)) return;
+    if (minutos === null || !cliente || !tech || _webappEsClienteDePrueba(cliente, pod)) return;
 
-    const partes = fecha.split('-');
-    const diaSemana = new Date(+partes[0], +partes[1] - 1, +partes[2]).getDay();
-    if (diaSemana === 0 || diaSemana === 6) continue;
+    const kCli = claveCliente(cliente);
+    const iCli = indiceDe(idxCliente, resultado.clientes, kCli, { nombre: cliente, pod: pod });
+    // El POD de un cliente puede cambiar: queda el del envío más reciente.
+    if (pod) resultado.clientes[iCli].pod = pod;
+    const iTech = indiceDe(idxTech, resultado.tecnologias, tech, tech);
+    const iOp = operador ? indiceDe(idxOperador, resultado.operadores, operador, operador) : -1;
 
-    const minutos = aMinutos(horasTexto[i][0]);
-    const cliente = String(r[3] || '').trim();
-    const tech = String(r[4] || '').trim();
-    const pod = String(r[5] || '').trim();
-    if (minutos === null || !cliente || !tech) continue;
-    const cliBajo = cliente.toLowerCase();
-    if (cliBajo.includes('testing') || cliBajo.startsWith('wpc -') || pod.toUpperCase() === 'WPC') continue;
-
-    if (!idxCliente.hasOwnProperty(cliente)) {
-      idxCliente[cliente] = resultado.clientes.length;
-      resultado.clientes.push({ nombre: cliente, pod: pod });
-    } else if (pod) {
-      // El POD de un cliente puede cambiar: queda el del envío más reciente.
-      resultado.clientes[idxCliente[cliente]].pod = pod;
-    }
-    if (!idxTech.hasOwnProperty(tech)) {
-      idxTech[tech] = resultado.tecnologias.length;
-      resultado.tecnologias.push(tech);
-    }
-
-    const clave = fecha + '|' + cliente + '|' + tech;
+    const clave = fecha + '|' + iCli + '|' + iTech;
     const redondeado = Math.round(minutos * 100) / 100;
+    const fila = [fecha, iCli, iTech, redondeado, iOp, origen];
     if (primerEnvio.hasOwnProperty(clave)) {
-      if (redondeado < primerEnvio[clave][3]) primerEnvio[clave][3] = redondeado;
+      if (redondeado < primerEnvio[clave][3]) {
+        const i = resultado.envios.indexOf(primerEnvio[clave]);
+        resultado.envios[i] = fila;
+        primerEnvio[clave] = fila;
+      }
     } else {
-      const fila = [fecha, idxCliente[cliente], idxTech[tech], redondeado];
       primerEnvio[clave] = fila;
       resultado.envios.push(fila);
     }
+  };
+
+  // --- Automáticos ("Envío de Mails") ---
+  // Fecha con getValues (llega como Date, sin ambigüedad dd/MM vs MM/dd) y hora con
+  // getDisplayValues: una celda de solo hora es una fecha de 1899, y formatearla con zona
+  // horaria puede correrla por el huso histórico de esa época.
+  const ultimaFila = sheet.getLastRow();
+  if (ultimaFila >= 2) {
+    // Hasta la K (Operador) si existe: las filas viejas no la tienen y quedan sin operador.
+    const columnas = Math.min(Math.max(sheet.getLastColumn(), 6), 11);
+    const valores = sheet.getRange(2, 1, ultimaFila - 1, columnas).getValues();
+    const horasTexto = sheet.getRange(2, 2, ultimaFila - 1, 1).getDisplayValues();
+    for (let i = 0; i < valores.length; i++) {
+      const r = valores[i];
+      agregar(_webappFechaISO(r[0]), _webappMinutos(horasTexto[i][0]),
+        String(r[3] || '').trim(), _webappTechCanonica(r[4]), String(r[5] || '').trim(),
+        columnas >= 11 ? String(r[10] || '').trim().toLowerCase() : '', 0);
+    }
   }
+
+  // --- A mano ("Envíos Manuales") ---
+  _webappLeerEnviosManuales(ss).forEach(function (m) {
+    agregar(m.fecha, m.minutos, m.cliente, m.tecnologia, m.pod, m.operador, 1);
+  });
 
   // La caché admite 100 KB por clave. Con un año de historia el resultado puede pasarse; en
   // ese caso se sirve igual, solo que sin cachear (se loguea para saber que está pasando).
@@ -1524,7 +1781,6 @@ function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
   }
   return resultado;
 }
-
 
 // ─── Salidas del Horario de Envío: PDF por cliente y resumen a Slack ─────────────────────
 //

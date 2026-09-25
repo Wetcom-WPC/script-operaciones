@@ -904,6 +904,10 @@
         if (btn) liberar(btn);
         matrizGlobal = datos;
         pintarMatrizSalud();
+        if (datos && datos.manualesError) {
+          mostrarAviso(aviso, 'atencion', 'No se pudieron leer los envíos a mano (alarmas@ en copia): ' +
+            datos.manualesError + '. GIRE y Tanzu pueden figurar como no enviados aunque hayan salido.');
+        }
       })
       .withFailureHandler(function(err) {
         if (btn) liberar(btn);
@@ -1084,6 +1088,10 @@
         horariosGlobal = datos;
         poblarFiltrosHorarios();
         pintarHorarios();
+        if (datos.manualesError) {
+          mostrarAviso(aviso, 'atencion', 'No se pudieron leer los envíos a mano (alarmas@ en copia): ' +
+            datos.manualesError + '. Se muestran solo los automáticos.');
+        }
       })
       .withFailureHandler(function(err) {
         if (btn && forzar) liberar(btn);
@@ -1116,6 +1124,30 @@
     llenar('filtroClienteHorarios', nombres.slice().sort(porTexto));
     llenar('filtroTechHorarios', horariosGlobal.tecnologias.slice().sort(porTexto));
     llenar('filtroPodHorarios', pods.sort(porTexto));
+
+    // Operador: el valor es el mail; lo que se ve, el nombre.
+    var selOp = document.getElementById('filtroOperadorHorarios');
+    if (selOp) {
+      var actualOp = selOp.value;
+      while (selOp.options.length > 1) selOp.remove(1);
+      (horariosGlobal.operadores || []).slice().sort(function(a, b) {
+        return nombreOperador(a).localeCompare(nombreOperador(b));
+      }).forEach(function(email) {
+        var opt = document.createElement('option');
+        opt.value = email;
+        opt.textContent = nombreOperador(email);
+        selOp.appendChild(opt);
+      });
+      if ((horariosGlobal.operadores || []).indexOf(actualOp) !== -1) selOp.value = actualOp;
+    }
+  }
+
+  /** "thiago.chinabro@wetcom.com" -> "Thiago Chinabro". */
+  function nombreOperador(email) {
+    var local = String(email || '').split('@')[0];
+    return local.split(/[._-]+/).filter(function(p) { return p; }).map(function(p) {
+      return p.charAt(0).toUpperCase() + p.slice(1);
+    }).join(' ') || email;
   }
 
   function isoADate(iso) {
@@ -1151,7 +1183,8 @@
       periodoTxt: sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : '',
       cliente: document.getElementById('filtroClienteHorarios').value,
       tech: document.getElementById('filtroTechHorarios').value,
-      pod: document.getElementById('filtroPodHorarios').value
+      pod: document.getElementById('filtroPodHorarios').value,
+      operador: document.getElementById('filtroOperadorHorarios') ? document.getElementById('filtroOperadorHorarios').value : ''
     };
   }
 
@@ -1170,6 +1203,7 @@
       if (f.cliente && cli.nombre !== f.cliente) return false;
       if (f.pod && cli.pod !== f.pod) return false;
       if (f.tech && datos.tecnologias[e[2]] !== f.tech) return false;
+      if (f.operador && (e[4] === undefined || e[4] < 0 || datos.operadores[e[4]] !== f.operador)) return false;
       return true;
     });
     return { envios: envios, desdeIso: desdeIso, hastaIso: datos.hoy };
@@ -1253,6 +1287,59 @@
     };
   }
 
+  /**
+   * Cuánta gente operó: operadores distintos por día (o por semana en el año, igual que el
+   * gráfico), lo más reciente arriba. Solo cuentan los envíos con operador conocido.
+   */
+  function operadoresPorPeriodo(envios, dias) {
+    var porSemana = dias > 31;
+    var baldes = {};
+    envios.forEach(function(e) {
+      if (e[4] === undefined || e[4] < 0) return;
+      var clave = e[0];
+      if (porSemana) {
+        var d = isoADate(e[0]);
+        d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+        clave = dateAIso(d);
+      }
+      if (!baldes[clave]) baldes[clave] = {};
+      baldes[clave][horariosGlobal.operadores[e[4]]] = true;
+    });
+    return {
+      porSemana: porSemana,
+      filas: Object.keys(baldes).sort().reverse().map(function(k) {
+        var p = k.split('-');
+        var nombres = Object.keys(baldes[k]).map(nombreOperador).sort(function(a, b) { return a.localeCompare(b); });
+        return { etiqueta: p[2] + '/' + p[1], cantidad: nombres.length, nombres: nombres };
+      })
+    };
+  }
+
+  function pintarOperadores(envios, dias) {
+    var tbody = document.getElementById('tbodyOperadores');
+    if (!tbody) return;
+    vaciar(tbody);
+    var res = operadoresPorPeriodo(envios, dias);
+    var th = document.getElementById('thDiaOperadores');
+    if (th) th.textContent = res.porSemana ? 'Semana del' : 'Día';
+    var titulo = document.getElementById('tituloOperadoresHorarios');
+    if (titulo) titulo.textContent = res.porSemana ? 'Operadores por semana' : 'Operadores por día';
+    var vacio = document.getElementById('operadoresVacio');
+    if (vacio) vacio.style.display = res.filas.length === 0 ? 'block' : 'none';
+    var tabla = document.getElementById('tablaOperadores');
+    if (tabla) tabla.style.display = res.filas.length === 0 ? 'none' : '';
+    res.filas.forEach(function(fila) {
+      var tr = crear('tr');
+      tr.appendChild(crear('td', null, fila.etiqueta));
+      var tdN = crear('td', null, String(fila.cantidad));
+      tdN.style.textAlign = 'center';
+      tdN.style.fontWeight = '600';
+      tr.appendChild(tdN);
+      tr.appendChild(crear('td', null, fila.nombres.join(', ')));
+      tbody.appendChild(tr);
+    });
+  }
+
   function pintarHorarios() {
     if (!horariosGlobal) return;
     var f = leerFiltrosHorarios();
@@ -1334,6 +1421,8 @@
     }
     var btnSlack = document.getElementById('btnSlackHorarios');
     if (libre(btnSlack)) btnSlack.disabled = agg.n === 0;
+
+    pintarOperadores(envios, f.dias);
 
     var serie = serieHorarios(envios, f.dias);
     var titulo = document.getElementById('tituloChartHorarios');
@@ -1566,7 +1655,7 @@
   }
 
 
-  ['filtroPeriodoHorarios', 'filtroClienteHorarios', 'filtroTechHorarios', 'filtroPodHorarios'].forEach(function(id) {
+  ['filtroPeriodoHorarios', 'filtroClienteHorarios', 'filtroTechHorarios', 'filtroPodHorarios', 'filtroOperadorHorarios'].forEach(function(id) {
     var sel = document.getElementById(id);
     if (sel) sel.addEventListener('change', pintarHorarios);
   });
