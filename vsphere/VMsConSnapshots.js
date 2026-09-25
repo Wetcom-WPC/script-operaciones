@@ -6,7 +6,7 @@
 // --- CONFIGURACIÓN ESPECÍFICA ---
 const SNAPSHOTS_OPERATION_NAME = "VMs con snapshots";
 const SNAPSHOTS_EMAIL_SUBJECT = "VMs con snapshots";
-const SNAPSHOTS_FILENAME_MATCH = "VMs con snapshots";
+const SNAPSHOTS_FILENAME_MATCH = "Snapshots";
 const SNAPSHOTS_SCHEDULED_TASK_NAME_TO_CLOSE = "VMs con snapshots";
 const SNAPSHOTS_ROW_LIMIT_FOR_TABLE = 5;
 const SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE = "Se detectaron VMs con Snapshots";
