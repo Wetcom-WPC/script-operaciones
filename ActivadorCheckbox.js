@@ -60,6 +60,11 @@ function vigilarCheckbox(e) {
                               COLS_MANEJADAS_POR_TIMER.includes(col);
   if (!esManejadasPorTimer) {
     range.setValue("FALSE");
+  } else {
+    // El mail lo manda procesarEnviosPorLote hasta 5 min después, con la cuenta del dueño
+    // del trigger: ahí ya no se sabe quién operó. Se anota ahora, que es el único momento
+    // en que el evento trae al usuario.
+    anotarOperadorDelTilde(e, sheet, row, col);
   }
 
   // ======================================================
@@ -140,6 +145,60 @@ function vigilarCheckbox(e) {
   // maneja procesarEnviosPorLote (trigger cada 5 min, 8-11 AM).
   // Si el usuario marca esas columnas, el trigger las procesará en la próxima vuelta.
   // ─────────────────────────────────────────────────────────────────────────
+}
+
+// ─── Quién operó ─────────────────────────────────────────────────────────────
+// Se guarda en Script Properties por fila y columna, junto con el cliente de la fila: si
+// entre el tilde y el envío alguien inserta o mueve filas, el cliente ya no coincide y el
+// envío queda sin operador en vez de atribuírselo a otra persona.
+const OPERADOR_PROP_PREFIJO = "OPERADOR_TILDE_";
+const OPERADOR_COL_EMPRESA  = 12; // Col L
+
+function anotarOperadorDelTilde(e, sheet, row, col) {
+  try {
+    // e.user solo existe en triggers instalables y dentro del dominio. Sin él no se adivina:
+    // Session.getActiveUser() en un trigger instalable puede devolver al dueño del trigger,
+    // que es justamente el dato equivocado.
+    const email = (e.user && typeof e.user.getEmail === "function") ? e.user.getEmail() : "";
+    if (!email) {
+      Logger.log("[Operador] El evento no trae usuario: el envío de la fila " + row + " queda sin operador.");
+      return;
+    }
+    const empresa = String(sheet.getRange(row, OPERADOR_COL_EMPRESA).getValue() || "").trim();
+    PropertiesService.getScriptProperties().setProperty(
+      OPERADOR_PROP_PREFIJO + row + "_" + col,
+      JSON.stringify({ email: email.toLowerCase(), empresa: empresa, ts: Date.now() })
+    );
+  } catch (err) {
+    Logger.log("[Operador] No se pudo anotar el operador de la fila " + row + ": " + err.message);
+  }
+}
+
+/**
+ * Devuelve el operador anotado para esa casilla si sigue siendo el mismo cliente, o "".
+ * No lo borra: se borra recién cuando el envío salió (olvidarOperadorDelTilde), así un envío
+ * que falla y se reintenta en la próxima vuelta conserva a quién lo pidió.
+ */
+function leerOperadorDelTilde(row, col, empresaActual) {
+  try {
+    const crudo = PropertiesService.getScriptProperties().getProperty(OPERADOR_PROP_PREFIJO + row + "_" + col);
+    if (!crudo) return "";
+    const dato = JSON.parse(crudo);
+    if (String(dato.empresa || "").trim() !== String(empresaActual || "").trim()) {
+      Logger.log("[Operador] La fila " + row + " cambió de cliente desde el tilde: el envío queda sin operador.");
+      return "";
+    }
+    return dato.email || "";
+  } catch (err) {
+    Logger.log("[Operador] No se pudo leer el operador de la fila " + row + ": " + err.message);
+    return "";
+  }
+}
+
+function olvidarOperadorDelTilde(row, col) {
+  try {
+    PropertiesService.getScriptProperties().deleteProperty(OPERADOR_PROP_PREFIJO + row + "_" + col);
+  } catch (err) {}
 }
 
 function ejecutarCicloDeOperaciones() {

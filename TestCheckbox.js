@@ -92,8 +92,10 @@ function procesarEnviosPorLote() {
       if (validarDatosCriticos(numeroFilaReal, podEmail, opsKey, soporteKey)) {
         Logger.log(`✉️ Enviando Mail vSphere para fila ${numeroFilaReal}...`);
         try {
-          enviarMailUnitario("vSphere", opsKey, nombreOps, soporteKey, nombreSoporte, nombreEmpresaRep, podEmail, servicios);
+          const operadorVsphere = leerOperadorDelTilde(numeroFilaReal, TC_COL_CHECK_VSPHERE, nombreEmpresaRep);
+          enviarMailUnitario("vSphere", opsKey, nombreOps, soporteKey, nombreSoporte, nombreEmpresaRep, podEmail, servicios, operadorVsphere);
           sheet.getRange(numeroFilaReal, TC_COL_ENVIADO_VSPHERE).setValue(true);
+          olvidarOperadorDelTilde(numeroFilaReal, TC_COL_CHECK_VSPHERE);
           Logger.log(`✅ Mail vSphere marcado como enviado en fila ${numeroFilaReal}`);
         } catch (err) {
           Logger.log(`❌ Error enviando vSphere en fila ${numeroFilaReal}: ${err.toString()}`);
@@ -111,8 +113,10 @@ function procesarEnviosPorLote() {
       if (validarDatosCriticos(numeroFilaReal, podEmail, opsKey, soporteKey)) {
         Logger.log(`✉️ Enviando Mail Veeam para fila ${numeroFilaReal}...`);
         try {
-          enviarMailUnitario("Veeam", opsKey, nombreOps, soporteKey, nombreSoporte, nombreEmpresaRep, podEmail, servicios);
+          const operadorVeeam = leerOperadorDelTilde(numeroFilaReal, TC_COL_CHECK_VEEAM, nombreEmpresaRep);
+          enviarMailUnitario("Veeam", opsKey, nombreOps, soporteKey, nombreSoporte, nombreEmpresaRep, podEmail, servicios, operadorVeeam);
           sheet.getRange(numeroFilaReal, TC_COL_ENVIADO_VEEAM).setValue(true);
+          olvidarOperadorDelTilde(numeroFilaReal, TC_COL_CHECK_VEEAM);
           Logger.log(`✅ Mail Veeam marcado como enviado en fila ${numeroFilaReal}`);
         } catch (err) {
           Logger.log(`❌ Error enviando Veeam en fila ${numeroFilaReal}: ${err.toString()}`);
@@ -130,8 +134,10 @@ function procesarEnviosPorLote() {
       if (validarDatosCriticos(numeroFilaReal, podEmail, opsKey, soporteKey)) {
         Logger.log(`✉️ Enviando Mail Nutanix para fila ${numeroFilaReal}...`);
         try {
-          enviarMailUnitario("Nutanix", opsKey, nombreOps, soporteKey, nombreSoporte, nombreEmpresaRep, podEmail, servicios);
+          const operadorNutanix = leerOperadorDelTilde(numeroFilaReal, TC_COL_CHECK_NUTANIX, nombreEmpresaRep);
+          enviarMailUnitario("Nutanix", opsKey, nombreOps, soporteKey, nombreSoporte, nombreEmpresaRep, podEmail, servicios, operadorNutanix);
           sheet.getRange(numeroFilaReal, TC_COL_ENVIADO_NUTANIX).setValue(true);
+          olvidarOperadorDelTilde(numeroFilaReal, TC_COL_CHECK_NUTANIX);
           Logger.log(`✅ Mail Nutanix marcado como enviado en fila ${numeroFilaReal}`);
         } catch (err) {
           Logger.log(`❌ Error enviando Nutanix en fila ${numeroFilaReal}: ${err.toString()}`);
