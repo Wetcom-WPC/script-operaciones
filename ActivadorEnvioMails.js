@@ -9,7 +9,9 @@
  * false = envía el mail real.
  */
 
-const MODO_TEST_MAIL = false;
+// Staging: en true el mail NO sale (pero sí se registra en el log). La planilla vinculada es
+// una copia del Índice con los mails reales de los PODs, así que una prueba acá no debe mandar nada.
+const MODO_TEST_MAIL = true;
 
 const JIRA_FILTER_VSPHERE = "24647";
 const JIRA_FILTER_VEEAM   = "27659";
@@ -387,6 +389,8 @@ function enviarMailUnitario(tecnologia, opsKey, nombreOps, soporteKey, nombreSop
       Logger.log(`[MAIL] Error al cerrar tarea Jira: ${e.message}`);
     }
   }
+  // Sin esto, el registro del envío queda en el buffer de la librería y nunca llega al log.
+  AutomatizarOperaciones.flushLogs();
  
   return true;
 }

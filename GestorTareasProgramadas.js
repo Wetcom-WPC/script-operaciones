@@ -132,25 +132,47 @@ function rellenarTareasProgramadas() {
 function limpiarTareasProgramadas() {
   try {
     var hojTP = SpreadsheetApp.openById(TP_SHEET_ID).getSheetByName(TP_HOJA_NOMBRE);
-    if (!hojTP) { Logger.log("[TP] No se encontró la pestaña '" + TP_HOJA_NOMBRE + "'"); return; }
+    if (!hojTP) { return; }
 
-    var lastRow  = hojTP.getLastRow();
-    var numFilas = lastRow - TP_FILA_DATOS + 1;
-    var numCols  = TP_COL_FIN - TP_COL_INICIO + 1;
+    var tz = "America/Argentina/Buenos_Aires";
+    var manana = new Date();
+    manana.setDate(manana.getDate() + 1);
+    var fechaDisplay = Utilities.formatDate(manana, tz, "dd/MM/yyyy");
 
-    // Limpiar resultados (filas de datos, col F-K)
-    if (numFilas > 0) {
-      hojTP.getRange(TP_FILA_DATOS, TP_COL_INICIO, numFilas, numCols).clearContent();
+    var celdaFecha = hojTP.getRange(1, 6, 1, 6);
+    celdaFecha.setValue(fechaDisplay);
+
+    // 1. PRIMERO: Limpiar TODO el bloque F3:K500 (borra cualquier basura que haya quedado de antes)
+    hojTP.getRange("F3:K500").clearContent();
+
+    // 2. DESPUÉS: Encontrar la última fila real mirando columna B
+    var clientes = hojTP.getRange("B3:B500").getValues();
+    var ultimaFila = 3;
+    for (var i = clientes.length - 1; i >= 0; i--) {
+      if (clientes[i][0] && clientes[i][0].toString().trim() !== "") {
+        ultimaFila = i + 3; // +3 porque arrancamos desde B3
+        break;
+      }
     }
 
-    // Limpiar fecha (fila 1, col F-K)
-    hojTP.getRange(TP_FILA_FECHA, TP_COL_INICIO, 1, numCols).clearContent();
+    Logger.log("Última fila detectada: " + ultimaFila);
+
+    // 3. Pegar la fórmula solo hasta el último cliente
+    var formula = `=IFERROR(SWITCH(INDEX(FILTER(Copia_Registro!$G:$G; Copia_Registro!$A:$A = LOOKUP(2; 1/($F$1:F$1<>""); $F$1:F$1); TRIM(Copia_Registro!$D:$D) = TRIM($B3); TRIM(Copia_Registro!$E:$E) = TRIM(F$2)); 1); "🟢 Sin Anomalías"; "✅"; "🟡 Con Advertencias"; "⚠️"; "🔴 Con Incidencias"; "❌"; "🚫"); "🚫")`;
+
+    var celdaBase = hojTP.getRange("F3");
+    celdaBase.setFormula(formula);
+
+    if (ultimaFila >= 3) {
+      var rangoCompleto = hojTP.getRange(3, 6, ultimaFila - 2, 6);
+      celdaBase.copyTo(rangoCompleto);
+    }
 
     SpreadsheetApp.flush();
-    Logger.log("[TP] Limpieza completada. Columnas F-K y fecha vaciadas.");
+    Logger.log("Completado. Nueva fecha: " + fechaDisplay + " | Filas rellenas: F3:K" + ultimaFila);
 
   } catch (e) {
-    Logger.log("[TP] Error en limpiarTareasProgramadas: " + e.message);
+    Logger.log("Error: " + e.message);
   }
 }
 
