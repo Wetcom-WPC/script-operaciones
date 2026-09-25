@@ -846,7 +846,7 @@
     tabButtons[k].addEventListener('click', cambiarTabLogs);
   }
   
-// --- Salud Operativa y Matriz Tecnológica -----------------------------------------------
+// --- Cumplimiento de Envíos (Envíos de Hoy + Histórico de Horarios) -----------------------
   var matrizGlobal = null;
   var horariosGlobal = null;
   var subtabOperacionesActivo = 'matriz';
@@ -1059,7 +1059,7 @@
     });
   }
 
-  // --- Horario de Envío ----------------------------------------------------------------------
+  // --- Histórico de Horarios -----------------------------------------------------------------
   // El servidor manda los envíos crudos del último año (primer envío de cada día hábil) y
   // todo lo demás —período, filtros, promedios, gráfico— se calcula acá. Cambiar un filtro no
   // gasta una sola ejecución de Apps Script.
@@ -1205,13 +1205,27 @@
     };
   }
 
+  // Un color fijo por tecnología, el mismo en pantalla y en el PDF. Lo que no esté acá
+  // (una tecnología nueva que aparezca en el log) sale en gris hasta que se le asigne uno.
+  var COLORES_TECH = { vSphere: '#2C6CB0', Veeam: '#109E58', Nutanix: '#7B3FB5', Tanzu: '#E67E22' };
+  var ORDEN_TECH = ['vSphere', 'Veeam', 'Nutanix', 'Tanzu'];
+
+  function ordenarTechs(a, b) {
+    var ia = ORDEN_TECH.indexOf(a), ib = ORDEN_TECH.indexOf(b);
+    if (ia === -1) ia = 99;
+    if (ib === -1) ib = 99;
+    return ia !== ib ? ia - ib : a.localeCompare(b);
+  }
+
   /**
-   * Puntos del gráfico. En semana y mes, uno por día; en el año, uno por semana (lunes):
-   * 250 puntos diarios son ruido, y lo que interesa ahí es la tendencia.
+   * Puntos del gráfico: una línea por tecnología. En semana y mes, un punto por día; en el
+   * año, uno por semana (lunes): 250 puntos diarios son ruido, y lo que interesa ahí es la
+   * tendencia.
    */
   function serieHorarios(envios, dias) {
     var porSemana = dias > 31;
     var baldes = {};
+    var techs = [];
     envios.forEach(function(e) {
       var clave = e[0];
       if (porSemana) {
@@ -1219,15 +1233,22 @@
         d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
         clave = dateAIso(d);
       }
-      if (!baldes[clave]) baldes[clave] = { suma: 0, n: 0 };
-      baldes[clave].suma += e[3];
-      baldes[clave].n++;
+      var tech = horariosGlobal.tecnologias[e[2]];
+      if (techs.indexOf(tech) === -1) techs.push(tech);
+      if (!baldes[clave]) baldes[clave] = {};
+      if (!baldes[clave][tech]) baldes[clave][tech] = { suma: 0, n: 0 };
+      baldes[clave][tech].suma += e[3];
+      baldes[clave][tech].n++;
     });
+    techs.sort(ordenarTechs);
     return {
       porSemana: porSemana,
+      techs: techs,
       puntos: Object.keys(baldes).sort().map(function(k) {
         var p = k.split('-');
-        return { etiqueta: p[2] + '/' + p[1], prom: baldes[k].suma / baldes[k].n };
+        var prom = {};
+        Object.keys(baldes[k]).forEach(function(t) { prom[t] = baldes[k][t].suma / baldes[k][t].n; });
+        return { etiqueta: p[2] + '/' + p[1], prom: prom };
       })
     };
   }
@@ -1343,19 +1364,29 @@
     };
     var dt = new google.visualization.DataTable();
     dt.addColumn('string', serie.porSemana ? 'Semana del' : 'Día');
-    dt.addColumn('timeofday', 'Hora promedio');
+    serie.techs.forEach(function(t) { dt.addColumn('timeofday', t); });
     dt.addColumn('timeofday', 'Límite 11:00');
     serie.puntos.forEach(function(p) {
-      dt.addRow([p.etiqueta, aHoraDelDia(p.prom), aHoraDelDia(horariosGlobal.limiteMinutos)]);
+      // Un día sin envío de una tecnología queda vacío (null), no en cero: un cero sería
+      // "salió a las 00:00" y arrastraría la línea hasta abajo.
+      var fila = [p.etiqueta];
+      serie.techs.forEach(function(t) { fila.push(p.prom[t] !== undefined ? aHoraDelDia(p.prom[t]) : null); });
+      fila.push(aHoraDelDia(horariosGlobal.limiteMinutos));
+      dt.addRow(fila);
     });
+
+    var colores = serie.techs.map(function(t) { return COLORES_TECH[t] || '#8A9891'; }).concat(['#C0392B']);
+    var series = {};
+    series[serie.techs.length] = { lineDashStyle: [6, 4], pointSize: 0, enableInteractivity: false };
 
     var chart = new google.visualization.LineChart(chartDiv);
     if (alListo) {
       google.visualization.events.addListener(chart, 'ready', function() { alListo(chart); });
     }
     chart.draw(dt, {
-      colors: ['#109E58', '#C0392B'],
-      series: { 1: { lineDashStyle: [6, 4], pointSize: 0, enableInteractivity: false } },
+      colors: colores,
+      series: series,
+      interpolateNulls: true,
       pointSize: 5,
       legend: { position: 'top' },
       chartArea: { width: '85%', height: '70%' },
@@ -1511,7 +1542,7 @@
 
   
 
-  // Listeners de Salud Operativa
+  // Listeners de Cumplimiento de Envíos
   var btnActMatriz = document.getElementById('btnActualizarMatriz');
   if (btnActMatriz) btnActMatriz.addEventListener('click', function() {
     // Un solo botón para las dos subpestañas: actualiza la que se está mirando.

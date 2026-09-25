@@ -34,7 +34,7 @@
       <!-- Navegación Principal -->
       <nav class="navegacion-principal" style="margin-bottom: 24px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; flex-wrap: wrap;">
         <button class="nav-btn active" data-seccion="seccion-inicio">Inicio y Bandeja</button>
-        <button class="nav-btn" data-seccion="seccion-operaciones">📊 Salud Operativa</button>
+        <button class="nav-btn" data-seccion="seccion-operaciones">📊 Cumplimiento de Envíos</button>
         <button class="nav-btn" data-seccion="seccion-indice">Control de Envíos</button>
         <button class="nav-btn" data-seccion="seccion-logs">Logs del Sistema</button>
         <button class="nav-btn" data-seccion="seccion-jira">Tickets Jira</button>
@@ -112,7 +112,7 @@
       <section id="seccion-operaciones" class="tarjeta vista-seccion" role="tabpanel" aria-labelledby="tab-operaciones">
         <header>
           <div>
-            <h2>Salud Operativa y Matriz Tecnológica</h2>
+            <h2>Cumplimiento de Envíos</h2>
             <p class="ayuda">
               Qué mails salieron hoy a cada cliente, y a qué hora vienen saliendo en la semana, el mes y el año.
             </p>
@@ -120,10 +120,10 @@
           <button id="btnActualizarMatriz" class="btn-primario">Actualizar</button>
         </header>
 
-        <!-- Subpestañas de Salud Operativa -->
-        <div class="tabs-container" role="tablist" aria-label="Subpestañas de salud operativa" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
-          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-operaciones="matriz">Matriz de Salud</button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab-operaciones="horarios">Horario de Envío</button>
+        <!-- Subpestañas de Cumplimiento de Envíos -->
+        <div class="tabs-container" role="tablist" aria-label="Subpestañas de cumplimiento de envíos" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
+          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-operaciones="matriz">Envíos de Hoy</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab-operaciones="horarios">Histórico de Horarios</button>
         </div>
 
         <!-- Controles de Filtrado para Matriz -->
@@ -173,7 +173,7 @@
           </div>
         </div>
 
-        <!-- Contenedor 1: Tabla Matriz de Salud -->
+        <!-- Contenedor 1: Envíos de Hoy (semáforo por cliente y tecnología) -->
         <div id="vistaSubtabMatriz">
           <div class="matriz-container" style="overflow-x: auto;">
             <table class="matriz-table tabla-logs" id="tablaMatriz" style="width: 100%; border-collapse: collapse;">
@@ -184,7 +184,7 @@
           <p id="matrizVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">No hay datos registrados para los filtros seleccionados.</p>
         </div>
 
-        <!-- Contenedor 2: Horario de Envío -->
+        <!-- Contenedor 2: Histórico de Horarios -->
         <!-- Mide a qué hora le llega al cliente el mail de cada operación. Reemplaza a la vieja
              "Tendencia Semanal" (Success/Warning/Error), que hablaba de los tickets del mail y
              no de cuándo salió. Todos los filtros se resuelven en el navegador: cambiarlos no

@@ -706,7 +706,13 @@ footer { padding: 0 24px 28px; max-width: 1400px; margin: 0 auto; font-size: 11.
   color: var(--verde-osc);
 }
 
-/* --- Matriz de Salud Operativa y Scorecards --- */
+/* Foco de las pestañas: sin anillo al hacer clic con el mouse, visible al navegar con teclado. */
+.tab-btn:focus:not(:focus-visible),
+.nav-btn:focus:not(:focus-visible) { outline: none; }
+.tab-btn:focus-visible,
+.nav-btn:focus-visible { outline: 2px solid var(--verde); outline-offset: 2px; }
+
+/* --- Cumplimiento de Envíos: semáforo y scorecards --- */
 .scorecard-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
