@@ -205,6 +205,10 @@
             <select id="filtroPodHorarios" class="select-control" aria-label="Filtrar por POD" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
               <option value="">Todos los PODs</option>
             </select>
+            <!-- El PDF es de UN cliente (se habilita al elegirlo); Slack manda lo que se ve,
+                 agrupado por POD, y pide confirmación antes. -->
+            <button id="btnPdfHorarios" class="btn-secundario" style="margin-left: auto;" disabled title="Elegí un cliente para armar su PDF">📄 PDF del cliente</button>
+            <button id="btnSlackHorarios" class="btn-secundario" disabled>💬 Enviar resumen a Slack</button>
           </div>
           <p class="ayuda" style="margin: 0 0 16px 0;">
             Hora del <strong>primer</strong> envío de cada día hábil (los reenvíos no cuentan; sábados y domingos tampoco).

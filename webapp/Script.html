@@ -890,7 +890,7 @@
     }
   }
 
-  function cargarMatrizSalud() {
+  function cargarMatrizSalud(forzar) {
     var btn = document.getElementById('btnActualizarMatriz');
     if (btn) ocupar(btn, 'Actualizando...');
     var aviso = document.getElementById('avisoMatriz');
@@ -909,7 +909,7 @@
         if (btn) liberar(btn);
         mostrarAviso(aviso, 'error', 'No se pudo cargar el semáforo de envíos: ' + err.message);
       })
-      .webapp_obtenerMatrizEnvios(sheetId);
+      .webapp_obtenerMatrizEnvios(sheetId, forzar === true);
   }
 
   function pintarMatrizSalud() {
@@ -1006,12 +1006,15 @@
         var tData = cli.tecnologias ? cli.tecnologias[tech] : null;
         var pill = crear('span', 'tech-pill');
 
-        // Cuatro estados, no tres. El cuarto (enviado === null) existe solo para RVTools y es
-        // el que evita el peor error posible de esta pantalla: pintar de rojo algo que en
-        // realidad no se pudo verificar. "No pude fijarme" y "no llegó" mandan al equipo a
-        // hacer cosas distintas, así que no pueden verse igual.
+        // RVTools tiene dos estados más que los mails, y los dos existen para no pintar de
+        // rojo algo que no está mal:
+        //   - "?" (enviado === null): no se pudo verificar. "No pude fijarme" y "no llegó"
+        //     mandan al equipo a hacer cosas distintas, así que no pueden verse igual.
+        //   - "⏳" (pendienteEnVentana): falta, pero es miércoles o jueves y la ventana de
+        //     subida (mié a vie) sigue abierta.
         var comoFue = tData ? tData.fuente : null;
-        var origenTxt = comoFue === 'drive' ? 'se verifica en Drive' : 'mail al POD';
+        var origenTxt = comoFue === 'drive' ? 'carpeta semanal en Drive' : 'mail al POD';
+        var detalleTxt = (tData && tData.detalle) ? '. ' + tData.detalle : '';
 
         if (!tData || !tData.contratado) {
           pill.classList.add('status-none');
@@ -1020,18 +1023,22 @@
         } else if (tData.enviado === null) {
           pill.classList.add('status-warn');
           pill.textContent = '?';
-          pill.title = tech + ': sin dato. El cliente no figura en "Configuracion Reportes" o no se pudo leer Drive. NO significa que no haya llegado.';
+          pill.title = tech + ': sin dato' + detalleTxt + '. NO significa que no se haya subido.';
         } else if (tData.enviado === true) {
           pill.classList.add('status-ok');
           // La hora es el dato que evita tener que preguntar. Se recorta a HH:mm porque los
           // segundos no aportan y hacen la celda ilegible.
           var horaCorta = tData.hora ? String(tData.hora).substring(0, 5) : '';
           pill.textContent = horaCorta ? '✅ ' + horaCorta : '✅';
-          pill.title = tech + ': enviado' + (tData.hora ? ' a las ' + tData.hora : '') + ' (' + origenTxt + ')';
+          pill.title = tech + ': enviado' + (tData.hora ? ' a las ' + tData.hora : '') + ' (' + origenTxt + ')' + detalleTxt;
+        } else if (tData.pendienteEnVentana) {
+          pill.classList.add('status-warn');
+          pill.textContent = '⏳';
+          pill.title = tech + ': pendiente' + detalleTxt;
         } else {
           pill.classList.add('status-err');
           pill.textContent = '❌';
-          pill.title = tech + ': todavía NO se envió (' + origenTxt + ')';
+          pill.title = tech + ': todavía NO se envió (' + origenTxt + ')' + detalleTxt;
         }
 
         td.appendChild(pill);
@@ -1056,6 +1063,11 @@
   // El servidor manda los envíos crudos del último año (primer envío de cada día hábil) y
   // todo lo demás —período, filtros, promedios, gráfico— se calcula acá. Cambiar un filtro no
   // gasta una sola ejecución de Apps Script.
+  //
+  // La pantalla, el PDF y el resumen de Slack salen de las MISMAS tres funciones
+  // (filtrarEnviosHorarios, agregarHorarios, serieHorarios). Si cada salida calculara su
+  // promedio por su lado, el día que alguien toque una el PDF y la pantalla dirían horas
+  // distintas para el mismo cliente (AGENTS.md §5).
 
   function cargarHorarios(forzar) {
     var btn = document.getElementById('btnActualizarMatriz');
@@ -1116,40 +1128,57 @@
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   }
 
+  function isoACorta(iso) {
+    var p = iso.split('-');
+    return p[2] + '/' + p[1] + '/' + p[0];
+  }
+
   function minutosAHora(min) {
     var t = Math.round(min);
     var h = Math.floor(t / 60), m = t % 60;
     return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
   }
 
-  function pintarHorarios() {
-    if (!horariosGlobal) return;
+  // Un promedio se juzga por el minuto que se muestra: si dice 11:00, no puede estar en rojo.
+  function esTardeHorario(prom) {
+    return Math.round(prom) > horariosGlobal.limiteMinutos;
+  }
+
+  function leerFiltrosHorarios() {
+    var sel = document.getElementById('filtroPeriodoHorarios');
+    return {
+      dias: parseInt(sel.value, 10) || 7,
+      periodoTxt: sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : '',
+      cliente: document.getElementById('filtroClienteHorarios').value,
+      tech: document.getElementById('filtroTechHorarios').value,
+      pod: document.getElementById('filtroPodHorarios').value
+    };
+  }
+
+  /**
+   * Envíos del período que pasan los filtros. "Últimos N días" incluye hoy, y se cuenta
+   * desde el "hoy" del servidor (hora Argentina), no desde el reloj del navegador.
+   */
+  function filtrarEnviosHorarios(f) {
     var datos = horariosGlobal;
-    var limite = datos.limiteMinutos;
-    // Un promedio se juzga por el minuto que se muestra: si dice 11:00, no puede estar en rojo.
-    var esTarde = function(prom) { return Math.round(prom) > limite; };
-
-    var dias = parseInt(document.getElementById('filtroPeriodoHorarios').value, 10) || 7;
-    var fCli = document.getElementById('filtroClienteHorarios').value;
-    var fTech = document.getElementById('filtroTechHorarios').value;
-    var fPod = document.getElementById('filtroPodHorarios').value;
-
-    // "Últimos N días" incluye hoy. Se calcula desde el "hoy" del servidor (hora Argentina),
-    // no desde el reloj del navegador.
     var desde = isoADate(datos.hoy);
-    desde.setDate(desde.getDate() - (dias - 1));
+    desde.setDate(desde.getDate() - (f.dias - 1));
     var desdeIso = dateAIso(desde);
-
     var envios = datos.envios.filter(function(e) {
       if (e[0] < desdeIso) return false;
       var cli = datos.clientes[e[1]];
-      if (fCli && cli.nombre !== fCli) return false;
-      if (fPod && cli.pod !== fPod) return false;
-      if (fTech && datos.tecnologias[e[2]] !== fTech) return false;
+      if (f.cliente && cli.nombre !== f.cliente) return false;
+      if (f.pod && cli.pod !== f.pod) return false;
+      if (f.tech && datos.tecnologias[e[2]] !== f.tech) return false;
       return true;
     });
+    return { envios: envios, desdeIso: desdeIso, hastaIso: datos.hoy };
+  }
 
-    // --- Por operación (cliente + tecnología) ---
+  /** Promedio por operación (cliente + tecnología), lo más tarde primero, y totales. */
+  function agregarHorarios(envios) {
+    var datos = horariosGlobal;
+    var limite = datos.limiteMinutos;
     var ops = {};
     var totalMin = 0, totalFuera = 0;
     envios.forEach(function(e) {
@@ -1163,101 +1192,25 @@
     var filas = Object.keys(ops).map(function(k) {
       var o = ops[k];
       o.prom = o.suma / o.n;
+      o.tarde = esTardeHorario(o.prom);
       return o;
     });
-    // Lo más tarde arriba: es lo que hay que mirar.
     filas.sort(function(a, b) { return b.prom - a.prom; });
-
-    // --- Scorecards ---
-    var marcar = function(idCard, idValor, texto, mal) {
-      var card = document.getElementById(idCard);
-      var val = document.getElementById(idValor);
-      if (val) val.textContent = texto;
-      if (card) {
-        card.classList.remove('card-ok', 'card-err');
-        if (mal !== null) card.classList.add(mal ? 'card-err' : 'card-ok');
-      }
+    return {
+      filas: filas,
+      n: envios.length,
+      fuera: totalFuera,
+      prom: envios.length ? totalMin / envios.length : null,
+      opsTarde: filas.filter(function(o) { return o.tarde; }).length
     };
-    if (envios.length === 0) {
-      marcar('scHorarioPromedioCard', 'scHorarioPromedio', '-', null);
-      marcar('scFueraHorarioCard', 'scFueraHorario', '-', null);
-      marcar('scOpsTardeCard', 'scOpsTarde', '-', null);
-    } else {
-      var promGeneral = totalMin / envios.length;
-      var opsTarde = filas.filter(function(f) { return esTarde(f.prom); }).length;
-      marcar('scHorarioPromedioCard', 'scHorarioPromedio', minutosAHora(promGeneral), esTarde(promGeneral));
-      marcar('scFueraHorarioCard', 'scFueraHorario',
-        totalFuera + ' de ' + envios.length + ' (' + Math.round(totalFuera * 100 / envios.length) + '%)', totalFuera > 0);
-      marcar('scOpsTardeCard', 'scOpsTarde', opsTarde + ' de ' + filas.length, opsTarde > 0);
-    }
-
-    // --- Tabla ---
-    var tbody = document.getElementById('tbodyHorarios');
-    var vacio = document.getElementById('horariosVacio');
-    vaciar(tbody);
-    if (vacio) vacio.style.display = filas.length === 0 ? 'block' : 'none';
-
-    filas.forEach(function(f) {
-      var tr = crear('tr');
-      var tdCli = crear('td', null, f.cli.nombre);
-      tdCli.style.fontWeight = '600';
-      tr.appendChild(tdCli);
-
-      var tdPod = crear('td');
-      tdPod.style.textAlign = 'center';
-      if (f.cli.pod) {
-        var pild = crear('span', 'pildora', f.cli.pod);
-        pild.style.fontSize = '11px';
-        tdPod.appendChild(pild);
-      } else {
-        tdPod.textContent = '-';
-      }
-      tr.appendChild(tdPod);
-
-      var tdTech = crear('td', null, f.tech);
-      tdTech.style.textAlign = 'center';
-      tr.appendChild(tdTech);
-
-      var tdProm = crear('td', 'celda-tech');
-      var tarde = esTarde(f.prom);
-      var pill = crear('span', 'tech-pill ' + (tarde ? 'status-err' : 'status-ok'), minutosAHora(f.prom));
-      pill.title = 'Promedio de ' + f.n + (f.n === 1 ? ' envío' : ' envíos') + (tarde ? ': después de las 11:00' : ': en horario');
-      tdProm.appendChild(pill);
-      tr.appendChild(tdProm);
-
-      var tdFuera = crear('td', null, f.fuera + ' de ' + f.n);
-      tdFuera.style.textAlign = 'center';
-      if (f.fuera > 0) {
-        tdFuera.style.color = 'var(--rojo)';
-        tdFuera.style.fontWeight = '600';
-      }
-      tr.appendChild(tdFuera);
-
-      tbody.appendChild(tr);
-    });
-
-    dibujarChartHorarios(envios, dias, limite);
   }
 
-  function dibujarChartHorarios(envios, dias, limite) {
-    var chartDiv = document.getElementById('chart_horarios_div');
-    if (!chartDiv) return;
-    if (typeof google === 'undefined' || !google.visualization || !google.visualization.LineChart) {
-      // La librería de gráficos todavía no terminó de cargar: se redibuja cuando esté.
-      google.charts.setOnLoadCallback(pintarHorarios);
-      return;
-    }
-    if (envios.length === 0) {
-      vaciar(chartDiv);
-      return;
-    }
-
-    // En semana y mes, un punto por día. En el año, por semana (lunes): 250 puntos diarios
-    // son ruido, y lo que interesa ahí es la tendencia.
+  /**
+   * Puntos del gráfico. En semana y mes, uno por día; en el año, uno por semana (lunes):
+   * 250 puntos diarios son ruido, y lo que interesa ahí es la tendencia.
+   */
+  function serieHorarios(envios, dias) {
     var porSemana = dias > 31;
-    var titulo = document.getElementById('tituloChartHorarios');
-    if (titulo) titulo.textContent = 'Evolución de la hora promedio de envío — ' + (porSemana ? 'por semana' : 'por día');
-
     var baldes = {};
     envios.forEach(function(e) {
       var clave = e[0];
@@ -1270,21 +1223,137 @@
       baldes[clave].suma += e[3];
       baldes[clave].n++;
     });
+    return {
+      porSemana: porSemana,
+      puntos: Object.keys(baldes).sort().map(function(k) {
+        var p = k.split('-');
+        return { etiqueta: p[2] + '/' + p[1], prom: baldes[k].suma / baldes[k].n };
+      })
+    };
+  }
+
+  function pintarHorarios() {
+    if (!horariosGlobal) return;
+    var f = leerFiltrosHorarios();
+    var envios = filtrarEnviosHorarios(f).envios;
+    var agg = agregarHorarios(envios);
+
+    // --- Scorecards ---
+    var marcar = function(idCard, idValor, texto, mal) {
+      var card = document.getElementById(idCard);
+      var val = document.getElementById(idValor);
+      if (val) val.textContent = texto;
+      if (card) {
+        card.classList.remove('card-ok', 'card-err');
+        if (mal !== null) card.classList.add(mal ? 'card-err' : 'card-ok');
+      }
+    };
+    if (agg.n === 0) {
+      marcar('scHorarioPromedioCard', 'scHorarioPromedio', '-', null);
+      marcar('scFueraHorarioCard', 'scFueraHorario', '-', null);
+      marcar('scOpsTardeCard', 'scOpsTarde', '-', null);
+    } else {
+      marcar('scHorarioPromedioCard', 'scHorarioPromedio', minutosAHora(agg.prom), esTardeHorario(agg.prom));
+      marcar('scFueraHorarioCard', 'scFueraHorario',
+        agg.fuera + ' de ' + agg.n + ' (' + Math.round(agg.fuera * 100 / agg.n) + '%)', agg.fuera > 0);
+      marcar('scOpsTardeCard', 'scOpsTarde', agg.opsTarde + ' de ' + agg.filas.length, agg.opsTarde > 0);
+    }
+
+    // --- Tabla ---
+    var tbody = document.getElementById('tbodyHorarios');
+    var vacio = document.getElementById('horariosVacio');
+    vaciar(tbody);
+    if (vacio) vacio.style.display = agg.filas.length === 0 ? 'block' : 'none';
+
+    agg.filas.forEach(function(o) {
+      var tr = crear('tr');
+      var tdCli = crear('td', null, o.cli.nombre);
+      tdCli.style.fontWeight = '600';
+      tr.appendChild(tdCli);
+
+      var tdPod = crear('td');
+      tdPod.style.textAlign = 'center';
+      if (o.cli.pod) {
+        var pild = crear('span', 'pildora', o.cli.pod);
+        pild.style.fontSize = '11px';
+        tdPod.appendChild(pild);
+      } else {
+        tdPod.textContent = '-';
+      }
+      tr.appendChild(tdPod);
+
+      var tdTech = crear('td', null, o.tech);
+      tdTech.style.textAlign = 'center';
+      tr.appendChild(tdTech);
+
+      var tdProm = crear('td', 'celda-tech');
+      var pill = crear('span', 'tech-pill ' + (o.tarde ? 'status-err' : 'status-ok'), minutosAHora(o.prom));
+      pill.title = 'Promedio de ' + o.n + (o.n === 1 ? ' envío' : ' envíos') + (o.tarde ? ': después de las 11:00' : ': en horario');
+      tdProm.appendChild(pill);
+      tr.appendChild(tdProm);
+
+      var tdFuera = crear('td', null, o.fuera + ' de ' + o.n);
+      tdFuera.style.textAlign = 'center';
+      if (o.fuera > 0) {
+        tdFuera.style.color = 'var(--rojo)';
+        tdFuera.style.fontWeight = '600';
+      }
+      tr.appendChild(tdFuera);
+
+      tbody.appendChild(tr);
+    });
+
+    // El PDF es por cliente: sin uno elegido, el botón no tiene qué armar. Si un botón está
+    // en medio de un envío (tiene el spinner), no se toca: lo libera su propio callback.
+    var libre = function(boton) { return boton && !(boton.querySelector && boton.querySelector('.hilando')); };
+    var btnPdf = document.getElementById('btnPdfHorarios');
+    if (libre(btnPdf)) {
+      btnPdf.disabled = !f.cliente;
+      btnPdf.title = f.cliente ? 'PDF de ' + f.cliente + ' — ' + f.periodoTxt : 'Elegí un cliente para armar su PDF';
+    }
+    var btnSlack = document.getElementById('btnSlackHorarios');
+    if (libre(btnSlack)) btnSlack.disabled = agg.n === 0;
+
+    var serie = serieHorarios(envios, f.dias);
+    var titulo = document.getElementById('tituloChartHorarios');
+    if (titulo) titulo.textContent = 'Evolución de la hora promedio de envío — ' + (serie.porSemana ? 'por semana' : 'por día');
+    dibujarChartHorarios(document.getElementById('chart_horarios_div'), serie, null);
+  }
+
+  /**
+   * Dibuja la serie en un div. Si se pasa alListo, se lo llama con el gráfico ya dibujado
+   * (el PDF lo usa para sacarle la imagen con getImageURI()).
+   */
+  function dibujarChartHorarios(chartDiv, serie, alListo) {
+    if (!chartDiv) return;
+    if (typeof google === 'undefined' || !google.visualization || !google.visualization.LineChart) {
+      // La librería de gráficos todavía no terminó de cargar: se redibuja cuando esté.
+      google.charts.setOnLoadCallback(function() { dibujarChartHorarios(chartDiv, serie, alListo); });
+      return;
+    }
+    if (serie.puntos.length === 0) {
+      vaciar(chartDiv);
+      if (alListo) alListo(null);
+      return;
+    }
 
     var aHoraDelDia = function(min) {
       var t = Math.round(min);
       return [Math.floor(t / 60), t % 60, 0];
     };
     var dt = new google.visualization.DataTable();
-    dt.addColumn('string', porSemana ? 'Semana del' : 'Día');
+    dt.addColumn('string', serie.porSemana ? 'Semana del' : 'Día');
     dt.addColumn('timeofday', 'Hora promedio');
     dt.addColumn('timeofday', 'Límite 11:00');
-    Object.keys(baldes).sort().forEach(function(k) {
-      var p = k.split('-');
-      dt.addRow([p[2] + '/' + p[1], aHoraDelDia(baldes[k].suma / baldes[k].n), aHoraDelDia(limite)]);
+    serie.puntos.forEach(function(p) {
+      dt.addRow([p.etiqueta, aHoraDelDia(p.prom), aHoraDelDia(horariosGlobal.limiteMinutos)]);
     });
 
-    new google.visualization.LineChart(chartDiv).draw(dt, {
+    var chart = new google.visualization.LineChart(chartDiv);
+    if (alListo) {
+      google.visualization.events.addListener(chart, 'ready', function() { alListo(chart); });
+    }
+    chart.draw(dt, {
       colors: ['#109E58', '#C0392B'],
       series: { 1: { lineDashStyle: [6, 4], pointSize: 0, enableInteractivity: false } },
       pointSize: 5,
@@ -1292,6 +1361,145 @@
       chartArea: { width: '85%', height: '70%' },
       vAxis: { format: 'HH:mm' }
     });
+  }
+
+  // --- PDF por cliente ---
+  // El gráfico se dibuja fuera de pantalla solo con el cliente (todas sus tecnologías, sin
+  // importar el filtro de tecnología/POD), se le saca la imagen y el servidor arma el PDF.
+  // El servidor no recalcula nada: recibe los números ya calculados por agregarHorarios().
+  function generarPdfHorarios() {
+    var f = leerFiltrosHorarios();
+    var aviso = document.getElementById('avisoHorarios');
+    if (!horariosGlobal || !f.cliente) return;
+
+    var btn = document.getElementById('btnPdfHorarios');
+    ocupar(btn, 'Armando PDF...');
+    aviso.hidden = true;
+
+    var soloCliente = { dias: f.dias, periodoTxt: f.periodoTxt, cliente: f.cliente, tech: '', pod: '' };
+    var rango = filtrarEnviosHorarios(soloCliente);
+    var agg = agregarHorarios(rango.envios);
+    var serie = serieHorarios(rango.envios, f.dias);
+
+    var lienzo = crear('div');
+    lienzo.style.cssText = 'position:absolute; left:-10000px; top:0; width:900px; height:320px;';
+    document.body.appendChild(lienzo);
+
+    dibujarChartHorarios(lienzo, serie, function(chart) {
+      var imagen = chart ? chart.getImageURI() : null;
+      if (lienzo.parentNode) lienzo.parentNode.removeChild(lienzo);
+
+      var datosPdf = {
+        cliente: f.cliente,
+        pod: agg.filas.length ? agg.filas[0].cli.pod : '',
+        periodo: f.periodoTxt,
+        desde: isoACorta(rango.desdeIso),
+        hasta: isoACorta(rango.hastaIso),
+        promedio: agg.prom === null ? null : minutosAHora(agg.prom),
+        promedioTarde: agg.prom !== null && esTardeHorario(agg.prom),
+        envios: agg.n,
+        fuera: agg.fuera,
+        imagen: imagen,
+        tecnologias: agg.filas.map(function(o) {
+          return { tech: o.tech, promedio: minutosAHora(o.prom), tarde: o.tarde, n: o.n, fuera: o.fuera };
+        })
+      };
+
+      google.script.run
+        .withSuccessHandler(function(res) {
+          liberar(btn);
+          descargarBase64(res.base64, res.nombre, 'application/pdf', aviso);
+        })
+        .withFailureHandler(function(err) {
+          liberar(btn);
+          mostrarAviso(aviso, 'error', 'No se pudo generar el PDF: ' + err.message);
+        })
+        .webapp_generarPdfHorarios(datosPdf);
+    });
+  }
+
+  function descargarBase64(base64, nombre, tipo, aviso) {
+    var bin = atob(base64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    var url = URL.createObjectURL(new Blob([bytes], { type: tipo }));
+    var a = crear('a');
+    a.href = url;
+    a.download = nombre;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Por si el navegador bloquea la descarga dentro del iframe de Apps Script, queda el
+    // botón para abrirlo en otra pestaña.
+    mostrarAviso(aviso, 'ok', 'PDF generado: ' + nombre, [
+      { texto: 'Abrir PDF', alHacerClic: function() { window.open(url, '_blank'); } }
+    ]);
+  }
+
+  // --- Resumen por POD a Slack ---
+  // Manda exactamente lo que se ve en pantalla (período y filtros actuales), agrupado por
+  // POD. Pide confirmación antes: es un mensaje a un canal, no se puede deshacer.
+  function prepararSlackHorarios() {
+    var f = leerFiltrosHorarios();
+    var aviso = document.getElementById('avisoHorarios');
+    if (!horariosGlobal) return;
+    var rango = filtrarEnviosHorarios(f);
+    var agg = agregarHorarios(rango.envios);
+    if (agg.n === 0) return;
+
+    var porPod = {};
+    agg.filas.forEach(function(o) {
+      var pod = o.cli.pod || 'Sin POD';
+      if (!porPod[pod]) porPod[pod] = {};
+      if (!porPod[pod][o.cli.nombre]) porPod[pod][o.cli.nombre] = [];
+      porPod[pod][o.cli.nombre].push({ tech: o.tech, promedio: minutosAHora(o.prom), tarde: o.tarde, n: o.n, fuera: o.fuera });
+    });
+    var pods = Object.keys(porPod).sort().map(function(pod) {
+      return {
+        pod: pod,
+        clientes: Object.keys(porPod[pod]).sort(function(a, b) { return a.localeCompare(b); }).map(function(nombre) {
+          return { cliente: nombre, tecnologias: porPod[pod][nombre] };
+        })
+      };
+    });
+
+    var filtros = [];
+    if (f.cliente) filtros.push('cliente ' + f.cliente);
+    if (f.tech) filtros.push(f.tech);
+    if (f.pod) filtros.push(f.pod);
+
+    var datosSlack = {
+      periodo: f.periodoTxt,
+      desde: isoACorta(rango.desdeIso),
+      hasta: isoACorta(rango.hastaIso),
+      filtros: filtros.join(', '),
+      promedio: minutosAHora(agg.prom),
+      promedioTarde: esTardeHorario(agg.prom),
+      envios: agg.n,
+      fuera: agg.fuera,
+      pods: pods
+    };
+
+    var btn = document.getElementById('btnSlackHorarios');
+    mostrarAviso(aviso, 'atencion',
+      '¿Mandar a Slack el resumen por POD de ' + pods.length + (pods.length === 1 ? ' POD' : ' PODs') +
+      ' (' + f.periodoTxt + (datosSlack.filtros ? ', ' + datosSlack.filtros : '') + ')?', [
+      { texto: 'Enviar', clase: 'btn-primario', alHacerClic: function() {
+        aviso.hidden = true;
+        ocupar(btn, 'Enviando...');
+        google.script.run
+          .withSuccessHandler(function() {
+            liberar(btn);
+            mostrarAviso(aviso, 'ok', 'Resumen enviado a Slack.');
+          })
+          .withFailureHandler(function(err) {
+            liberar(btn);
+            mostrarAviso(aviso, 'error', 'No se pudo enviar a Slack: ' + err.message);
+          })
+          .webapp_enviarResumenHorariosSlack(datosSlack);
+      } },
+      { texto: 'Cancelar', alHacerClic: function() { aviso.hidden = true; } }
+    ]);
   }
 
   // --- Modal de Detalle de Cliente ---------------------------------------------------------
@@ -1308,7 +1516,7 @@
   if (btnActMatriz) btnActMatriz.addEventListener('click', function() {
     // Un solo botón para las dos subpestañas: actualiza la que se está mirando.
     if (subtabOperacionesActivo === 'horarios') cargarHorarios(true);
-    else cargarMatrizSalud();
+    else cargarMatrizSalud(true);
   });
 
   var subtabsOp = document.querySelectorAll('#seccion-operaciones .tab-btn');
@@ -1331,6 +1539,11 @@
     var sel = document.getElementById(id);
     if (sel) sel.addEventListener('change', pintarHorarios);
   });
+
+  var btnPdfHorarios = document.getElementById('btnPdfHorarios');
+  if (btnPdfHorarios) btnPdfHorarios.addEventListener('click', generarPdfHorarios);
+  var btnSlackHorarios = document.getElementById('btnSlackHorarios');
+  if (btnSlackHorarios) btnSlackHorarios.addEventListener('click', prepararSlackHorarios);
 
   var fPodMatriz = document.getElementById('filtroPodMatriz');
   if (fPodMatriz) fPodMatriz.addEventListener('change', pintarMatrizSalud);
