@@ -1762,6 +1762,15 @@
 
   // Los textos son relativos ("hace 12 minutos"): sin esto, una pestaña abierta toda la mañana
   // seguiría diciendo "recién".
+  //
+  // Además se vuelven a pedir los datos al servidor, para no depender de que alguien apriete
+  // "Actualizar" cada vez que quiere saber si salió un mail. 60s es el intervalo correcto:
+  // el caché del Índice dura 45s, así que cada vuelta trae datos frescos sin pedir de más.
+  //
+  // El guard de document.hidden no es un detalle: sin él, una pestaña que quedó abierta el
+  // viernes sigue llamando al servidor todo el fin de semana. Cada llamada es una ejecución
+  // de Apps Script, y esa cuota es la MISMA que necesitan las operaciones — quemarla mirando
+  // un dashboard que nadie tiene delante sería pagar dos veces por nada.
   setInterval(function () {
     pintarUltimoLanzamiento();
     pintarContextoBandeja();
@@ -1770,6 +1779,12 @@
       datosIndiceGlobal.proximoEnvio = webapp_calcularProximoEnvioLocal();
       pintarMetricasIndice(datosIndiceGlobal);
     }
+
+    if (document.hidden) return;
+
+    // Silencioso: sin spinner ni "Consultando...", para que la pantalla no parpadee cada
+    // minuto delante de quien la está leyendo.
+    cargarEstadoIndice(true);
   }, 60000);
 
   function webapp_calcularProximoEnvioLocal() {
