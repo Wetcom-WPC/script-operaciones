@@ -114,16 +114,16 @@
           <div>
             <h2>Salud Operativa y Matriz Tecnológica</h2>
             <p class="ayuda">
-              Visión 360° del estado de los servicios por cliente y tecnología, con correlación de anomalías y tendencias de estabilidad.
+              Qué mails salieron hoy a cada cliente, y a qué hora vienen saliendo en la semana, el mes y el año.
             </p>
           </div>
-          <button id="btnActualizarMatriz" class="btn-primario">Actualizar Matriz</button>
+          <button id="btnActualizarMatriz" class="btn-primario">Actualizar</button>
         </header>
 
         <!-- Subpestañas de Salud Operativa -->
         <div class="tabs-container" role="tablist" aria-label="Subpestañas de salud operativa" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
           <button class="tab-btn active" role="tab" aria-selected="true" data-tab-operaciones="matriz">Matriz de Salud</button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab-operaciones="tendencias">Tendencia Semanal</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab-operaciones="horarios">Horario de Envío</button>
         </div>
 
         <!-- Controles de Filtrado para Matriz -->
@@ -184,29 +184,70 @@
           <p id="matrizVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">No hay datos registrados para los filtros seleccionados.</p>
         </div>
 
-        <!-- Contenedor 2: Tendencias Semanales -->
-        <div id="vistaSubtabTendencias" style="display: none;">
-          <div class="chart-card" style="margin-bottom: 20px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
-            <h3 style="margin-bottom: 12px; font-size: 16px;">Estabilidad Operacional en los últimos 7 días</h3>
-            <div id="chart_tendencia_div" style="width: 100%; height: 320px;"></div>
+        <!-- Contenedor 2: Horario de Envío -->
+        <!-- Mide a qué hora le llega al cliente el mail de cada operación. Reemplaza a la vieja
+             "Tendencia Semanal" (Success/Warning/Error), que hablaba de los tickets del mail y
+             no de cuándo salió. Todos los filtros se resuelven en el navegador: cambiarlos no
+             vuelve a consultar al servidor. -->
+        <div id="vistaSubtabHorarios" style="display: none;">
+          <div class="filter-toolbar" style="margin-bottom: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+            <select id="filtroPeriodoHorarios" class="select-control" aria-label="Período" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none; font-weight: 600;">
+              <option value="7" selected>Semanal (últimos 7 días)</option>
+              <option value="30">Mensual (últimos 30 días)</option>
+              <option value="365">Anual (últimos 12 meses)</option>
+            </select>
+            <select id="filtroClienteHorarios" class="select-control" aria-label="Filtrar por cliente" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none; min-width: 200px;">
+              <option value="">Todos los clientes</option>
+            </select>
+            <select id="filtroTechHorarios" class="select-control" aria-label="Filtrar por tecnología" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
+              <option value="">Todas las tecnologías</option>
+            </select>
+            <select id="filtroPodHorarios" class="select-control" aria-label="Filtrar por POD" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
+              <option value="">Todos los PODs</option>
+            </select>
           </div>
-          <div class="table-container">
-            <div class="table-responsive" style="overflow-x: auto;">
-              <table class="tabla-logs" id="tablaTendencias" style="width: 100%; border-collapse: collapse;">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Operaciones Resueltas</th>
-                    <th>Con Advertencias</th>
-                    <th>No Resueltas / Errores</th>
-                    <th>Tickets Creados</th>
-                    <th>Índice de Estabilidad</th>
-                  </tr>
-                </thead>
-                <tbody id="tbodyTendencias"></tbody>
-              </table>
+          <p class="ayuda" style="margin: 0 0 16px 0;">
+            Hora del <strong>primer</strong> envío de cada día hábil (los reenvíos no cuentan; sábados y domingos tampoco).
+            En rojo, lo que en promedio sale <strong>después de las 11:00</strong>.
+          </p>
+
+          <div class="aviso" id="avisoHorarios" hidden></div>
+
+          <div class="scorecard-grid" style="margin-bottom: 20px;">
+            <div class="scorecard-card" id="scHorarioPromedioCard">
+              <span class="scorecard-label">Hora promedio de envío</span>
+              <div id="scHorarioPromedio" class="scorecard-value">-</div>
+            </div>
+            <div class="scorecard-card" id="scFueraHorarioCard">
+              <span class="scorecard-label">Envíos después de las 11:00</span>
+              <div id="scFueraHorario" class="scorecard-value">-</div>
+            </div>
+            <div class="scorecard-card" id="scOpsTardeCard">
+              <span class="scorecard-label">Operaciones con promedio tarde</span>
+              <div id="scOpsTarde" class="scorecard-value">-</div>
             </div>
           </div>
+
+          <div class="chart-card" style="margin-bottom: 20px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+            <h3 id="tituloChartHorarios" style="margin-bottom: 12px; font-size: 16px;">Evolución de la hora promedio de envío</h3>
+            <div id="chart_horarios_div" style="width: 100%; height: 280px;"></div>
+          </div>
+
+          <div class="matriz-container" style="overflow-x: auto;">
+            <table class="matriz-table tabla-logs" id="tablaHorarios" style="width: 100%; border-collapse: collapse;">
+              <thead>
+                <tr>
+                  <th class="th-cliente">Cliente</th>
+                  <th>POD</th>
+                  <th>Tecnología</th>
+                  <th>Hora promedio</th>
+                  <th>Días después de las 11:00</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyHorarios"></tbody>
+            </table>
+          </div>
+          <p id="horariosVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">No hay envíos registrados para los filtros seleccionados.</p>
         </div>
       </section>
 

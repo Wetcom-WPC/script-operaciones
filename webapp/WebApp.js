@@ -1347,51 +1347,137 @@ function webapp_obtenerMatrizEnvios(overrideSheetId) {
 }
 
 
+// Hora de corte comprometida con los clientes para el mail de operaciones, en minutos desde
+// la medianoche (11:00). Un envío a las 11:00:00 justas está en horario; 11:00:01 ya no.
+const WEBAPP_LIMITE_ENVIO_MINUTOS = 11 * 60;
+const WEBAPP_CACHE_HORARIOS_SEGUNDOS = 1800; // 30 minutos
+const WEBAPP_HORARIOS_DIAS_HISTORIA = 366;
+
 /**
- * Devuelve la serie temporal de los últimos 7 días de ejecuciones para graficar tendencias de estabilidad.
- * @param {string} [overrideSheetId]
- * @returns {Array<Object>}
+ * Horario de envío del mail de operaciones: a qué hora le sale, en promedio, a cada cliente
+ * el mail de cada tecnología, y cuántos días salió después de las 11:00.
+ *
+ * Reemplaza a la vieja "Tendencia Semanal", que graficaba Success/Warning/Error. Ese estado
+ * habla de los tickets que llevaba el mail adentro, no de cuándo salió, así que no respondía
+ * la pregunta que importa para el cliente: si le llega antes de las 11.
+ *
+ * Devuelve los envíos crudos del último año —uno por cliente, tecnología y día hábil— y el
+ * front agrupa por período y filtra. Así cambiar de semana a año, o elegir un cliente, no
+ * vuelve a llamar al servidor: una sola lectura de una sola pestaña, cacheada 30 minutos (la
+ * historia de ayer para atrás no cambia; el botón Actualizar la fuerza).
+ *
+ * Criterios:
+ *   - Si el mismo mail salió más de una vez en el día (reenvío), cuenta el PRIMERO: es el que
+ *     recibió el cliente a esa hora; el reenvío no lo hace llegar antes.
+ *   - Sábados y domingos no cuentan: el compromiso de las 11 es de día hábil, y un envío de
+ *     fin de semana a cualquier hora distorsionaría el promedio.
+ *   - Se descartan las filas de testing / WPC, con el mismo criterio que el Índice.
+ *
+ * @param {string} [overrideSheetId] Planilla de logs (selector de entorno).
+ * @param {boolean} [forzar] Ignorar la caché.
+ * @returns {{limiteMinutos:number, hoy:string, clientes:Array, tecnologias:Array<string>, envios:Array}}
+ *   envios: [fechaISO, índice de cliente, índice de tecnología, minutos desde medianoche].
  */
-function webapp_obtenerTendenciaSemanal(overrideSheetId) {
+function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
   const usuario = webapp_usuarioActual();
   webapp_exigirAutorizacion(usuario);
 
-  const targetSheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID;
-  const logs = webapp_obtenerLogs(1000, targetSheetId);
-  const diasMap = {};
-
-  (logs.estadoFinal || []).forEach(function(r) {
-    if (!r.fecha || r.fecha === '-') return;
-    if (!diasMap[r.fecha]) {
-      diasMap[r.fecha] = {
-        fecha: r.fecha,
-        resueltos: 0,
-        advertencias: 0,
-        errores: 0,
-        totalTickets: 0
-      };
+  const sheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID;
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'webapp_horarios_envio_v1_' + sheetId;
+  if (!forzar) {
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      try { return JSON.parse(cached); } catch (e) {}
     }
-    const d = diasMap[r.fecha];
-    const est = (r.estado || '').toLowerCase();
-    if (est.includes('no resuelto') || est.includes('error')) {
-      d.errores++;
-    } else if (est.includes('advertencia')) {
-      d.advertencias++;
+  }
+
+  const tz = HORARIO_OPERATIVO_TZ;
+  const hoyISO = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  const desdeISO = Utilities.formatDate(new Date(Date.now() - WEBAPP_HORARIOS_DIAS_HISTORIA * 86400000), tz, 'yyyy-MM-dd');
+  const resultado = { limiteMinutos: WEBAPP_LIMITE_ENVIO_MINUTOS, hoy: hoyISO, clientes: [], tecnologias: [], envios: [] };
+
+  const sheet = SpreadsheetApp.openById(sheetId).getSheetByName(LOG_MAILS_TAB_NAME);
+  if (!sheet) throw new Error('No existe la pestaña "' + LOG_MAILS_TAB_NAME + '" en la planilla de logs.');
+  const ultimaFila = sheet.getLastRow();
+  if (ultimaFila < 2) return resultado;
+
+  // Fecha con getValues (llega como Date, sin ambigüedad dd/MM vs MM/dd) y hora con
+  // getDisplayValues: una celda de solo hora es una fecha de 1899, y formatearla con zona
+  // horaria puede correrla por el huso histórico de esa época. El texto que muestra la
+  // planilla es exactamente lo que escribió registrarEnvioMail().
+  const rango = sheet.getRange(2, 1, ultimaFila - 1, 6);
+  const valores = rango.getValues();
+  const horasTexto = sheet.getRange(2, 2, ultimaFila - 1, 1).getDisplayValues();
+
+  const pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  const aISO = function (v) {
+    if (v instanceof Date) return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+    const s = String(v || '').trim();
+    let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) return m[1] + '-' + pad(+m[2]) + '-' + pad(+m[3]);
+    m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m) return m[3] + '-' + pad(+m[2]) + '-' + pad(+m[1]);
+    return null;
+  };
+  const aMinutos = function (s) {
+    const m = String(s || '').trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+    if (!m) return null;
+    return (+m[1]) * 60 + (+m[2]) + (m[3] ? (+m[3]) / 60 : 0);
+  };
+
+  const idxCliente = {};
+  const idxTech = {};
+  const primerEnvio = {}; // "fecha|cliente|tech" -> fila de envios
+
+  for (let i = 0; i < valores.length; i++) {
+    const r = valores[i];
+    const fecha = aISO(r[0]);
+    if (!fecha || fecha < desdeISO || fecha > hoyISO) continue;
+
+    const partes = fecha.split('-');
+    const diaSemana = new Date(+partes[0], +partes[1] - 1, +partes[2]).getDay();
+    if (diaSemana === 0 || diaSemana === 6) continue;
+
+    const minutos = aMinutos(horasTexto[i][0]);
+    const cliente = String(r[3] || '').trim();
+    const tech = String(r[4] || '').trim();
+    const pod = String(r[5] || '').trim();
+    if (minutos === null || !cliente || !tech) continue;
+    const cliBajo = cliente.toLowerCase();
+    if (cliBajo.includes('testing') || cliBajo.startsWith('wpc -') || pod.toUpperCase() === 'WPC') continue;
+
+    if (!idxCliente.hasOwnProperty(cliente)) {
+      idxCliente[cliente] = resultado.clientes.length;
+      resultado.clientes.push({ nombre: cliente, pod: pod });
+    } else if (pod) {
+      // El POD de un cliente puede cambiar: queda el del envío más reciente.
+      resultado.clientes[idxCliente[cliente]].pod = pod;
+    }
+    if (!idxTech.hasOwnProperty(tech)) {
+      idxTech[tech] = resultado.tecnologias.length;
+      resultado.tecnologias.push(tech);
+    }
+
+    const clave = fecha + '|' + cliente + '|' + tech;
+    const redondeado = Math.round(minutos * 100) / 100;
+    if (primerEnvio.hasOwnProperty(clave)) {
+      if (redondeado < primerEnvio[clave][3]) primerEnvio[clave][3] = redondeado;
     } else {
-      d.resueltos++;
+      const fila = [fecha, idxCliente[cliente], idxTech[tech], redondeado];
+      primerEnvio[clave] = fila;
+      resultado.envios.push(fila);
     }
-    d.totalTickets += (r.ticketsCreados || 0);
-  });
+  }
 
-  // Tomar hasta los últimos 7 días con actividad ordenados cronológicamente
-  const diasOrdenados = Object.keys(diasMap).sort(function(a, b) {
-    const pA = a.split('/');
-    const pB = b.split('/');
-    if (pA.length === 3 && pB.length === 3) {
-      return new Date(pA[2], pA[1]-1, pA[0]) - new Date(pB[2], pB[1]-1, pB[0]);
-    }
-    return a.localeCompare(b);
-  }).slice(-7);
-
-  return diasOrdenados.map(function(k) { return diasMap[k]; });
+  // La caché admite 100 KB por clave. Con un año de historia el resultado puede pasarse; en
+  // ese caso se sirve igual, solo que sin cachear (se loguea para saber que está pasando).
+  try {
+    const json = JSON.stringify(resultado);
+    if (json.length < 95000) cache.put(cacheKey, json, WEBAPP_CACHE_HORARIOS_SEGUNDOS);
+    else Logger.log('[WebApp] Horarios de envío sin cachear: ' + json.length + ' bytes (límite 100 KB).');
+  } catch (e) {
+    Logger.log('[WebApp] No se pudo cachear horarios de envío: ' + e.message);
+  }
+  return resultado;
 }

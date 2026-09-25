@@ -848,7 +848,7 @@
   
 // --- Salud Operativa y Matriz Tecnológica -----------------------------------------------
   var matrizGlobal = null;
-  var tendenciasGlobal = null;
+  var horariosGlobal = null;
   var subtabOperacionesActivo = 'matriz';
 
   function cambiarSubtabOperaciones(event) {
@@ -867,24 +867,25 @@
     subtabOperacionesActivo = subtab;
 
     var vMatriz = document.getElementById('vistaSubtabMatriz');
-    var vTendencias = document.getElementById('vistaSubtabTendencias');
+    var vHorarios = document.getElementById('vistaSubtabHorarios');
     var controles = document.getElementById('controlesMatriz');
     var scorecard = document.getElementById('scorecardMatriz');
 
     if (subtab === 'matriz') {
       if (vMatriz) vMatriz.style.display = 'block';
-      if (vTendencias) vTendencias.style.display = 'none';
+      if (vHorarios) vHorarios.style.display = 'none';
       if (controles) controles.style.display = 'flex';
       if (scorecard) scorecard.style.display = 'grid';
     } else {
       if (vMatriz) vMatriz.style.display = 'none';
-      if (vTendencias) vTendencias.style.display = 'block';
+      if (vHorarios) vHorarios.style.display = 'block';
       if (controles) controles.style.display = 'none';
       if (scorecard) scorecard.style.display = 'none';
-      if (!tendenciasGlobal) {
-        cargarTendencias();
+      // Se carga recién la primera vez que se abre la pestaña: si nadie la mira, no gasta nada.
+      if (!horariosGlobal) {
+        cargarHorarios(false);
       } else {
-        pintarTendencias();
+        pintarHorarios();
       }
     }
   }
@@ -1051,66 +1052,246 @@
     });
   }
 
-  function cargarTendencias() {
+  // --- Horario de Envío ----------------------------------------------------------------------
+  // El servidor manda los envíos crudos del último año (primer envío de cada día hábil) y
+  // todo lo demás —período, filtros, promedios, gráfico— se calcula acá. Cambiar un filtro no
+  // gasta una sola ejecución de Apps Script.
+
+  function cargarHorarios(forzar) {
+    var btn = document.getElementById('btnActualizarMatriz');
+    if (btn && forzar) ocupar(btn, 'Actualizando...');
+    var aviso = document.getElementById('avisoHorarios');
+    if (aviso) aviso.hidden = true;
+
     var selectEnv = document.getElementById('filtroEntornoMatriz') || document.getElementById('filtroEntornoLogs');
     var sheetId = (selectEnv && selectEnv.value) ? selectEnv.value : '1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ';
 
     google.script.run
       .withSuccessHandler(function(datos) {
-        tendenciasGlobal = datos;
-        pintarTendencias();
+        if (btn && forzar) liberar(btn);
+        horariosGlobal = datos;
+        poblarFiltrosHorarios();
+        pintarHorarios();
       })
       .withFailureHandler(function(err) {
-        mostrarAviso(document.getElementById('avisoMatriz'), 'error', 'No se pudieron cargar tendencias: ' + err.message);
+        if (btn && forzar) liberar(btn);
+        mostrarAviso(aviso, 'error', 'No se pudieron cargar los horarios de envío: ' + err.message);
       })
-      .webapp_obtenerTendenciaSemanal(sheetId);
+      .webapp_obtenerHorariosEnvio(sheetId, !!forzar);
   }
 
-  function pintarTendencias() {
-    if (!tendenciasGlobal || tendenciasGlobal.length === 0) return;
+  function poblarFiltrosHorarios() {
+    if (!horariosGlobal) return;
+    var llenar = function(id, valores) {
+      var sel = document.getElementById(id);
+      if (!sel) return;
+      var actual = sel.value;
+      while (sel.options.length > 1) sel.remove(1);
+      valores.forEach(function(v) {
+        var opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        sel.appendChild(opt);
+      });
+      if (valores.indexOf(actual) !== -1) sel.value = actual;
+    };
+    var nombres = horariosGlobal.clientes.map(function(c) { return c.nombre; });
+    var pods = [];
+    horariosGlobal.clientes.forEach(function(c) {
+      if (c.pod && pods.indexOf(c.pod) === -1) pods.push(c.pod);
+    });
+    var porTexto = function(a, b) { return a.localeCompare(b); };
+    llenar('filtroClienteHorarios', nombres.slice().sort(porTexto));
+    llenar('filtroTechHorarios', horariosGlobal.tecnologias.slice().sort(porTexto));
+    llenar('filtroPodHorarios', pods.sort(porTexto));
+  }
 
-    var arrChart = [['Día', 'Resueltos', 'Con Advertencias', 'Errores']];
-    var tbody = document.getElementById('tbodyTendencias');
-    if (!tbody) return;
+  function isoADate(iso) {
+    var p = iso.split('-');
+    return new Date(+p[0], +p[1] - 1, +p[2]);
+  }
+
+  function dateAIso(d) {
+    var pad = function(n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+  }
+
+  function minutosAHora(min) {
+    var t = Math.round(min);
+    var h = Math.floor(t / 60), m = t % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+  }
+
+  function pintarHorarios() {
+    if (!horariosGlobal) return;
+    var datos = horariosGlobal;
+    var limite = datos.limiteMinutos;
+    // Un promedio se juzga por el minuto que se muestra: si dice 11:00, no puede estar en rojo.
+    var esTarde = function(prom) { return Math.round(prom) > limite; };
+
+    var dias = parseInt(document.getElementById('filtroPeriodoHorarios').value, 10) || 7;
+    var fCli = document.getElementById('filtroClienteHorarios').value;
+    var fTech = document.getElementById('filtroTechHorarios').value;
+    var fPod = document.getElementById('filtroPodHorarios').value;
+
+    // "Últimos N días" incluye hoy. Se calcula desde el "hoy" del servidor (hora Argentina),
+    // no desde el reloj del navegador.
+    var desde = isoADate(datos.hoy);
+    desde.setDate(desde.getDate() - (dias - 1));
+    var desdeIso = dateAIso(desde);
+
+    var envios = datos.envios.filter(function(e) {
+      if (e[0] < desdeIso) return false;
+      var cli = datos.clientes[e[1]];
+      if (fCli && cli.nombre !== fCli) return false;
+      if (fPod && cli.pod !== fPod) return false;
+      if (fTech && datos.tecnologias[e[2]] !== fTech) return false;
+      return true;
+    });
+
+    // --- Por operación (cliente + tecnología) ---
+    var ops = {};
+    var totalMin = 0, totalFuera = 0;
+    envios.forEach(function(e) {
+      var k = e[1] + '|' + e[2];
+      if (!ops[k]) ops[k] = { cli: datos.clientes[e[1]], tech: datos.tecnologias[e[2]], suma: 0, n: 0, fuera: 0 };
+      ops[k].suma += e[3];
+      ops[k].n++;
+      totalMin += e[3];
+      if (e[3] > limite) { ops[k].fuera++; totalFuera++; }
+    });
+    var filas = Object.keys(ops).map(function(k) {
+      var o = ops[k];
+      o.prom = o.suma / o.n;
+      return o;
+    });
+    // Lo más tarde arriba: es lo que hay que mirar.
+    filas.sort(function(a, b) { return b.prom - a.prom; });
+
+    // --- Scorecards ---
+    var marcar = function(idCard, idValor, texto, mal) {
+      var card = document.getElementById(idCard);
+      var val = document.getElementById(idValor);
+      if (val) val.textContent = texto;
+      if (card) {
+        card.classList.remove('card-ok', 'card-err');
+        if (mal !== null) card.classList.add(mal ? 'card-err' : 'card-ok');
+      }
+    };
+    if (envios.length === 0) {
+      marcar('scHorarioPromedioCard', 'scHorarioPromedio', '-', null);
+      marcar('scFueraHorarioCard', 'scFueraHorario', '-', null);
+      marcar('scOpsTardeCard', 'scOpsTarde', '-', null);
+    } else {
+      var promGeneral = totalMin / envios.length;
+      var opsTarde = filas.filter(function(f) { return esTarde(f.prom); }).length;
+      marcar('scHorarioPromedioCard', 'scHorarioPromedio', minutosAHora(promGeneral), esTarde(promGeneral));
+      marcar('scFueraHorarioCard', 'scFueraHorario',
+        totalFuera + ' de ' + envios.length + ' (' + Math.round(totalFuera * 100 / envios.length) + '%)', totalFuera > 0);
+      marcar('scOpsTardeCard', 'scOpsTarde', opsTarde + ' de ' + filas.length, opsTarde > 0);
+    }
+
+    // --- Tabla ---
+    var tbody = document.getElementById('tbodyHorarios');
+    var vacio = document.getElementById('horariosVacio');
     vaciar(tbody);
+    if (vacio) vacio.style.display = filas.length === 0 ? 'block' : 'none';
 
-    tendenciasGlobal.forEach(function(d) {
-      arrChart.push([d.fecha, d.resueltos, d.advertencias, d.errores]);
-
-      var totalOps = d.resueltos + d.advertencias + d.errores;
-      var estabilidadPct = totalOps > 0 ? Math.round((d.resueltos / totalOps) * 100) : 100;
-
+    filas.forEach(function(f) {
       var tr = crear('tr');
-      tr.appendChild(crear('td', null, d.fecha));
-      tr.appendChild(crear('td', null, d.resueltos));
-      tr.appendChild(crear('td', null, d.advertencias));
-      tr.appendChild(crear('td', null, d.errores));
-      tr.appendChild(crear('td', null, d.totalTickets));
+      var tdCli = crear('td', null, f.cli.nombre);
+      tdCli.style.fontWeight = '600';
+      tr.appendChild(tdCli);
 
-      var tdEst = crear('td');
-      var badgeClase = 'badge-success';
-      if (estabilidadPct < 80) badgeClase = 'badge-error';
-      else if (estabilidadPct < 95) badgeClase = 'badge-warning';
-      tdEst.appendChild(crear('span', 'badge ' + badgeClase, estabilidadPct + '%'));
-      tr.appendChild(tdEst);
+      var tdPod = crear('td');
+      tdPod.style.textAlign = 'center';
+      if (f.cli.pod) {
+        var pild = crear('span', 'pildora', f.cli.pod);
+        pild.style.fontSize = '11px';
+        tdPod.appendChild(pild);
+      } else {
+        tdPod.textContent = '-';
+      }
+      tr.appendChild(tdPod);
+
+      var tdTech = crear('td', null, f.tech);
+      tdTech.style.textAlign = 'center';
+      tr.appendChild(tdTech);
+
+      var tdProm = crear('td', 'celda-tech');
+      var tarde = esTarde(f.prom);
+      var pill = crear('span', 'tech-pill ' + (tarde ? 'status-err' : 'status-ok'), minutosAHora(f.prom));
+      pill.title = 'Promedio de ' + f.n + (f.n === 1 ? ' envío' : ' envíos') + (tarde ? ': después de las 11:00' : ': en horario');
+      tdProm.appendChild(pill);
+      tr.appendChild(tdProm);
+
+      var tdFuera = crear('td', null, f.fuera + ' de ' + f.n);
+      tdFuera.style.textAlign = 'center';
+      if (f.fuera > 0) {
+        tdFuera.style.color = 'var(--rojo)';
+        tdFuera.style.fontWeight = '600';
+      }
+      tr.appendChild(tdFuera);
 
       tbody.appendChild(tr);
     });
 
-    var chartDiv = document.getElementById('chart_tendencia_div');
-    if (chartDiv && typeof google !== 'undefined' && google.visualization && google.visualization.ColumnChart) {
-      var dataTable = google.visualization.arrayToDataTable(arrChart);
-      var options = {
-        isStacked: true,
-        colors: ['#109E58', '#D97706', '#DC2626'],
-        legend: { position: 'top' },
-        chartArea: { width: '85%', height: '70%' },
-        hAxis: { title: 'Fecha' },
-        vAxis: { title: 'Volumen de Operaciones', minValue: 0 }
-      };
-      var chart = new google.visualization.ColumnChart(chartDiv);
-      chart.draw(dataTable, options);
+    dibujarChartHorarios(envios, dias, limite);
+  }
+
+  function dibujarChartHorarios(envios, dias, limite) {
+    var chartDiv = document.getElementById('chart_horarios_div');
+    if (!chartDiv) return;
+    if (typeof google === 'undefined' || !google.visualization || !google.visualization.LineChart) {
+      // La librería de gráficos todavía no terminó de cargar: se redibuja cuando esté.
+      google.charts.setOnLoadCallback(pintarHorarios);
+      return;
     }
+    if (envios.length === 0) {
+      vaciar(chartDiv);
+      return;
+    }
+
+    // En semana y mes, un punto por día. En el año, por semana (lunes): 250 puntos diarios
+    // son ruido, y lo que interesa ahí es la tendencia.
+    var porSemana = dias > 31;
+    var titulo = document.getElementById('tituloChartHorarios');
+    if (titulo) titulo.textContent = 'Evolución de la hora promedio de envío — ' + (porSemana ? 'por semana' : 'por día');
+
+    var baldes = {};
+    envios.forEach(function(e) {
+      var clave = e[0];
+      if (porSemana) {
+        var d = isoADate(e[0]);
+        d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+        clave = dateAIso(d);
+      }
+      if (!baldes[clave]) baldes[clave] = { suma: 0, n: 0 };
+      baldes[clave].suma += e[3];
+      baldes[clave].n++;
+    });
+
+    var aHoraDelDia = function(min) {
+      var t = Math.round(min);
+      return [Math.floor(t / 60), t % 60, 0];
+    };
+    var dt = new google.visualization.DataTable();
+    dt.addColumn('string', porSemana ? 'Semana del' : 'Día');
+    dt.addColumn('timeofday', 'Hora promedio');
+    dt.addColumn('timeofday', 'Límite 11:00');
+    Object.keys(baldes).sort().forEach(function(k) {
+      var p = k.split('-');
+      dt.addRow([p[2] + '/' + p[1], aHoraDelDia(baldes[k].suma / baldes[k].n), aHoraDelDia(limite)]);
+    });
+
+    new google.visualization.LineChart(chartDiv).draw(dt, {
+      colors: ['#109E58', '#C0392B'],
+      series: { 1: { lineDashStyle: [6, 4], pointSize: 0, enableInteractivity: false } },
+      pointSize: 5,
+      legend: { position: 'top' },
+      chartArea: { width: '85%', height: '70%' },
+      vAxis: { format: 'HH:mm' }
+    });
   }
 
   // --- Modal de Detalle de Cliente ---------------------------------------------------------
@@ -1124,7 +1305,11 @@
 
   // Listeners de Salud Operativa
   var btnActMatriz = document.getElementById('btnActualizarMatriz');
-  if (btnActMatriz) btnActMatriz.addEventListener('click', cargarMatrizSalud);
+  if (btnActMatriz) btnActMatriz.addEventListener('click', function() {
+    // Un solo botón para las dos subpestañas: actualiza la que se está mirando.
+    if (subtabOperacionesActivo === 'horarios') cargarHorarios(true);
+    else cargarMatrizSalud();
+  });
 
   var subtabsOp = document.querySelectorAll('#seccion-operaciones .tab-btn');
   for (var s = 0; s < subtabsOp.length; s++) {
@@ -1135,12 +1320,17 @@
   if (fEntornoMatriz) {
     fEntornoMatriz.addEventListener('change', function() {
       matrizGlobal = null;
-      tendenciasGlobal = null;
+      horariosGlobal = null;
       cargarMatrizSalud();
-      cargarTendencias();
+      if (subtabOperacionesActivo === 'horarios') cargarHorarios(false);
     });
   }
 
+
+  ['filtroPeriodoHorarios', 'filtroClienteHorarios', 'filtroTechHorarios', 'filtroPodHorarios'].forEach(function(id) {
+    var sel = document.getElementById(id);
+    if (sel) sel.addEventListener('change', pintarHorarios);
+  });
 
   var fPodMatriz = document.getElementById('filtroPodMatriz');
   if (fPodMatriz) fPodMatriz.addEventListener('change', pintarMatrizSalud);

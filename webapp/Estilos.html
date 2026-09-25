@@ -803,7 +803,12 @@ footer { padding: 0 24px 28px; max-width: 1400px; margin: 0 auto; font-size: 11.
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
+  /* min-width y no width: la pildora ahora lleva la hora ("✅ 10:14"), y con ancho fijo
+     el texto se salia del fondo de color. */
+  min-width: 30px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  white-space: nowrap;
   height: 30px;
   border-radius: var(--radio-sm);
   font-size: 14px;
