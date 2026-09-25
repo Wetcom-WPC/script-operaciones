@@ -132,11 +132,9 @@
             <option value="1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ" selected>Producción</option>
             <option value="11dfz2dBl-A1owku7xGhtuyJ2pbayezwObHV5oETuuDw">Testing</option>
           </select>
-          <select id="filtroPeriodoMatriz" class="select-control" aria-label="Período de análisis" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
-            <option value="hoy">Hoy</option>
-            <option value="ayer">Ayer</option>
-            <option value="semana">Últimos 7 días</option>
-          </select>
+          <!-- El selector de período (hoy/ayer/semana) se quitó: el semáforo responde "¿salió
+               hoy?", y esa pregunta solo tiene sentido sobre el día en curso. Para mirar días
+               anteriores está "Logs del Sistema > Envío de Mails", que sí guarda el historial. -->
           <select id="filtroPodMatriz" class="select-control" aria-label="Filtrar por POD" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
             <option value="">Todos los PODs</option>
             <option value="POD1">POD 1</option>
@@ -147,8 +145,8 @@
           </select>
           <select id="filtroEstadoMatriz" class="select-control" aria-label="Filtrar por estado" style="padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; background: white; color: #333; cursor: pointer; outline: none;">
             <option value="">Todos los estados</option>
-            <option value="anomalias">Solo con alertas / incidencias</option>
-            <option value="ok">100% Sin anomalías</option>
+            <option value="pendientes">Solo con envíos pendientes</option>
+            <option value="completos">Solo completos</option>
           </select>
           <input type="text" id="filtroBuscarMatriz" class="input-control search-input" placeholder="Buscar cliente en matriz…" aria-label="Buscar cliente" autocomplete="off" style="flex-grow: 1; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px; outline: none;">
         </div>
@@ -162,16 +160,16 @@
             <div id="scTotalClientes" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #111827;">-</div>
           </div>
           <div class="scorecard-card card-err" style="flex: 1; min-width: 160px; border: 1px solid #fca5a5; border-radius: 6px; padding: 12px; text-align: center; background: #fef2f2;">
-            <span class="scorecard-label" style="font-size: 12px; color: #991b1b; text-transform: uppercase;">Con Incidencias</span>
-            <div id="scConIncidencias" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #dc2626;">-</div>
-          </div>
-          <div class="scorecard-card card-warn" style="flex: 1; min-width: 160px; border: 1px solid #fcd34d; border-radius: 6px; padding: 12px; text-align: center; background: #fffbeb;">
-            <span class="scorecard-label" style="font-size: 12px; color: #92400e; text-transform: uppercase;">Con Advertencias</span>
-            <div id="scConAdvertencias" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #d97706;">-</div>
+            <span class="scorecard-label" style="font-size: 12px; color: #991b1b; text-transform: uppercase;">Con Envíos Pendientes</span>
+            <div id="scConPendientes" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #dc2626;">-</div>
           </div>
           <div class="scorecard-card card-ok" style="flex: 1; min-width: 160px; border: 1px solid #a7f3d0; border-radius: 6px; padding: 12px; text-align: center; background: #ecfdf5;">
-            <span class="scorecard-label" style="font-size: 12px; color: #065f46; text-transform: uppercase;">Salud Global</span>
-            <div id="scSaludGlobal" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #059669;">-%</div>
+            <span class="scorecard-label" style="font-size: 12px; color: #065f46; text-transform: uppercase;">Completos</span>
+            <div id="scCompletos" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #059669;">-</div>
+          </div>
+          <div class="scorecard-card card-ok" style="flex: 1; min-width: 160px; border: 1px solid #a7f3d0; border-radius: 6px; padding: 12px; text-align: center; background: #ecfdf5;">
+            <span class="scorecard-label" style="font-size: 12px; color: #065f46; text-transform: uppercase;">% Completos</span>
+            <div id="scPctCompletos" class="scorecard-value" style="font-size: 24px; font-weight: bold; color: #059669;">-%</div>
           </div>
         </div>
 

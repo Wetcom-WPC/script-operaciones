@@ -895,7 +895,6 @@
     var aviso = document.getElementById('avisoMatriz');
     if (aviso) aviso.hidden = true;
 
-    var periodo = document.getElementById('filtroPeriodoMatriz') ? document.getElementById('filtroPeriodoMatriz').value : 'hoy';
     var selectEnv = document.getElementById('filtroEntornoMatriz') || document.getElementById('filtroEntornoLogs');
     var sheetId = (selectEnv && selectEnv.value) ? selectEnv.value : '1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ';
 
@@ -907,9 +906,9 @@
       })
       .withFailureHandler(function(err) {
         if (btn) liberar(btn);
-        mostrarAviso(aviso, 'error', 'No se pudo cargar la matriz de salud: ' + err.message);
+        mostrarAviso(aviso, 'error', 'No se pudo cargar el semáforo de envíos: ' + err.message);
       })
-      .webapp_obtenerMatrizSalud(periodo, sheetId);
+      .webapp_obtenerMatrizEnvios(sheetId);
   }
 
   function pintarMatrizSalud() {
@@ -925,31 +924,30 @@
         var fp = filtroPod.replace(/\s+/g, '');
         if (p !== fp) return false;
       }
-      if (filtroEstado === 'anomalias' && cli.estadoGeneral === 'OK') return false;
-      if (filtroEstado === 'ok' && cli.estadoGeneral !== 'OK') return false;
+      if (filtroEstado === 'pendientes' && cli.pendientes === 0) return false;
+      if (filtroEstado === 'completos' && cli.pendientes > 0) return false;
       if (filtroBuscar && cli.cliente.toLowerCase().indexOf(filtroBuscar) === -1) return false;
       return true;
     });
 
     // Actualizar Scorecards según los clientes mostrados
     var scTot = document.getElementById('scTotalClientes');
-    var scInc = document.getElementById('scConIncidencias');
-    var scAdv = document.getElementById('scConAdvertencias');
-    var scSalud = document.getElementById('scSaludGlobal');
+    var scPend = document.getElementById('scConPendientes');
+    var scComp = document.getElementById('scCompletos');
+    var scPct = document.getElementById('scPctCompletos');
 
     var tot = clientesFiltrados.length;
-    var inc = 0, adv = 0, ok = 0;
+    var pend = 0, comp = 0;
     clientesFiltrados.forEach(function(c) {
-      if (c.estadoGeneral === 'ERROR') inc++;
-      else if (c.estadoGeneral === 'ADVERTENCIA') adv++;
-      else ok++;
+      if (c.pendientes > 0) pend++;
+      else comp++;
     });
-    var saludPct = tot > 0 ? Math.round((ok / tot) * 100) : 100;
+    var pctCompletos = tot > 0 ? Math.round((comp / tot) * 100) : 100;
 
     if (scTot) scTot.textContent = tot;
-    if (scInc) scInc.textContent = inc;
-    if (scAdv) scAdv.textContent = adv;
-    if (scSalud) scSalud.textContent = saludPct + '%';
+    if (scPend) scPend.textContent = pend;
+    if (scComp) scComp.textContent = comp;
+    if (scPct) scPct.textContent = pctCompletos + '%';
 
     var thead = document.getElementById('theadMatriz');
     var tbody = document.getElementById('tbodyMatriz');
@@ -981,10 +979,11 @@
 
     // Tbody
     clientesFiltrados.forEach(function(cli) {
+      // La fila ya no es clickeable: el desglose de cómo terminó cada operación (tickets,
+      // errores, advertencias) vive en "Logs del Sistema > Envío de Mails", que es su lugar.
+      // Tenerlo también acá era la duplicación que hacía que esta pestaña respondiera dos
+      // preguntas a la vez y ninguna bien.
       var tr = crear('tr', 'matriz-row');
-      tr.setAttribute('tabindex', '0');
-      tr.setAttribute('role', 'button');
-      tr.setAttribute('title', 'Clic para ver el desglose operacional de ' + cli.cliente);
 
       var tdCli = crear('td', null, cli.cliente);
       tdCli.style.fontWeight = '600';
@@ -1006,22 +1005,32 @@
         var tData = cli.tecnologias ? cli.tecnologias[tech] : null;
         var pill = crear('span', 'tech-pill');
 
-        if (!tData) {
+        // Cuatro estados, no tres. El cuarto (enviado === null) existe solo para RVTools y es
+        // el que evita el peor error posible de esta pantalla: pintar de rojo algo que en
+        // realidad no se pudo verificar. "No pude fijarme" y "no llegó" mandan al equipo a
+        // hacer cosas distintas, así que no pueden verse igual.
+        var comoFue = tData ? tData.fuente : null;
+        var origenTxt = comoFue === 'drive' ? 'se verifica en Drive' : 'mail al POD';
+
+        if (!tData || !tData.contratado) {
           pill.classList.add('status-none');
           pill.textContent = '—';
-          pill.title = tech + ': No contratado / No configurado';
-        } else if (tData.estado === 'ERROR') {
+          pill.title = tech + ': no contratado por este cliente';
+        } else if (tData.enviado === null) {
+          pill.classList.add('status-warn');
+          pill.textContent = '?';
+          pill.title = tech + ': sin dato. El cliente no figura en "Configuracion Reportes" o no se pudo leer Drive. NO significa que no haya llegado.';
+        } else if (tData.enviado === true) {
+          pill.classList.add('status-ok');
+          // La hora es el dato que evita tener que preguntar. Se recorta a HH:mm porque los
+          // segundos no aportan y hacen la celda ilegible.
+          var horaCorta = tData.hora ? String(tData.hora).substring(0, 5) : '';
+          pill.textContent = horaCorta ? '✅ ' + horaCorta : '✅';
+          pill.title = tech + ': enviado' + (tData.hora ? ' a las ' + tData.hora : '') + ' (' + origenTxt + ')';
+        } else {
           pill.classList.add('status-err');
           pill.textContent = '❌';
-          pill.title = tech + ': ' + (tData.errores || 1) + ' incidencia(s), ' + (tData.tickets || 0) + ' tickets';
-        } else if (tData.estado === 'ADVERTENCIA') {
-          pill.classList.add('status-warn');
-          pill.textContent = '⚠️';
-          pill.title = tech + ': ' + (tData.advertencias || 1) + ' advertencia(s), ' + (tData.tickets || 0) + ' tickets';
-        } else {
-          pill.classList.add('status-ok');
-          pill.textContent = '✅';
-          pill.title = tech + ': 100% Saludable (' + (tData.total > 0 ? tData.total + ' ops verificadas' : 'Sin anomalías activas') + ')';
+          pill.title = tech + ': todavía NO se envió (' + origenTxt + ')';
         }
 
         td.appendChild(pill);
@@ -1030,28 +1039,13 @@
 
       var tdGen = crear('td');
       tdGen.style.textAlign = 'center';
-      var badgeClase = 'badge-success';
-      var badgeTexto = '✅ Saludable';
-      if (cli.estadoGeneral === 'ERROR') {
-        badgeClase = 'badge-error';
-        badgeTexto = '🔴 Con Incidencias';
-      } else if (cli.estadoGeneral === 'ADVERTENCIA') {
-        badgeClase = 'badge-warning';
-        badgeTexto = '🟡 Con Advertencias';
+      if (cli.pendientes > 0) {
+        tdGen.appendChild(crear('span', 'badge badge-error',
+          '❌ Faltan ' + cli.pendientes));
+      } else {
+        tdGen.appendChild(crear('span', 'badge badge-success', '✅ Completo'));
       }
-      tdGen.appendChild(crear('span', 'badge ' + badgeClase, badgeTexto));
       tr.appendChild(tdGen);
-
-      var alHacerClicFila = function() {
-        abrirModalDetalleCliente(cli);
-      };
-      tr.addEventListener('click', alHacerClicFila);
-      tr.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          alHacerClicFila();
-        }
-      });
 
       tbody.appendChild(tr);
     });
@@ -1120,79 +1114,6 @@
   }
 
   // --- Modal de Detalle de Cliente ---------------------------------------------------------
-  function abrirModalDetalleCliente(cli) {
-    var modal = document.getElementById('modalDetalleCliente');
-    var titulo = document.getElementById('modalTituloCliente');
-    var cuerpo = document.getElementById('modalCuerpoCliente');
-    if (!modal || !cuerpo) return;
-
-    titulo.textContent = 'Detalle Operacional — ' + cli.cliente + (cli.pod ? ' [' + cli.pod + ']' : '');
-    vaciar(cuerpo);
-
-    if (!cli.operaciones || cli.operaciones.length === 0) {
-      cuerpo.appendChild(crear('p', 'vacio', 'No se encontraron operaciones registradas para este cliente.'));
-    } else {
-      var wrap = crear('div', 'table-responsive');
-      var tabla = crear('table', 'tabla-logs');
-      var thead = crear('thead');
-      var trH = crear('tr');
-      ['Hora', 'Tecnología', 'Operación', 'Estado', 'Tickets creados', 'Detalle / Error'].forEach(function(h) {
-        var th = crear('th', null, h);
-        if (h === 'Tickets creados') th.style.textAlign = 'center';
-        trH.appendChild(th);
-      });
-      thead.appendChild(trH);
-      tabla.appendChild(thead);
-
-      var tbody = crear('tbody');
-      cli.operaciones.forEach(function(op) {
-        var tr = crear('tr');
-        tr.appendChild(crear('td', null, op.hora || '-'));
-        tr.appendChild(crear('td', null, op.tech || '-'));
-        tr.appendChild(crear('td', null, op.operacion || '-'));
-
-        var tdEst = crear('td');
-        var badge = 'badge-neutral';
-        if (op.estado && (op.estado.indexOf('Resuelto') > -1 || op.estado === 'SUCCESS')) badge = 'badge-success';
-        else if (op.estado && op.estado.indexOf('advertencia') > -1) badge = 'badge-warning';
-        else if (op.estado && op.estado.indexOf('No resuelto') > -1) badge = 'badge-error';
-        tdEst.appendChild(crear('span', 'badge ' + badge, op.estado));
-        tr.appendChild(tdEst);
-
-        var tdTick = crear('td');
-        tdTick.style.textAlign = 'center';
-        if (op.ticketsCreados && Number(op.ticketsCreados) > 0) {
-          var bTick = crear('span', 'badge-info', op.ticketsCreados + (Number(op.ticketsCreados) === 1 ? ' creado' : ' creados'));
-          bTick.style.fontWeight = 'bold';
-          tdTick.appendChild(bTick);
-        } else {
-          tdTick.textContent = '—';
-          tdTick.style.color = '#9ca3af';
-          tdTick.title = 'No requirió creación de tickets automáticos';
-        }
-        tr.appendChild(tdTick);
-
-        var tdDet = crear('td');
-        if (op.ultimoError) {
-          var errSpan = crear('span', null, op.ultimoError);
-          errSpan.style.color = 'var(--rojo-osc)';
-          errSpan.style.fontSize = '12px';
-          tdDet.appendChild(errSpan);
-        } else {
-          tdDet.textContent = '-';
-          tdDet.style.color = '#9ca3af';
-        }
-        tr.appendChild(tdDet);
-
-        tbody.appendChild(tr);
-      });
-      tabla.appendChild(tbody);
-      wrap.appendChild(tabla);
-      cuerpo.appendChild(wrap);
-    }
-
-    modal.style.display = 'flex';
-  }
 
   function cerrarModalCliente() {
     var modal = document.getElementById('modalDetalleCliente');
@@ -1220,11 +1141,6 @@
     });
   }
 
-  var fPeriodoMatriz = document.getElementById('filtroPeriodoMatriz');
-  if (fPeriodoMatriz) fPeriodoMatriz.addEventListener('change', function() {
-    matrizGlobal = null;
-    cargarMatrizSalud();
-  });
 
   var fPodMatriz = document.getElementById('filtroPodMatriz');
   if (fPodMatriz) fPodMatriz.addEventListener('change', pintarMatrizSalud);

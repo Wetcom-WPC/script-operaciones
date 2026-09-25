@@ -675,7 +675,15 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
       if (r[1] instanceof Date) {
         horaStr = Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, 'HH:mm:ss');
       }
+      // La fecha estaba en la hoja pero no se exponía, así que no se podía saber si una fila
+      // era de hoy o de la semana pasada. La necesita el semáforo de la matriz (que solo mira
+      // hoy) y la métrica de envíos fuera de horario.
+      let fechaStr = r[0];
+      if (r[0] instanceof Date) {
+        fechaStr = Utilities.formatDate(r[0], HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
+      }
       return {
+        fecha: fechaStr || "-",
         horaStr: horaStr || "-",
         cliente: r[3] || "-",
         tecnologia: r[4] || "-",
@@ -1184,233 +1192,160 @@ function webapp_obtenerEstadoReportesDrive(forzar) {
   return estado;
 }
 
+// Columnas del semáforo. Solo van las tecnologías de las que EXISTE un registro de envío:
+// vSphere, Veeam y Nutanix lo marcan en el Índice (columnas V/W/X) y RVTools se verifica en
+// Drive. Horizon y Tanzu quedan afuera a propósito: no hay de dónde saber si salieron, y una
+// columna permanentemente gris se leería como "no contratado" — mentiría en vez de informar.
+const WEBAPP_TECHS_SEMAFORO = ['vSphere', 'Veeam', 'Nutanix', 'RVTools'];
+
 /**
- * Devuelve la matriz de salud operativa agrupada por cliente y tecnología para la pestaña "Salud Operativa".
- * @param {string} filtroPeriodo 'hoy' | 'ayer' | 'semana'
- * @param {string} [overrideSheetId]
+ * Semáforo de envíos del día: por cliente y tecnología, si salió o no, y a qué hora.
+ *
+ * Reemplaza a la vieja matriz de salud, que mostraba los estados Success/Warning/Error del
+ * log. Eso ya se ve en "Logs del Sistema > Envío de Mails" y además no respondía la pregunta
+ * que se hace el equipo diez veces por día: "¿salió el mail de tal cliente?". Un envío puede
+ * terminar en Warning y haber salido igual — el estado habla de los tickets que llevaba
+ * adentro, no de si el correo se mandó.
+ *
+ * NO relee el Índice ni vuelve a deducir qué tiene contratado cada cliente: reusa
+ * webapp_obtenerEstadoIndice(), que es la misma fuente que alimenta "Control de Envíos". Así
+ * las dos pestañas no pueden contradecirse (AGENTS.md §5).
+ *
+ * Tres fuentes, todas existentes:
+ *   - Índice, columnas V/W/X  -> si salió el mail (lo marca el proyecto de Índice al enviarlo)
+ *   - Log "Envío de Mails"    -> a qué hora salió
+ *   - calcularEstadoReportesPorPod() -> si los RVTools llegaron a Drive
+ *
+ * @param {string} [overrideSheetId] Planilla de logs a usar (selector de entorno).
  * @returns {Object}
  */
-function webapp_obtenerMatrizSalud(filtroPeriodo, overrideSheetId) {
+function webapp_obtenerMatrizEnvios(overrideSheetId) {
   const usuario = webapp_usuarioActual();
   webapp_exigirAutorizacion(usuario);
 
-  const targetSheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID;
-  const logs = webapp_obtenerLogs(1000, targetSheetId);
-  const ahora = new Date();
-  const hoyStr = Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
-  
-  let fechaTarget = hoyStr;
-  if (filtroPeriodo === 'ayer') {
-    const ayer = new Date(ahora);
-    ayer.setDate(ayer.getDate() - 1);
-    fechaTarget = Utilities.formatDate(ayer, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
-  }
+  const indice = webapp_obtenerEstadoIndice();
+  const hoyStr = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
 
-  const techsEstandar = ['vSphere', 'Veeam', 'Horizon', 'Nutanix', 'Tanzu', 'RVTools'];
-
-  // 1. Cargar catálogo de clientes y tecnologías contratadas desde el Índice Maestro
-  const clienteMap = {};
-  const aliasToNombre = {};
+  // --- Hora de envío, desde el log ---
+  // La clave es "<cliente normalizado>|<tech>". El log guarda el nombre de empresa ("BALANZ")
+  // y el Índice el nombre de operaciones ("Operaciones BALANZ"), así que se normalizan los dos
+  // sacando el prefijo.
+  const horaPorClienteTech = {};
+  const normalizar = function (nombre) {
+    return String(nombre || '').toLowerCase().replace(/^operaciones\s+/i, '').trim();
+  };
 
   try {
-    const spreadsheet = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
-    const sheet = spreadsheet.getSheetByName("Sheet1") || spreadsheet.getSheets()[0];
-    const lastRow = sheet.getLastRow();
-
-    if (lastRow > 1) {
-      const data = sheet.getRange(2, 1, lastRow - 1, 24).getValues();
-
-      for (let i = 0; i < data.length; i++) {
-        const row = data[i];
-        const nombreOps     = row[1]  ? row[1].toString().trim()  : "";
-        const podVal        = row[8]  ? row[8].toString().trim()  : "";
-        const nombreEmpresa = row[11] ? row[11].toString().trim() : "";
-        const servicios     = row[12] ? row[12].toString().toLowerCase() : "";
-
-        // Omitir filas sin nombre, testing o internas de WPC
-        const nombreBajo = nombreOps.toLowerCase();
-        if (!nombreOps || nombreBajo === "true" || nombreBajo === "false" || 
-            nombreBajo.includes("testing") || nombreBajo.startsWith("wpc -") || 
-            podVal.toUpperCase() === "WPC") {
-          continue;
-        }
-
-        const checkVsphere = row[17] === true || String(row[17]).toUpperCase() === "TRUE";
-        const checkVeeam   = row[18] === true || String(row[18]).toUpperCase() === "TRUE";
-        const checkNutanix = row[19] === true || String(row[19]).toUpperCase() === "TRUE";
-        const checkRVTools = row[20] === true || String(row[20]).toUpperCase() === "TRUE";
-
-        const tieneVsphere = true;
-        const tieneVeeam   = servicios.includes("veeam") || checkVeeam;
-        const tieneHorizon = servicios.includes("horizon") || servicios.includes("view");
-        const tieneNutanix = servicios.includes("nutanix") || checkNutanix;
-        const tieneTanzu   = servicios.includes("tanzu");
-        const tieneRVTools = servicios.includes("rvtools") || checkRVTools;
-
-        const contrato = {
-          'vSphere': tieneVsphere,
-          'Veeam': tieneVeeam,
-          'Horizon': tieneHorizon,
-          'Nutanix': tieneNutanix,
-          'Tanzu': tieneTanzu,
-          'RVTools': tieneRVTools
-        };
-
-        const tecsObj = {};
-        techsEstandar.forEach(function(t) {
-          if (contrato[t]) {
-            tecsObj[t] = {
-              estado: 'OK',
-              total: 0,
-              exitos: 0,
-              advertencias: 0,
-              errores: 0,
-              tickets: 0
-            };
-          }
-        });
-
-        clienteMap[nombreOps] = {
-          cliente: nombreOps,
-          pod: podVal,
-          tecnologias: tecsObj,
-          operaciones: [],
-          totalOperaciones: 0,
-          estadoGeneral: 'OK'
-        };
-
-        const claveSimple = nombreOps.toLowerCase().replace(/^operaciones\s+/i, '').trim();
-        aliasToNombre[claveSimple] = nombreOps;
-        aliasToNombre[nombreOps.toLowerCase()] = nombreOps;
-        if (nombreEmpresa) {
-          aliasToNombre[nombreEmpresa.toLowerCase()] = nombreOps;
-          aliasToNombre[nombreEmpresa.toLowerCase().replace(/^operaciones\s+/i, '').trim()] = nombreOps;
-        }
+    const logs = webapp_obtenerLogs(1000, overrideSheetId || WEBAPP_LOGS_PROD_ID);
+    (logs.envioMails || []).forEach(function (r) {
+      if (r.fecha !== hoyStr) return;
+      const clave = normalizar(r.cliente) + '|' + String(r.tecnologia || '').toLowerCase();
+      // Si el mismo mail salió más de una vez hoy, queda la hora del PRIMER envío: es la que
+      // responde "¿a qué hora salió?" y la que sirve para medir si fue fuera de horario.
+      if (!horaPorClienteTech[clave] || r.horaStr < horaPorClienteTech[clave]) {
+        horaPorClienteTech[clave] = r.horaStr;
       }
-    }
-  } catch (e) {
-    Logger.log("[MatrizSalud] Error al inicializar clientes desde el Índice: " + e.message);
-  }
-
-  function normalizarTech(origen, operacion) {
-    const o = (origen || '').toLowerCase();
-    const op = (operacion || '').toLowerCase();
-
-    if (o.includes('rvtools') || op.includes('rvtools') || op.includes('zombie') || op.includes('connect at power on')) return 'RVTools';
-    if (o.includes('connection') || o.includes('horizon') || o.includes('view') || op.includes('horizon') || op.includes('view') || op.includes('agentes view')) return 'Horizon';
-    if (o.includes('nutanix') || op.includes('nutanix') || op.includes('data resiliency') || op.includes('cluster nutanix')) return 'Nutanix';
-    if (o.includes('tanzu') || op.includes('tanzu')) return 'Tanzu';
-    if (o.includes('veeam') || op.includes('veeam') || op.includes('repositorio') || op.includes('proxy') || op.includes('job') || op.includes('orphaned')) return 'Veeam';
-    if (o.includes('vro') || o.includes('vsphere') || op.includes('vsphere') || op.includes('cluster') || op.includes('datastore') || op.includes('affinity') || op.includes('snapshot') || op.includes('vm')) return 'vSphere';
-
-    return 'vSphere';
-  }
-
-  // 2. Filtrar filas de logs según el período solicitado
-  const rows = (logs.estadoFinal || []).filter(function(r) {
-    if (!r.cliente || r.cliente === '—' || r.cliente === '-') return false;
-    const cLow = r.cliente.toLowerCase();
-    if (cLow === "true" || cLow === "false" || cLow.includes("testing") || cLow.startsWith("wpc -") || (r.pod && r.pod.toUpperCase() === "WPC")) return false;
-    if (filtroPeriodo === 'semana') return true;
-    return r.fecha === fechaTarget;
-  });
-
-  // 3. Cruzar ejecuciones e incidencias registradas en los logs
-  rows.forEach(function(r) {
-    const rawCli = r.cliente.trim();
-    const cliKey = rawCli.toLowerCase().replace(/^operaciones\s+/i, '').trim();
-    const canonicalName = aliasToNombre[cliKey] || aliasToNombre[rawCli.toLowerCase()] || rawCli;
-
-    if (!clienteMap[canonicalName]) {
-      clienteMap[canonicalName] = {
-        cliente: canonicalName,
-        pod: r.pod || '',
-        tecnologias: {},
-        operaciones: [],
-        totalOperaciones: 0,
-        estadoGeneral: 'OK'
-      };
-    }
-
-    const cEntry = clienteMap[canonicalName];
-    if (!cEntry.pod && r.pod) cEntry.pod = r.pod;
-
-    const tech = normalizarTech(r.origen, r.operacion);
-    if (!cEntry.tecnologias[tech]) {
-      cEntry.tecnologias[tech] = {
-        estado: 'OK',
-        total: 0,
-        exitos: 0,
-        advertencias: 0,
-        errores: 0,
-        tickets: 0
-      };
-    }
-
-    const tData = cEntry.tecnologias[tech];
-    tData.total++;
-    tData.tickets += (r.ticketsCreados || 0);
-
-    const est = (r.estado || '').toLowerCase();
-    if (est.includes('no resuelto') || est.includes('error')) {
-      tData.errores++;
-      tData.estado = 'ERROR';
-      cEntry.estadoGeneral = 'ERROR';
-    } else if (est.includes('advertencia') || est.includes('anomalia')) {
-      tData.advertencias++;
-      if (tData.estado !== 'ERROR') tData.estado = 'ADVERTENCIA';
-      if (cEntry.estadoGeneral !== 'ERROR') cEntry.estadoGeneral = 'ADVERTENCIA';
-    } else {
-      tData.exitos++;
-    }
-
-    cEntry.totalOperaciones++;
-    cEntry.operaciones.push({
-      hora: r.hora,
-      operacion: r.operacion,
-      tech: tech,
-      estado: r.estado,
-      ticketsCreados: r.ticketsCreados || 0,
-      tareasCerradas: r.tareasCerradas || 0,
-      intentos: r.intentos || 1,
-      ultimoError: r.ultimoError || ''
     });
+  } catch (e) {
+    Logger.log("[WebApp] No se pudo leer el log de envíos para la matriz: " + e.message);
+  }
+
+  // --- RVTools: se verifica en Drive, no por mail ---
+  const drive = webapp_obtenerEstadoReportesDrive(false);
+  const driveOk = {};
+  Object.keys(drive.clientes || {}).forEach(function (cli) {
+    const datos = drive.clientes[cli];
+    driveOk[normalizar(cli)] = (datos.encontrados || []).length > 0 && (datos.noEncontrados || []).length === 0;
   });
 
-  // Convertir a array ordenado por POD y secundariamente por Cliente
-  const listaClientes = Object.keys(clienteMap).map(function(k) { return clienteMap[k]; });
-  listaClientes.sort(function(a, b) {
-    const podA = (a.pod || "").toUpperCase();
-    const podB = (b.pod || "").toUpperCase();
-    if (podA !== podB) return podA.localeCompare(podB);
-    return a.cliente.localeCompare(b.cliente);
+  // Un cliente aparece con dos nombres distintos según la fuente: el Índice guarda el de
+  // operaciones ("Operaciones Banco Macro") y registrarEnvioMail() escribe el de empresa
+  // ("Macro"). Sacar el prefijo "Operaciones " no alcanza, porque tampoco queda igual. Por eso
+  // se prueban las dos claves: es el patrón de bug más frecuente del proyecto (AGENTS.md §6),
+  // y cuando falla no rompe nada — simplemente el semáforo se queda sin la hora y nadie
+  // entiende por qué.
+  const buscarPorNombre = function (mapa, claves, sufijo) {
+    for (let i = 0; i < claves.length; i++) {
+      const k = claves[i] + (sufijo || '');
+      if (mapa.hasOwnProperty(k)) return mapa[k];
+    }
+    return undefined;
+  };
+
+  // --- Armado del semáforo ---
+  const clientes = (indice.clientes || []).map(function (cli) {
+    const clavesCli = [normalizar(cli.empresa), normalizar(cli.nombre)].filter(function (k) { return !!k; });
+    const tecs = {};
+    let pendientes = 0;
+    let enviados = 0;
+
+    WEBAPP_TECHS_SEMAFORO.forEach(function (tech) {
+      const key = tech.toLowerCase();
+      const datosIndice = cli.tecnologias ? cli.tecnologias[key] : null;
+      const contratado = !!(datosIndice && datosIndice.habilitado);
+
+      if (!contratado) {
+        tecs[tech] = { contratado: false, enviado: false, hora: null, fuente: null };
+        return;
+      }
+
+      let enviado;
+      let fuente;
+      if (tech === 'RVTools') {
+        // Sin dato de Drive (no está en "Configuracion Reportes", o Drive falló) se deja en
+        // null y el front lo pinta distinto de rojo: "no pude fijarme" no es "no llegó".
+        const enDrive = buscarPorNombre(driveOk, clavesCli);
+        enviado = (enDrive === undefined) ? null : enDrive;
+        fuente = 'drive';
+      } else {
+        enviado = !!(datosIndice && datosIndice.enviado);
+        fuente = 'mail';
+      }
+
+      tecs[tech] = {
+        contratado: true,
+        enviado: enviado,
+        hora: buscarPorNombre(horaPorClienteTech, clavesCli, '|' + key) || null,
+        fuente: fuente
+      };
+
+      if (enviado === true) enviados++;
+      else if (enviado === false) pendientes++;
+    });
+
+    return {
+      cliente: cli.nombre,
+      empresa: cli.empresa,
+      pod: cli.pod,
+      fila: cli.fila,
+      tecnologias: tecs,
+      enviados: enviados,
+      pendientes: pendientes
+    };
   });
 
-  // Resumen global
-  let totalIncidencias = 0;
-  let totalAdvertencias = 0;
-  let totalSinAnomalias = 0;
-
-  listaClientes.forEach(function(c) {
-    if (c.estadoGeneral === 'ERROR') totalIncidencias++;
-    else if (c.estadoGeneral === 'ADVERTENCIA') totalAdvertencias++;
-    else totalSinAnomalias++;
+  let completos = 0;
+  let conPendientes = 0;
+  clientes.forEach(function (c) {
+    if (c.pendientes > 0) conPendientes++;
+    else completos++;
   });
 
   return {
-    fecha: fechaTarget,
-    periodo: filtroPeriodo || 'hoy',
-    tecnologias: techsEstandar,
-    clientes: listaClientes,
+    fecha: hoyStr,
+    tecnologias: WEBAPP_TECHS_SEMAFORO,
+    clientes: clientes,
+    driveError: drive.error || null,
+    driveCalculadoA: drive.calculadoA || null,
     resumen: {
-      totalClientes: listaClientes.length,
-      conIncidencias: totalIncidencias,
-      conAdvertencias: totalAdvertencias,
-      sinAnomalias: totalSinAnomalias,
-      saludGlobalPct: listaClientes.length > 0 ? Math.round((totalSinAnomalias / listaClientes.length) * 100) : 100
+      totalClientes: clientes.length,
+      completos: completos,
+      conPendientes: conPendientes,
+      pctCompletos: clientes.length > 0 ? Math.round((completos / clientes.length) * 100) : 100
     }
   };
 }
+
 
 /**
  * Devuelve la serie temporal de los últimos 7 días de ejecuciones para graficar tendencias de estabilidad.
