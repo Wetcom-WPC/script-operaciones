@@ -220,7 +220,9 @@ function crearTriggerRegistrarOperador() {
     .forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet())
     .onEdit()
     .create();
-  Logger.log("✅ Activador creado: registrarOperadorAlTildar (al editar), dueño " + Session.getEffectiveUser().getEmail());
+  // Sin Session.getEffectiveUser(): no hace falta para crear el activador. El activador queda a
+  // nombre de quien ejecuta esta función (debe ser alarmas@).
+  Logger.log("✅ Activador creado: registrarOperadorAlTildar (al editar).");
 }
 
 function ejecutarCicloDeOperaciones() {
