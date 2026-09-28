@@ -1371,3 +1371,73 @@ function manual_diagnosticarRVToolsSemanal() {
     Logger.log((iconos[c.estado] || '?') + ' ' + cliente + ' -> ' + c.estado + ' | ' + c.detalle);
   });
 }
+
+/**
+ * Diagnóstico de "Operador" y de los envíos a mano en el dashboard. Muestra los datos reales
+ * en vez de suponer: con qué cuenta corre, qué hay hoy en la columna K del log, qué mails de
+ * operaciones con alarmas@ en copia encuentra Gmail y por qué toma o descarta cada uno.
+ *
+ * Correrlo logueado con la MISMA cuenta que el web app (la de arriba a la derecha del
+ * dashboard): la búsqueda de Gmail mira la casilla de quien ejecuta.
+ *
+ * Solo lee, salvo el último paso: fuerza la misma sincronización de envíos a mano que hace el
+ * dashboard al tocar Actualizar (agrega a "Envíos Manuales" lo que falte).
+ */
+function manual_diagnosticarOperadorYEnviosManuales() {
+  const tz = HORARIO_OPERATIVO_TZ;
+  const hoyISO = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  Logger.log('=== Cuenta que ejecuta: ' + Session.getEffectiveUser().getEmail() + ' | hoy ' + hoyISO + ' ===');
+
+  // 1) Columna K del log de producción
+  const ss = SpreadsheetApp.openById(WEBAPP_LOGS_PROD_ID);
+  const log = ss.getSheetByName(LOG_MAILS_TAB_NAME);
+  const ultCol = log.getLastColumn();
+  Logger.log('\n--- "Envío de Mails": ' + ultCol + ' columnas; encabezado K = "' + (ultCol >= 11 ? log.getRange(1, 11).getValue() : '(no existe)') + '"');
+  const n = log.getLastRow() - 1;
+  if (n > 0) {
+    const desde = Math.max(2, log.getLastRow() - 300);
+    const filas = log.getRange(desde, 1, log.getLastRow() - desde + 1, Math.max(ultCol, 6)).getValues();
+    const horas = log.getRange(desde, 2, log.getLastRow() - desde + 1, 1).getDisplayValues();
+    let hoy = 0;
+    filas.forEach(function (r, i) {
+      if (_webappFechaISO(r[0]) !== hoyISO) return;
+      hoy++;
+      Logger.log('   ' + horas[i][0] + ' | ' + r[3] + ' | ' + r[4] + ' | operador(K): "' + (ultCol >= 11 ? r[10] : '') + '"');
+    });
+    Logger.log('   -> ' + hoy + ' fila(s) de hoy.');
+  }
+
+  // 2) Lo que ve Gmail
+  const desdeBusqueda = Utilities.formatDate(new Date(Date.now() - 3 * 86400000), tz, 'yyyy/MM/dd');
+  const consulta = 'cc:' + WEBAPP_CASILLA_CC_MANUALES + ' from:' + WEBAPP_DOMINIO_OPERADORES.substring(1) +
+    ' subject:Operaciones subject:Wetcom after:' + desdeBusqueda;
+  const tab = ss.getSheetByName(WEBAPP_TAB_ENVIOS_MANUALES);
+  const ids = {};
+  if (tab && tab.getLastRow() > 1) tab.getRange(2, 9, tab.getLastRow() - 1, 1).getValues().forEach(function (r) { ids[String(r[0])] = true; });
+  Logger.log('\n--- Gmail: ' + consulta);
+  Logger.log('   Pestaña "' + WEBAPP_TAB_ENVIOS_MANUALES + '": ' + (tab ? (tab.getLastRow() - 1) + ' fila(s)' : 'NO EXISTE'));
+  const hilos = GmailApp.search(consulta, 0, 50);
+  Logger.log('   ' + hilos.length + ' hilo(s) encontrados.');
+  hilos.forEach(function (h) {
+    h.getMessages().forEach(function (m) {
+      const de = _webappEmailDe(m.getFrom());
+      const destinos = (String(m.getCc() || '') + ',' + String(m.getTo() || '')).toLowerCase();
+      const p = _webappParsearAsuntoOperaciones(m.getSubject());
+      let motivo = 'SE TOMA';
+      if (!de.endsWith(WEBAPP_DOMINIO_OPERADORES) || de === WEBAPP_CASILLA_CC_MANUALES) motivo = 'descartado: remitente ' + de;
+      else if (destinos.indexOf(WEBAPP_CASILLA_CC_MANUALES) === -1) motivo = 'descartado: alarmas@ no está en Para/CC';
+      else if (!p) motivo = 'descartado: el asunto no se reconoce';
+      Logger.log('   ' + Utilities.formatDate(m.getDate(), tz, 'dd/MM HH:mm') + ' | ' + de + ' | "' + m.getSubject() + '"' +
+        '\n      -> ' + motivo + (p ? ' [' + p.empresa + ' / ' + p.tecnologia + ' / ' + p.estado + ']' : '') +
+        (ids[m.getId()] ? ' (ya registrado)' : ''));
+    });
+  });
+
+  // 3) La sincronización real, forzada
+  try {
+    const r = _webappSincronizarEnviosManuales(WEBAPP_LOGS_PROD_ID, true);
+    Logger.log('\n--- Sincronización forzada: ' + JSON.stringify(r));
+  } catch (e) {
+    Logger.log('\n--- Sincronización forzada FALLÓ: ' + e.message + '\n' + e.stack);
+  }
+}
