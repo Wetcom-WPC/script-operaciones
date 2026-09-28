@@ -148,47 +148,30 @@ function vigilarCheckbox(e) {
 }
 
 // ─── Quién operó ─────────────────────────────────────────────────────────────
-// Se guarda en Script Properties por fila y columna, junto con el cliente de la fila: si
-// entre el tilde y el envío alguien inserta o mueve filas, el cliente ya no coincide y el
-// envío queda sin operador en vez de atribuírselo a otra persona.
-const OPERADOR_PROP_PREFIJO = "OPERADOR_TILDE_";
-const OPERADOR_COL_EMPRESA  = 12; // Col L
+// Se guarda en la pestaña oculta "_Operadores" de esta planilla, con las funciones de la
+// librería (core/OperadorTilde.js): el dashboard escribe ahí mismo cuando se tilda desde
+// "Control de Envíos", así que hay un solo lugar y una sola implementación.
 
 function anotarOperadorDelTilde(e, sheet, row, col) {
   try {
-    // e.user solo existe en triggers instalables y dentro del dominio. Sin él no se adivina:
-    // Session.getActiveUser() en un trigger instalable puede devolver al dueño del trigger,
-    // que es justamente el dato equivocado.
+    // e.user solo existe en activadores instalables y dentro del dominio. Sin él no se adivina:
+    // Session.getActiveUser() en un activador instalable puede devolver al dueño del activador
+    // (alarmas@), que es justamente el dato equivocado.
     const email = (e.user && typeof e.user.getEmail === "function") ? e.user.getEmail() : "";
     if (!email) {
       Logger.log("[Operador] El evento no trae usuario: el envío de la fila " + row + " queda sin operador.");
       return;
     }
-    const empresa = String(sheet.getRange(row, OPERADOR_COL_EMPRESA).getValue() || "").trim();
-    PropertiesService.getScriptProperties().setProperty(
-      OPERADOR_PROP_PREFIJO + row + "_" + col,
-      JSON.stringify({ email: email.toLowerCase(), empresa: empresa, ts: Date.now() })
-    );
+    const cliente = sheet.getRange(row, 12).getValue(); // Col L
+    AutomatizarOperaciones.registrarOperadorTilde(sheet.getParent(), row, col, cliente, email);
   } catch (err) {
     Logger.log("[Operador] No se pudo anotar el operador de la fila " + row + ": " + err.message);
   }
 }
 
-/**
- * Devuelve el operador anotado para esa casilla si sigue siendo el mismo cliente, o "".
- * No lo borra: se borra recién cuando el envío salió (olvidarOperadorDelTilde), así un envío
- * que falla y se reintenta en la próxima vuelta conserva a quién lo pidió.
- */
 function leerOperadorDelTilde(row, col, empresaActual) {
   try {
-    const crudo = PropertiesService.getScriptProperties().getProperty(OPERADOR_PROP_PREFIJO + row + "_" + col);
-    if (!crudo) return "";
-    const dato = JSON.parse(crudo);
-    if (String(dato.empresa || "").trim() !== String(empresaActual || "").trim()) {
-      Logger.log("[Operador] La fila " + row + " cambió de cliente desde el tilde: el envío queda sin operador.");
-      return "";
-    }
-    return dato.email || "";
+    return AutomatizarOperaciones.leerOperadorTilde(SpreadsheetApp.getActiveSpreadsheet(), row, col, empresaActual);
   } catch (err) {
     Logger.log("[Operador] No se pudo leer el operador de la fila " + row + ": " + err.message);
     return "";
@@ -197,8 +180,47 @@ function leerOperadorDelTilde(row, col, empresaActual) {
 
 function olvidarOperadorDelTilde(row, col) {
   try {
-    PropertiesService.getScriptProperties().deleteProperty(OPERADOR_PROP_PREFIJO + row + "_" + col);
+    AutomatizarOperaciones.olvidarOperadorTilde(SpreadsheetApp.getActiveSpreadsheet(), row, col);
   } catch (err) {}
+}
+
+/**
+ * Activador "al editar" MÍNIMO: solo anota quién tildó (o destildó) una casilla de envío.
+ * No resetea nada ni dispara nada, a diferencia de vigilarCheckbox (que además lanza el ciclo
+ * completo desde la celda maestra, el reporte de consumo y la auditoría de licencias, y que hoy
+ * no tiene activador instalado). Se instala una vez con crearTriggerRegistrarOperador().
+ */
+function registrarOperadorAlTildar(e) {
+  if (!e || !e.range) return;
+  const range = e.range;
+  const sheet = range.getSheet();
+  if (sheet.getName() !== HOJA_OBJETIVO) return;
+  // Una sola celda: pegar un bloque no es "alguien tildó una casilla".
+  if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return;
+  const col = range.getColumn();
+  const row = range.getRow();
+  if (row < 2 || !COLS_MANEJADAS_POR_TIMER.includes(col)) return;
+
+  if (range.getValue() === true) {
+    anotarOperadorDelTilde(e, sheet, row, col);
+  } else {
+    olvidarOperadorDelTilde(row, col);
+  }
+}
+
+/**
+ * Instala (o reinstala) el activador de registrarOperadorAlTildar. Ejecutarlo UNA vez, con la
+ * cuenta de alarmas@ (la misma que es dueña de los demás activadores del Índice).
+ */
+function crearTriggerRegistrarOperador() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === "registrarOperadorAlTildar") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("registrarOperadorAlTildar")
+    .forSpreadsheet(SpreadsheetApp.getActiveSpreadsheet())
+    .onEdit()
+    .create();
+  Logger.log("✅ Activador creado: registrarOperadorAlTildar (al editar), dueño " + Session.getEffectiveUser().getEmail());
 }
 
 function ejecutarCicloDeOperaciones() {
