@@ -516,6 +516,14 @@
         { label: 'Operación', key: 'operacion' },
         { label: 'Cliente', key: 'cliente' }
       ];
+    } else if (logTabActivo === 'historialComentarios') {
+      cabeceras = [
+        { label: 'Cuándo', key: 'cuandoTs' },
+        { label: 'Quién', key: 'quien' },
+        { label: 'Acción', key: 'accion' },
+        { label: 'Envío', key: 'cliente' },
+        { label: 'Antes → Después', key: 'nuevo' }
+      ];
     }
     
     cabeceras.forEach(function(c) {
@@ -617,6 +625,31 @@
         tr.appendChild(crear('td', null, log.hora));
         tr.appendChild(crear('td', null, log.operacion));
         tr.appendChild(crear('td', null, log.cliente || '-'));
+      }
+      else if (logTabActivo === 'historialComentarios') {
+        var tdCuando = crear('td', null, log.cuando);
+        tdCuando.style.whiteSpace = 'nowrap';
+        tr.appendChild(tdCuando);
+        tr.appendChild(crear('td', null, nombreOperador(log.quien)));
+        var tdAccion = crear('td');
+        var claseAccion = log.accion === 'Borrado' ? 'badge-error' : (log.accion === 'Editado' ? 'badge-warning' : 'badge-success');
+        tdAccion.appendChild(crear('span', 'badge ' + claseAccion, log.accion));
+        tr.appendChild(tdAccion);
+        var tdEnvio = crear('td', null, log.fechaEnvio + ' · ' + log.cliente + ' · ' + log.tecnologia);
+        tr.appendChild(tdEnvio);
+        // Lo que había (rojo, tachado) y lo que quedó (verde). Un alta no tiene "antes" y un
+        // borrado no tiene "después".
+        var tdCambio = crear('td', 'celda-cambio-comentario');
+        if (log.anterior) tdCambio.appendChild(crear('span', 'com-antes', log.anterior));
+        if (log.anterior && log.nuevo) tdCambio.appendChild(crear('span', 'com-flecha', ' → '));
+        if (log.nuevo) tdCambio.appendChild(crear('span', 'com-nuevo', log.nuevo));
+        if (log.excluyeAntes !== log.excluyeDespues && (log.excluyeAntes === 'Sí' || log.excluyeDespues === 'Sí')) {
+          var nota = log.excluyeDespues === 'Sí' ? 'pasa a no contar en el promedio' : 'vuelve a contar en el promedio';
+          tdCambio.appendChild(crear('div', 'com-nota', nota));
+        } else if (log.excluyeDespues === 'Sí') {
+          tdCambio.appendChild(crear('div', 'com-nota', 'no cuenta en el promedio'));
+        }
+        tr.appendChild(tdCambio);
       }
       
       tbody.appendChild(tr);

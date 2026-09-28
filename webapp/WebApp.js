@@ -581,7 +581,8 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
     estadoFinal: [],
     erroresScript: [],
     envioMails: [],
-    reportesFaltantes: []
+    reportesFaltantes: [],
+    historialComentarios: []
   };
   
   try {
@@ -694,6 +695,25 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
         operaciones: r[9] !== "" ? r[9] : 0,
         // Columna K: quién tildó la casilla en el Índice. Vacía en filas anteriores al cambio.
         operador: r[10] ? String(r[10]).trim().toLowerCase() : ""
+      };
+    });
+
+    // 5. Historial de Comentarios (quién escribió, editó o borró cada comentario)
+    resultados.historialComentarios = procesarHoja(WEBAPP_TAB_HISTORIAL_COMENTARIOS, function(r) {
+      const cuando = r[0] instanceof Date ? r[0] : parsearFechaLog(r[0]);
+      const fechaEnvio = _webappFechaISO(r[3]);
+      return {
+        cuando: Utilities.formatDate(cuando, HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy HH:mm:ss'),
+        cuandoTs: cuando.getTime(),
+        accion: String(r[1] || ''),
+        quien: String(r[2] || ''),
+        fechaEnvio: fechaEnvio ? fechaEnvio.split('-').reverse().join('/') : String(r[3] || ''),
+        cliente: String(r[4] || ''),
+        tecnologia: String(r[5] || ''),
+        anterior: String(r[6] || '').replace(/^'(?=[=+\-@])/, ''),
+        nuevo: String(r[7] || '').replace(/^'(?=[=+\-@])/, ''),
+        excluyeAntes: String(r[8] || ''),
+        excluyeDespues: String(r[9] || '')
       };
     });
 
@@ -1900,6 +1920,9 @@ function _webappRegistrarHistorialComentario(ss, accion, usuario, fecha, cliente
     anterior ? _webappTextoSeguroParaCelda(anterior.comentario) : '', nuevo ? _webappTextoSeguroParaCelda(nuevo.comentario) : '',
     anterior ? (anterior.excluir ? 'Sí' : 'No') : '', nuevo ? (nuevo.excluir ? 'Sí' : 'No') : ''];
   tab.getRange(tab.getLastRow() + 1, 1, 1, fila.length).setValues([fila]);
+  // Fecha Y hora: varias personas pueden comentar el mismo día. Se aplica a toda la columna,
+  // así las filas que ya estaban también muestran la hora.
+  tab.getRange(2, 1, tab.getLastRow() - 1, 1).setNumberFormat('dd/MM/yyyy HH:mm:ss');
 }
 
 // Un texto que empieza con = + - @ la planilla lo interpreta como fórmula.
