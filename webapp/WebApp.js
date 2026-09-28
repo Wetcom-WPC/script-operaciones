@@ -1165,7 +1165,7 @@ function webapp_obtenerEstadoRVTools(forzar) {
   const usuario = webapp_usuarioActual();
   webapp_exigirAutorizacion(usuario);
 
-  const cacheKey = 'webapp_rvtools_semana_v1';
+  const cacheKey = 'webapp_rvtools_semana_v2';
   const cache = CacheService.getScriptCache();
   if (!forzar) {
     const guardado = cache.get(cacheKey);
@@ -1195,7 +1195,9 @@ function webapp_obtenerEstadoRVTools(forzar) {
 
   let filas;
   try {
-    filas = _rvtoolsLeerFilasIndice();
+    // El mismo Índice que usa el resto del semáforo (webapp_obtenerEstadoIndice), no el de las
+    // Script Properties: en Playground ese es uno de prueba, con un solo cliente de test.
+    filas = _rvtoolsLeerFilasIndice(WEBAPP_INDICE_SPREADSHEET_ID);
   } catch (e) {
     filas = null;
   }

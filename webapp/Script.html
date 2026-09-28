@@ -1036,7 +1036,8 @@
           pill.classList.add('status-none');
           pill.textContent = '—';
           pill.title = tech + ': no contratado por este cliente';
-        } else if (tData.enviado === null) {
+        } else if (tData.enviado === null || tData.enviado === undefined) {
+          // null o ausente: ninguno de los dos es "no se envió".
           pill.classList.add('status-warn');
           pill.textContent = '?';
           pill.title = tech + ': sin dato' + detalleTxt + '. NO significa que no se haya subido.';

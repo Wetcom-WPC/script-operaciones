@@ -416,10 +416,13 @@ function auditarCarpetasRVToolsDryRun() {
  * Lee la hoja índice y devuelve una fila por cliente con su POD y el ID de su carpeta.
  * @returns {Array<{cliente: string, pod: string, folderId: string}>|null}
  */
-function _rvtoolsLeerFilasIndice() {
+// idSpreadsheet es opcional: por defecto, el Índice de las Script Properties (el del proyecto).
+// El dashboard pasa el Índice real explícitamente, porque en Playground esa propiedad apunta a
+// un Índice de prueba y el semáforo mostraría clientes que no existen.
+function _rvtoolsLeerFilasIndice(idSpreadsheet) {
   let hoja;
   try {
-    const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const spreadsheet = SpreadsheetApp.openById(idSpreadsheet || SPREADSHEET_ID);
     hoja = spreadsheet.getSheetByName(HOJA_INDICE) || spreadsheet.getSheets()[0];
   } catch (e) {
     Logger.log(`Error crítico al abrir la spreadsheet: ${e.message}`);
