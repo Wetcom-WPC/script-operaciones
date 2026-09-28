@@ -1025,6 +1025,19 @@ function webapp_marcarCheckboxIndice(fila, col, nuevoValor) {
     sheet.getRange(Number(fila), Number(col)).setValue(valBool);
     SpreadsheetApp.flush();
 
+    // Quién tildó. Esta edición la hace el script, así que el activador "al editar" del Índice
+    // no se entera: se anota acá, en el mismo lugar que usa ese activador (core/OperadorTilde.js).
+    // Si falla, el tilde queda hecho igual: el envío no depende de esto.
+    try {
+      if (valBool) {
+        registrarOperadorTilde(spreadsheet, Number(fila), Number(col), sheet.getRange(Number(fila), 12).getValue(), usuario);
+      } else {
+        olvidarOperadorTilde(spreadsheet, Number(fila), Number(col));
+      }
+    } catch (e) {
+      Logger.log("[WebApp] No se pudo anotar el operador del tilde (fila " + fila + ", col " + col + "): " + e.message);
+    }
+
     // Invalidar el caché
     try {
       CacheService.getScriptCache().remove("webapp_estado_indice_v1");
