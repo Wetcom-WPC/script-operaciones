@@ -117,6 +117,8 @@ function auditarMailsOperaciones() {
     mensajes.forEach(mensaje => {
       const asunto = mensaje.getSubject();
       const destinatarioPara = (mensaje.getTo() || "").toLowerCase();
+      // El POD puede ir en Para o en CC: los mails a mano van al cliente con el POD en copia.
+      const destinatarios = destinatarioPara + "," + (mensaje.getCc() || "").toLowerCase();
       
       Logger.log(`\n📧 Evaluando Correo: "${asunto}"`);
       Logger.log(`   └─ Campo Para (To): ${destinatarioPara}`);
@@ -129,7 +131,7 @@ function auditarMailsOperaciones() {
          }
 
          // Verifica si alguno de los correos válidos está incluido en el destinatario
-         const enviadoAUnPod = CORREOS_PODS.some(correoPod => destinatarioPara.includes(correoPod));
+         const enviadoAUnPod = CORREOS_PODS.some(correoPod => destinatarios.includes(correoPod));
          
          if (!enviadoAUnPod) {
             Logger.log(`   🚫 DESCARTADO: Fue enviado a pruebas u otros destinatarios (${destinatarioPara}), no a los correos oficiales de los PODs.`);
