@@ -1282,9 +1282,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
     if (!operadoresPorCliente[k]) operadoresPorCliente[k] = [];
     if (operadoresPorCliente[k].indexOf(operador) === -1) operadoresPorCliente[k].push(operador);
   };
-  const normalizar = function (nombre) {
-    return String(nombre || '').toLowerCase().replace(/^operaciones\s+/i, '').trim();
-  };
+  const normalizar = _webappClaveCliente;
 
   try {
     const logs = webapp_obtenerLogs(1000, overrideSheetId || WEBAPP_LOGS_PROD_ID);
@@ -1406,6 +1404,8 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
     return {
       cliente: cli.nombre,
       empresa: cli.empresa,
+      clave: normalizar(cli.empresa || cli.nombre),
+      claves: clavesCli,
       pod: cli.pod,
       operadores: operadores,
       fila: cli.fila,
@@ -1422,8 +1422,10 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
     else completos++;
   });
 
-  return {
+  const hoyISOMatriz = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
+  return _webappAdjuntarComentarios({
     fecha: hoyStr,
+    fechaISO: hoyISOMatriz,
     tecnologias: WEBAPP_TECHS_SEMAFORO,
     clientes: clientes,
     driveError: rvtools.error || null,
@@ -1435,7 +1437,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
       conPendientes: conPendientes,
       pctCompletos: clientes.length > 0 ? Math.round((completos / clientes.length) * 100) : 100
     }
-  };
+  }, overrideSheetId || WEBAPP_LOGS_PROD_ID, hoyISOMatriz);
 }
 
 
@@ -1703,11 +1705,11 @@ function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
 
   const sheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID;
   const cache = CacheService.getScriptCache();
-  const cacheKey = 'webapp_horarios_envio_v2_' + sheetId;
+  const cacheKey = 'webapp_horarios_envio_v3_' + sheetId;
   if (!forzar) {
     const cached = cache.get(cacheKey);
     if (cached) {
-      try { return JSON.parse(cached); } catch (e) {}
+      try { return _webappAdjuntarComentarios(JSON.parse(cached), sheetId); } catch (e) {}
     }
   }
 
@@ -1736,9 +1738,7 @@ function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
   const idxTech = {};
   const idxOperador = {};
   const primerEnvio = {};
-  const claveCliente = function (nombre) {
-    return String(nombre || '').toLowerCase().replace(/^operaciones\s+/i, '').trim();
-  };
+  const claveCliente = _webappClaveCliente;
   const indiceDe = function (mapa, lista, clave, valor) {
     if (!mapa.hasOwnProperty(clave)) { mapa[clave] = lista.length; lista.push(valor); }
     return mapa[clave];
@@ -1749,7 +1749,7 @@ function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
     if (minutos === null || !cliente || !tech || _webappEsClienteDePrueba(cliente, pod)) return;
 
     const kCli = claveCliente(cliente);
-    const iCli = indiceDe(idxCliente, resultado.clientes, kCli, { nombre: cliente, pod: pod });
+    const iCli = indiceDe(idxCliente, resultado.clientes, kCli, { nombre: cliente, pod: pod, clave: kCli });
     // El POD de un cliente puede cambiar: queda el del envío más reciente.
     if (pod) resultado.clientes[iCli].pod = pod;
     const iTech = indiceDe(idxTech, resultado.tecnologias, tech, tech);
@@ -1802,7 +1802,139 @@ function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
   } catch (e) {
     Logger.log('[WebApp] No se pudo cachear horarios de envío: ' + e.message);
   }
-  return resultado;
+  return _webappAdjuntarComentarios(resultado, sheetId);
+}
+
+
+// ─── Comentarios por envío (cliente × tecnología × día) ─────────────────────────────────
+//
+// A veces un mail sale tarde, o no sale, por algo ajeno: el cliente no dio acceso hasta tal
+// hora, nunca habilitó la VPN, etc. Eso queda de palabra o en un mail, y el promedio se
+// ensucia sin que nadie pueda saber por qué. El comentario deja la constancia y, si se marca
+// "no contar en el promedio", ese día sale de promedios, gráfico, PDF y Slack (pero sigue
+// visible en el historial, con su explicación).
+//
+// Se guardan en su propia pestaña de la planilla de logs, que no lee ningún otro proceso.
+
+const WEBAPP_TAB_COMENTARIOS = 'Comentarios de Envíos';
+const WEBAPP_COLS_COMENTARIOS = ['Fecha', 'Cliente', 'Clave Cliente', 'Tecnología', 'Comentario', 'No cuenta en el promedio', 'Autor', 'Actualizado'];
+const WEBAPP_TECHS_COMENTABLES = ['vSphere', 'Veeam', 'Nutanix', 'Tanzu', 'RVTools', 'Horizon'];
+const WEBAPP_COMENTARIO_MAX = 500;
+// Las dos planillas de logs del selector de entorno. No se escribe en ninguna otra aunque el
+// navegador mande otro ID.
+const WEBAPP_LOGS_TEST_ID = '11dfz2dBl-A1owku7xGhtuyJ2pbayezwObHV5oETuuDw';
+
+/**
+ * Clave de cliente para cruzar fuentes: el Índice dice "Operaciones GIRE", el log "GIRE" y el
+ * asunto de un mail a mano "Gire". Sin mayúsculas, sin tildes y sin el prefijo.
+ */
+function _webappClaveCliente(nombre) {
+  return String(nombre || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/^operaciones\s+/, '').trim();
+}
+
+/** Lee todos los comentarios. Sin pestaña (nadie comentó todavía) no es un error. */
+function _webappLeerComentarios(ss) {
+  const tab = ss.getSheetByName(WEBAPP_TAB_COMENTARIOS);
+  if (!tab || tab.getLastRow() < 2) return [];
+  return tab.getRange(2, 1, tab.getLastRow() - 1, WEBAPP_COLS_COMENTARIOS.length).getValues()
+    .map(function (r) {
+      return {
+        fecha: _webappFechaISO(r[0]), cliente: String(r[1] || ''), clave: String(r[2] || ''),
+        tecnologia: String(r[3] || ''), comentario: String(r[4] || ''),
+        excluir: String(r[5]).toLowerCase() === 'sí' || r[5] === true,
+        autor: String(r[6] || ''),
+        actualizado: r[7] instanceof Date ? Utilities.formatDate(r[7], HORARIO_OPERATIVO_TZ, 'dd/MM HH:mm') : String(r[7] || '')
+      };
+    })
+    .filter(function (c) { return c.fecha && c.clave && c.tecnologia; });
+}
+
+/** Adjunta los comentarios frescos (nunca cacheados: los escribe la gente en el momento). */
+function _webappAdjuntarComentarios(res, sheetId, soloFecha) {
+  try {
+    const todos = _webappLeerComentarios(SpreadsheetApp.openById(sheetId));
+    res.comentarios = soloFecha ? todos.filter(function (c) { return c.fecha === soloFecha; }) : todos;
+    res.comentariosError = null;
+  } catch (e) {
+    Logger.log('[WebApp] No se pudieron leer los comentarios: ' + e.message);
+    res.comentarios = [];
+    res.comentariosError = e.message;
+  }
+  return res;
+}
+
+// Un texto que empieza con = + - @ la planilla lo interpreta como fórmula.
+function _webappTextoSeguroParaCelda(texto) {
+  return /^[=+\-@]/.test(texto) ? "'" + texto : texto;
+}
+
+/**
+ * Crea, actualiza o borra (comentario vacío y sin exclusión) el comentario de un día.
+ * @param {{sheetId:string, fecha:string, cliente:string, tecnologia:string, comentario:string, excluir:boolean}} datos
+ * @returns {Object} El comentario guardado, o {borrado:true}.
+ */
+function webapp_guardarComentarioEnvio(datos) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+  datos = datos || {};
+
+  const sheetId = datos.sheetId || WEBAPP_LOGS_PROD_ID;
+  if (sheetId !== WEBAPP_LOGS_PROD_ID && sheetId !== WEBAPP_LOGS_TEST_ID) throw new Error('Planilla de logs no reconocida.');
+  const fecha = String(datos.fecha || '');
+  const hoy = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || fecha > hoy) throw new Error('Fecha inválida.');
+  const tecnologia = String(datos.tecnologia || '');
+  if (WEBAPP_TECHS_COMENTABLES.indexOf(tecnologia) === -1) throw new Error('Tecnología no reconocida: ' + tecnologia);
+  const cliente = _webappTexto(datos.cliente, 120).trim();
+  const clave = _webappClaveCliente(cliente);
+  if (!clave) throw new Error('Falta el cliente.');
+  const comentario = String(datos.comentario || '').trim();
+  if (comentario.length > WEBAPP_COMENTARIO_MAX) throw new Error('El comentario supera los ' + WEBAPP_COMENTARIO_MAX + ' caracteres.');
+  const excluir = datos.excluir === true;
+  if (excluir && !comentario) throw new Error('Para no contar un día en el promedio hay que explicar por qué.');
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) throw new Error('Otra persona está guardando un comentario; probá de nuevo en unos segundos.');
+  try {
+    const ss = SpreadsheetApp.openById(sheetId);
+    let tab = ss.getSheetByName(WEBAPP_TAB_COMENTARIOS);
+    if (!tab) {
+      tab = ss.insertSheet(WEBAPP_TAB_COMENTARIOS);
+      tab.getRange(1, 1, 1, WEBAPP_COLS_COMENTARIOS.length).setValues([WEBAPP_COLS_COMENTARIOS])
+        .setFontWeight('bold').setBackground('#1A5276').setFontColor('#FFFFFF');
+      tab.setFrozenRows(1);
+    }
+
+    let filaExistente = -1;
+    if (tab.getLastRow() > 1) {
+      const valores = tab.getRange(2, 1, tab.getLastRow() - 1, 4).getValues();
+      for (let i = 0; i < valores.length; i++) {
+        if (_webappFechaISO(valores[i][0]) === fecha && String(valores[i][2]) === clave && String(valores[i][3]) === tecnologia) {
+          filaExistente = i + 2;
+          break;
+        }
+      }
+    }
+
+    if (!comentario) {
+      if (filaExistente > 0) tab.deleteRow(filaExistente);
+      Logger.log('[WebApp] Comentario borrado por ' + usuario + ': ' + fecha + ' ' + cliente + ' ' + tecnologia);
+      return { borrado: true, fecha: fecha, clave: clave, tecnologia: tecnologia };
+    }
+
+    const ahora = new Date();
+    const fila = [fecha, cliente, clave, tecnologia, _webappTextoSeguroParaCelda(comentario), excluir ? 'Sí' : 'No', usuario, ahora];
+    if (filaExistente > 0) tab.getRange(filaExistente, 1, 1, fila.length).setValues([fila]);
+    else tab.getRange(tab.getLastRow() + 1, 1, 1, fila.length).setValues([fila]);
+    Logger.log('[WebApp] Comentario guardado por ' + usuario + ': ' + fecha + ' ' + cliente + ' ' + tecnologia);
+    return {
+      fecha: fecha, cliente: cliente, clave: clave, tecnologia: tecnologia, comentario: comentario,
+      excluir: excluir, autor: usuario, actualizado: Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'dd/MM HH:mm')
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ─── Salidas del Horario de Envío: PDF por cliente y resumen a Slack ─────────────────────
@@ -1879,6 +2011,28 @@ function webapp_generarPdfHorarios(datos) {
       '<div style="font-size:22px; font-weight:bold; color:' + colorValor + '; margin-top:4px;">' + valor + '</div></td>';
   };
 
+  // Novedades: lo que pasó en días puntuales (sin acceso, habilitación tarde...). Es la
+  // constancia de por qué un día salió tarde o no salió.
+  const novedades = (Array.isArray(datos.novedades) ? datos.novedades : []).slice(0, 60);
+  const excluidos = novedades.filter(function (n) { return !!n.excluido; }).length;
+  const filasNovedades = novedades.map(function (n) {
+    const hora = n.hora ? _webappHora(n.hora) : 'sin envío';
+    return '<tr>' +
+      '<td style="padding:7px 10px; border-bottom:1px solid ' + borde + '; white-space:nowrap;">' + _webappEscaparHtml(n.fecha) + '</td>' +
+      '<td style="padding:7px 10px; border-bottom:1px solid ' + borde + ';">' + _webappEscaparHtml(n.tech) + '</td>' +
+      '<td style="padding:7px 10px; border-bottom:1px solid ' + borde + '; text-align:center; color:' + (n.tarde ? rojo : gris) + ';">' + hora + '</td>' +
+      '<td style="padding:7px 10px; border-bottom:1px solid ' + borde + ';">' + _webappEscaparHtml(_webappTexto(n.texto, 500)) +
+      (n.excluido ? '<div style="font-size:10px; color:' + gris + '; margin-top:2px;">No cuenta en el promedio</div>' : '') + '</td>' +
+      '</tr>';
+  }).join('');
+  const seccionNovedades = filasNovedades
+    ? '<div style="margin:18px 0 6px 0; font-weight:bold;">Novedades del período</div>' +
+      '<table width="100%" cellspacing="0" cellpadding="0" style="border:1px solid ' + borde + ';">' +
+      '<tr style="background:#12211A; color:#fff;"><th style="padding:7px 10px; text-align:left;">Fecha</th>' +
+      '<th style="padding:7px 10px; text-align:left;">Tecnología</th><th style="padding:7px 10px;">Envío</th>' +
+      '<th style="padding:7px 10px; text-align:left;">Qué pasó</th></tr>' + filasNovedades + '</table>'
+    : '';
+
   const generado = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy HH:mm');
   const html =
     '<html><head><meta charset="utf-8"></head>' +
@@ -1907,9 +2061,12 @@ function webapp_generarPdfHorarios(datos) {
     '<th style="padding:8px 10px;">Envíos</th><th style="padding:8px 10px;">Después de las 11:00</th></tr>' +
     (filasTech || '<tr><td colspan="4" style="padding:10px; color:' + gris + ';">Sin envíos en el período.</td></tr>') +
     '</table>' +
+    seccionNovedades +
     '<p style="color:' + gris + '; font-size:10px; margin-top:18px;">' +
     'Se toma la hora del primer envío de cada día hábil (los reenvíos y los fines de semana no cuentan). ' +
-    'En rojo, lo que en promedio sale después de las 11:00. Generado el ' + generado + '.</p>' +
+    'En rojo, lo que en promedio sale después de las 11:00.' +
+    (excluidos > 0 ? ' ' + excluidos + (excluidos === 1 ? ' día no cuenta' : ' días no cuentan') + ' en el promedio por causas ajenas (ver Novedades).' : '') +
+    ' Generado el ' + generado + '.</p>' +
     '</body></html>';
 
   const nombreSeguro = _webappTexto(datos.cliente, 80).replace(/[\\/:*?"<>|]+/g, '-').trim();
@@ -1955,6 +2112,11 @@ function webapp_enviarResumenHorariosSlack(datos) {
           (f > 0 ? ' (' + f + ' de ' + n + ' tarde)' : '');
       });
       texto += (algunaTarde ? '🔴 ' : '🟢 ') + _webappEscaparSlack(cli.cliente) + ' — ' + partes.join(' · ') + '\n';
+      // Novedades del cliente en el período: la constancia de lo que pasó.
+      (Array.isArray(cli.novedades) ? cli.novedades.slice(0, 10) : []).forEach(function (n) {
+        texto += '      ↳ _' + _webappEscaparSlack(n.fecha) + ' ' + _webappEscaparSlack(n.tech) + ':_ ' +
+          _webappEscaparSlack(_webappTexto(n.texto, 200)) + (n.excluido ? ' _(no cuenta en el promedio)_' : '') + '\n';
+      });
     });
   });
 

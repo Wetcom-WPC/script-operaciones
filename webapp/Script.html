@@ -903,6 +903,11 @@
       .withSuccessHandler(function(datos) {
         if (btn) liberar(btn);
         matrizGlobal = datos;
+        // Envíos de Hoy trae solo los de hoy: se reemplazan los de hoy y se deja el resto.
+        Object.keys(comentariosGlobal).forEach(function(k) {
+          if (k.indexOf(datos.fechaISO + '|') === 0) delete comentariosGlobal[k];
+        });
+        registrarComentarios(datos.comentarios);
         pintarMatrizSalud();
         if (datos && datos.manualesError) {
           mostrarAviso(aviso, 'atencion', 'No se pudieron leer los envíos a mano (alarmas@ en copia): ' +
@@ -1059,6 +1064,10 @@
         }
 
         td.appendChild(pill);
+        // Lápiz para dejar constancia de lo que pasó hoy con este cliente y tecnología.
+        if (tData && tData.contratado && matrizGlobal.fechaISO) {
+          td.appendChild(botonComentario(matrizGlobal.fechaISO, cli.empresa || cli.cliente, cli.claves || [cli.clave], tech));
+        }
         tr.appendChild(td);
       });
 
@@ -1086,6 +1095,237 @@
   // promedio por su lado, el día que alguien toque una el PDF y la pantalla dirían horas
   // distintas para el mismo cliente (AGENTS.md §5).
 
+  // --- Comentarios por envío -----------------------------------------------------------------
+  // Un comentario por cliente × tecnología × día. Se cargan con Envíos de Hoy (los de hoy) y con
+  // el Histórico (todos), y viven en este mapa: las dos pantallas, el PDF y Slack leen lo mismo.
+  var comentariosGlobal = {};
+
+  function claveComentario(fecha, clave, tech) { return fecha + '|' + clave + '|' + tech; }
+
+  function registrarComentarios(lista) {
+    (lista || []).forEach(function(c) { comentariosGlobal[claveComentario(c.fecha, c.clave, c.tecnologia)] = c; });
+  }
+
+  function comentarioDe(fecha, claves, tech) {
+    for (var i = 0; i < claves.length; i++) {
+      var c = comentariosGlobal[claveComentario(fecha, claves[i], tech)];
+      if (c) return c;
+    }
+    return null;
+  }
+
+  function sheetIdLogsActual() {
+    var sel = document.getElementById('filtroEntornoMatriz') || document.getElementById('filtroEntornoLogs');
+    return (sel && sel.value) ? sel.value : '1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ';
+  }
+
+  /** Botón de lápiz (o 💬 si ya hay comentario) para un cliente × tecnología × día. */
+  function botonComentario(fecha, cliente, claves, tech) {
+    var actual = comentarioDe(fecha, claves, tech);
+    var btn = crear('button', 'btn-comentario' + (actual ? ' tiene-comentario' : ''), actual ? '💬' : '✏️');
+    btn.type = 'button';
+    var quien = cliente + ' · ' + tech + ' · ' + isoACorta(fecha);
+    btn.setAttribute('aria-label', (actual ? 'Ver o editar el comentario de ' : 'Agregar un comentario a ') + quien);
+    btn.title = actual
+      ? actual.comentario + (actual.excluir ? '  (no cuenta en el promedio)' : '') + (actual.autor ? '  — ' + nombreOperador(actual.autor) : '')
+      : 'Agregar un comentario sobre este día';
+    btn.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      abrirModalComentario({ fecha: fecha, cliente: cliente, clave: actual ? actual.clave : claves[0], tecnologia: tech, actual: actual });
+    });
+    return btn;
+  }
+
+  var MOTIVOS_FRECUENTES = [
+    'Sin acceso al cliente',
+    'El cliente habilitó el acceso tarde',
+    'Nunca nos dieron acceso',
+    'El reporte del cliente llegó tarde',
+    'Problema de VPN / plataforma'
+  ];
+  var modalComentario = null;
+
+  function construirModalComentario() {
+    var overlay = crear('div', 'modal-overlay');
+    overlay.id = 'modalComentario';
+    overlay.style.display = 'none';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'tituloModalComentario');
+
+    var card = crear('div', 'modal-card modal-comentario');
+    var header = crear('header', 'modal-header');
+    var cab = crear('div');
+    var titulo = crear('h3', null, 'Comentario del envío');
+    titulo.id = 'tituloModalComentario';
+    var sub = crear('div', 'modal-subtitulo');
+    cab.appendChild(titulo);
+    cab.appendChild(sub);
+    var cerrar = crear('button', 'modal-close', '×');
+    cerrar.type = 'button';
+    cerrar.setAttribute('aria-label', 'Cerrar');
+    header.appendChild(cab);
+    header.appendChild(cerrar);
+
+    var body = crear('div', 'modal-body');
+    body.appendChild(crear('div', 'etiqueta-campo', 'Motivos frecuentes'));
+    var chips = crear('div', 'chips-motivo');
+    MOTIVOS_FRECUENTES.forEach(function(m) {
+      var chip = crear('button', 'chip-motivo', m);
+      chip.type = 'button';
+      chip.addEventListener('click', function() {
+        var t = texto.value.trim();
+        texto.value = t ? t + (/[.!?]$/.test(t) ? ' ' : '. ') + m + '.' : m + '.';
+        actualizarContador();
+        texto.focus();
+      });
+      chips.appendChild(chip);
+    });
+    body.appendChild(chips);
+
+    var lbl = crear('label', 'etiqueta-campo', '¿Qué pasó ese día?');
+    lbl.setAttribute('for', 'textoComentario');
+    body.appendChild(lbl);
+    var texto = crear('textarea', 'textarea-comentario');
+    texto.id = 'textoComentario';
+    texto.maxLength = 500;
+    texto.rows = 4;
+    texto.placeholder = 'Ej: el cliente habilitó el acceso recién a las 11:40.';
+    body.appendChild(texto);
+    var contador = crear('div', 'contador-comentario', '0 / 500');
+    body.appendChild(contador);
+
+    var check = crear('label', 'check-excluir');
+    var cb = crear('input');
+    cb.type = 'checkbox';
+    cb.id = 'excluirComentario';
+    var cbTexto = crear('span');
+    cbTexto.appendChild(crear('strong', null, 'No contar este día en el promedio'));
+    cbTexto.appendChild(crear('span', 'ayuda', ' Solo si la demora fue por algo ajeno a nosotros. El día sigue visible en el historial, con este comentario.'));
+    check.appendChild(cb);
+    check.appendChild(cbTexto);
+    body.appendChild(check);
+
+    var meta = crear('p', 'meta-comentario');
+    body.appendChild(meta);
+    var aviso = crear('div', 'aviso');
+    aviso.hidden = true;
+    body.appendChild(aviso);
+
+    var footer = crear('footer', 'modal-footer');
+    var borrar = crear('button', 'btn-secundario btn-borrar-comentario', 'Borrar comentario');
+    borrar.type = 'button';
+    var cancelar = crear('button', 'btn-secundario', 'Cancelar');
+    cancelar.type = 'button';
+    var guardar = crear('button', 'btn-primario', 'Guardar');
+    guardar.type = 'button';
+    footer.appendChild(borrar);
+    footer.appendChild(crear('span', 'separador-flex'));
+    footer.appendChild(cancelar);
+    footer.appendChild(guardar);
+
+    card.appendChild(header);
+    card.appendChild(body);
+    card.appendChild(footer);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    function actualizarContador() { contador.textContent = texto.value.length + ' / 500'; }
+    texto.addEventListener('input', actualizarContador);
+    cerrar.addEventListener('click', cerrarModalComentario);
+    cancelar.addEventListener('click', cerrarModalComentario);
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) cerrarModalComentario(); });
+    overlay.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') cerrarModalComentario();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) guardar.click();
+    });
+
+    modalComentario = { overlay: overlay, sub: sub, texto: texto, cb: cb, meta: meta, aviso: aviso,
+      borrar: borrar, guardar: guardar, actualizarContador: actualizarContador, contexto: null, foco: null };
+
+    guardar.addEventListener('click', function() { enviarComentario(false); });
+    borrar.addEventListener('click', function() { enviarComentario(true); });
+  }
+
+  function abrirModalComentario(ctx) {
+    if (!modalComentario) construirModalComentario();
+    var m = modalComentario;
+    m.contexto = ctx;
+    m.foco = document.activeElement;
+    m.sub.textContent = ctx.cliente + ' · ' + ctx.tecnologia + ' · ' + isoACorta(ctx.fecha);
+    m.texto.value = ctx.actual ? ctx.actual.comentario : '';
+    m.cb.checked = !!(ctx.actual && ctx.actual.excluir);
+    m.meta.textContent = ctx.actual && ctx.actual.autor
+      ? 'Última edición: ' + nombreOperador(ctx.actual.autor) + (ctx.actual.actualizado ? ' · ' + ctx.actual.actualizado : '')
+      : '';
+    m.borrar.style.display = ctx.actual ? '' : 'none';
+    m.aviso.hidden = true;
+    m.actualizarContador();
+    m.overlay.style.display = 'flex';
+    m.texto.focus();
+  }
+
+  function cerrarModalComentario() {
+    if (!modalComentario) return;
+    modalComentario.overlay.style.display = 'none';
+    if (modalComentario.foco && modalComentario.foco.focus) modalComentario.foco.focus();
+  }
+
+  function enviarComentario(borrar) {
+    var m = modalComentario;
+    var ctx = m.contexto;
+    var texto = borrar ? '' : m.texto.value.trim();
+    var excluir = borrar ? false : m.cb.checked;
+    if (!borrar && !texto) {
+      mostrarAviso(m.aviso, 'error', excluir ? 'Para no contar el día en el promedio, contá qué pasó.' : 'Escribí qué pasó (o usá "Borrar comentario").');
+      m.texto.focus();
+      return;
+    }
+    var boton = borrar ? m.borrar : m.guardar;
+    ocupar(boton, borrar ? 'Borrando...' : 'Guardando...');
+    google.script.run
+      .withSuccessHandler(function(res) {
+        liberar(boton);
+        var k = claveComentario(ctx.fecha, ctx.clave, ctx.tecnologia);
+        if (res && res.borrado) delete comentariosGlobal[k];
+        else comentariosGlobal[claveComentario(res.fecha, res.clave, res.tecnologia)] = res;
+        cerrarModalComentario();
+        if (matrizGlobal) pintarMatrizSalud();
+        if (horariosGlobal) pintarHorarios();
+      })
+      .withFailureHandler(function(err) {
+        liberar(boton);
+        mostrarAviso(m.aviso, 'error', 'No se pudo guardar: ' + err.message);
+      })
+      .webapp_guardarComentarioEnvio({ sheetId: sheetIdLogsActual(), fecha: ctx.fecha, cliente: ctx.cliente,
+        tecnologia: ctx.tecnologia, comentario: texto, excluir: excluir });
+  }
+
+  /** Clave de cliente del Histórico a partir de su nombre. */
+  function claveDeCliente(nombre) {
+    var cli = (horariosGlobal.clientes || []).filter(function(c) { return c.nombre === nombre; })[0];
+    return cli ? cli.clave : '';
+  }
+
+  /** Comentarios de un cliente en el período, listos para el PDF y Slack. */
+  function novedadesDe(clave, desdeIso, hastaIso, techFiltro) {
+    var datos = horariosGlobal;
+    var out = [];
+    Object.keys(comentariosGlobal).forEach(function(k) {
+      var c = comentariosGlobal[k];
+      if (c.clave !== clave || c.fecha < desdeIso || c.fecha > hastaIso) return;
+      if (techFiltro && c.tecnologia !== techFiltro) return;
+      var envio = datos.envios.filter(function(e) {
+        return e[0] === c.fecha && datos.clientes[e[1]].clave === clave && datos.tecnologias[e[2]] === c.tecnologia;
+      })[0];
+      out.push({ fechaIso: c.fecha, fecha: isoACorta(c.fecha), tech: c.tecnologia,
+        hora: envio ? minutosAHora(envio[3]) : null, tarde: envio ? envio[3] > datos.limiteMinutos : false,
+        texto: c.comentario, excluido: !!c.excluir });
+    });
+    out.sort(function(a, b) { return (a.fechaIso + a.tech).localeCompare(b.fechaIso + b.tech); });
+    return out;
+  }
+
   function cargarHorarios(forzar) {
     var btn = document.getElementById('btnActualizarMatriz');
     if (btn && forzar) ocupar(btn, 'Actualizando...');
@@ -1099,6 +1339,10 @@
       .withSuccessHandler(function(datos) {
         if (btn && forzar) liberar(btn);
         horariosGlobal = datos;
+        // El Histórico trae TODOS los comentarios: reemplaza el mapa entero (así un comentario
+        // que alguien borró desde otra computadora desaparece acá también).
+        comentariosGlobal = {};
+        registrarComentarios(datos.comentarios);
         poblarFiltrosHorarios();
         pintarHorarios();
         if (datos.manualesError) {
@@ -1222,6 +1466,12 @@
       if (f.pod && cli.pod !== f.pod) return false;
       if (f.tech && datos.tecnologias[e[2]] !== f.tech) return false;
       if (f.operador && (e[4] === undefined || e[4] < 0 || datos.operadores[e[4]] !== f.operador)) return false;
+      // Un día marcado "no cuenta en el promedio" sale de todas las métricas (tabla, gráfico,
+      // scorecards, PDF, Slack). El historial día por día lo pide igual, para mostrarlo.
+      if (!f.incluirExcluidos) {
+        var com = comentariosGlobal[claveComentario(e[0], cli.clave, datos.tecnologias[e[2]])];
+        if (com && com.excluir) return false;
+      }
       return true;
     });
     return { envios: envios, desdeIso: desdeIso, hastaIso: datos.hoy };
@@ -1343,6 +1593,7 @@
    */
   function historialPorTecnologia(f, envios) {
     var datos = horariosGlobal;
+    var clave = claveDeCliente(f.cliente);
     var primeraFecha = {};
     datos.envios.forEach(function(e) {
       if (datos.clientes[e[1]].nombre !== f.cliente) return;
@@ -1367,18 +1618,24 @@
         if (d.getDay() === 0 || d.getDay() === 6) continue;
         var iso = dateAIso(d);
         var e = porTech[t][iso];
+        var com = comentariosGlobal[claveComentario(iso, clave, t)] || null;
         if (e) {
           filas.push({ fecha: iso, dia: DIAS_SEMANA[d.getDay()], minutos: e[3], tarde: e[3] > datos.limiteMinutos,
-            operador: e[4] >= 0 ? nombreOperador(datos.operadores[e[4]]) : '—', origen: e[5] === 1 ? 'A mano' : 'Automático' });
+            operador: e[4] >= 0 ? nombreOperador(datos.operadores[e[4]]) : '—', origen: e[5] === 1 ? 'A mano' : 'Automático',
+            comentario: com, excluido: !!(com && com.excluir) });
         } else if (!f.operador) {
           // Hoy sin envío todavía no es "faltó": puede salir más tarde.
-          filas.push({ fecha: iso, dia: DIAS_SEMANA[d.getDay()], minutos: null, esHoy: iso === datos.hoy });
+          filas.push({ fecha: iso, dia: DIAS_SEMANA[d.getDay()], minutos: null, esHoy: iso === datos.hoy,
+            comentario: com, excluido: !!(com && com.excluir) });
         }
       }
-      var enviados = filas.filter(function(x) { return x.minutos !== null; });
+      // El resumen cuenta igual que los promedios: sin los días excluidos.
+      var enviados = filas.filter(function(x) { return x.minutos !== null && !x.excluido; });
       var tardes = enviados.filter(function(x) { return x.tarde; }).length;
       var suma = enviados.reduce(function(a, x) { return a + x.minutos; }, 0);
-      return { tech: t, filas: filas, enviados: enviados.length, tardes: tardes, prom: enviados.length ? suma / enviados.length : null };
+      var sinContar = filas.filter(function(x) { return x.excluido; }).length;
+      return { tech: t, clave: clave, filas: filas, enviados: enviados.length, tardes: tardes, sinContar: sinContar,
+        prom: enviados.length ? suma / enviados.length : null };
     });
   }
 
@@ -1401,8 +1658,9 @@
       var det = crear('details', 'historial-tech');
       if (h.tardes > 0) det.open = true;
       var sum = crear('summary', null, h.tech);
-      var resumen = h.prom === null ? 'sin envíos en el período'
+      var resumen = h.prom === null ? 'sin envíos que cuenten en el período'
         : 'promedio ' + minutosAHora(h.prom) + ' · ' + h.tardes + ' de ' + h.enviados + ' después de las 11:00';
+      if (h.sinContar > 0) resumen += ' · ' + h.sinContar + (h.sinContar === 1 ? ' día no cuenta' : ' días no cuentan');
       var spanRes = crear('span', 'historial-resumen', resumen);
       if (h.tardes > 0) spanRes.style.color = 'var(--rojo)';
       sum.appendChild(spanRes);
@@ -1412,7 +1670,7 @@
       tabla.style.width = '100%';
       var thead = crear('thead');
       var trh = crear('tr');
-      ['Fecha', 'Día', 'Hora del envío', 'Operador', 'Origen'].forEach(function(t) { trh.appendChild(crear('th', null, t)); });
+      ['Fecha', 'Día', 'Hora del envío', 'Operador', 'Origen', 'Comentario'].forEach(function(t) { trh.appendChild(crear('th', null, t)); });
       thead.appendChild(trh);
       tabla.appendChild(thead);
       var tbody = crear('tbody');
@@ -1424,11 +1682,18 @@
         if (x.minutos === null) {
           tdHora.textContent = x.esHoy ? 'todavía no salió' : 'sin registro';
         } else {
-          tdHora.appendChild(crear('span', 'tech-pill ' + (x.tarde ? 'status-err' : 'status-ok'), minutosAHora(x.minutos)));
+          var pill = crear('span', 'tech-pill ' + (x.tarde ? 'status-err' : 'status-ok') + (x.excluido ? ' excluido' : ''), minutosAHora(x.minutos));
+          if (x.excluido) pill.title = 'No cuenta en el promedio';
+          tdHora.appendChild(pill);
+          if (x.excluido) tdHora.appendChild(crear('span', 'badge-no-cuenta', 'no cuenta'));
         }
         tr.appendChild(tdHora);
         tr.appendChild(crear('td', null, x.minutos === null ? '' : x.operador));
         tr.appendChild(crear('td', null, x.minutos === null ? '' : x.origen));
+        var tdCom = crear('td', 'celda-comentario');
+        if (x.comentario) tdCom.appendChild(crear('span', 'texto-comentario', x.comentario.comentario));
+        tdCom.appendChild(botonComentario(x.fecha, f.cliente, [h.clave], h.tech));
+        tr.appendChild(tdCom);
         tbody.appendChild(tr);
       });
       tabla.appendChild(tbody);
@@ -1544,7 +1809,10 @@
     var btnSlack = document.getElementById('btnSlackHorarios');
     if (libre(btnSlack)) btnSlack.disabled = agg.n === 0;
 
-    pintarHistorialCliente(f, envios);
+    var enviosHistorial = f.cliente
+      ? filtrarEnviosHorarios({ dias: f.dias, cliente: f.cliente, tech: f.tech, pod: f.pod, operador: f.operador, incluirExcluidos: true }).envios
+      : [];
+    pintarHistorialCliente(f, enviosHistorial);
     pintarOperadores(envios, f.dias);
 
     var serie = serieHorarios(envios, f.dias);
@@ -1643,6 +1911,7 @@
         envios: agg.n,
         fuera: agg.fuera,
         imagen: imagen,
+        novedades: novedadesDe(claveDeCliente(f.cliente), rango.desdeIso, rango.hastaIso, ''),
         tecnologias: agg.filas.map(function(o) {
           return { tech: o.tech, promedio: minutosAHora(o.prom), tarde: o.tarde, n: o.n, fuera: o.fuera };
         })
@@ -1701,7 +1970,8 @@
       return {
         pod: pod,
         clientes: Object.keys(porPod[pod]).sort(function(a, b) { return a.localeCompare(b); }).map(function(nombre) {
-          return { cliente: nombre, tecnologias: porPod[pod][nombre] };
+          return { cliente: nombre, tecnologias: porPod[pod][nombre],
+            novedades: novedadesDe(claveDeCliente(nombre), rango.desdeIso, rango.hastaIso, f.tech) };
         })
       };
     });
