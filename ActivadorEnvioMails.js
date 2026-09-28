@@ -25,7 +25,7 @@ const TECH_COLORS = {
   "Tanzu":    { primary: "#0F6EFF", light: "#e8f0ff" },
 };
 
-function enviarMailUnitario(tecnologia, opsKey, nombreOps, soporteKey, nombreSoporte, nombreEmpresa, podDestino, serviciosHabilitados) {
+function enviarMailUnitario(tecnologia, opsKey, nombreOps, soporteKey, nombreSoporte, nombreEmpresa, podDestino, serviciosHabilitados, operador) {
 
   // 1. OBTENCIÓN DE DATOS
   let ticketsCrudos = {};
@@ -370,8 +370,9 @@ function enviarMailUnitario(tecnologia, opsKey, nombreOps, soporteKey, nombreSop
   }
   
   // LOGGING en Registro Operacional
+  // operador: quién tildó la casilla (ver anotarOperadorDelTilde). Vacío si no se sabe.
   AutomatizarOperaciones.registrarEnvioMail(
-    tecnologia, nombreEmpresa, podDestino, misTickets, itemsErrores, itemsAdvertencias, asunto, MODO_TEST_MAIL
+    tecnologia, nombreEmpresa, podDestino, misTickets, itemsErrores, itemsAdvertencias, asunto, MODO_TEST_MAIL, operador || ""
   );
  
   // CIERRE DE TAREA PROGRAMADA EN JIRA
