@@ -1521,7 +1521,9 @@ function _webappTechCanonica(tech) {
 function _webappParsearAsuntoOperaciones(asunto) {
   const s = String(asunto || '').trim();
   if (/^(re|rv|fw|fwd|reenv\w*)\s*:/i.test(s)) return null;
-  const m = s.match(/^(✅|⚠️?|❌)?\s*Operaciones\b(.*?)-\s*Wetcom\s*\/\s*(.+)$/i);
+  // Lo que haya antes de "Operaciones" es el ícono de estado. Se acepta cualquiera, no solo los
+  // tres de los automáticos: los mails a mano usan otros, como 🚫 cuando no se pudo operar.
+  const m = s.match(/^([^A-Za-z0-9]*?)\s*Operaciones\b(.*?)-\s*Wetcom\s*\/\s*(.+)$/i);
   if (!m) return null;
   const partes = m[3].split(/\s+-\s+/);
   if (partes.length < 3) return null;
@@ -1530,10 +1532,12 @@ function _webappParsearAsuntoOperaciones(asunto) {
   const tecnologia = _webappTechCanonica(partes.pop());
   const empresa = partes.join(' - ').trim();
   if (!empresa || !tecnologia) return null;
-  const icono = m[1] || '';
-  const estado = icono === '✅' ? '🟢 Sin Anomalías'
-    : icono === '❌' ? '🔴 Con Incidencias'
-    : icono ? '🟡 Con Advertencias' : '—';
+  const icono = (m[1] || '').trim();
+  const estado = icono.indexOf('✅') !== -1 ? '🟢 Sin Anomalías'
+    : icono.indexOf('❌') !== -1 ? '🔴 Con Incidencias'
+    : icono.indexOf('⚠') !== -1 ? '🟡 Con Advertencias'
+    : icono.indexOf('🚫') !== -1 ? '🚫 No se pudo operar'
+    : '—';
   return { empresa: empresa, tecnologia: tecnologia, tipo: m[2].trim(), fecha: fecha, estado: estado };
 }
 
