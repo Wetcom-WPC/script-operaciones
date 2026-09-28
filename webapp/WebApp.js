@@ -691,7 +691,9 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
         estado: r[6] || "Desconocido",
         totalTickets: r[7] !== "" ? r[7] : 0,
         soporte: r[8] !== "" ? r[8] : 0,
-        operaciones: r[9] !== "" ? r[9] : 0
+        operaciones: r[9] !== "" ? r[9] : 0,
+        // Columna K: quién tildó la casilla en el Índice. Vacía en filas anteriores al cambio.
+        operador: r[10] ? String(r[10]).trim().toLowerCase() : ""
       };
     });
 
@@ -1269,6 +1271,15 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
   // y el Índice el nombre de operaciones ("Operaciones BALANZ"), así que se normalizan los dos
   // sacando el prefijo.
   const horaPorClienteTech = {};
+  // Quién operó hoy a cada cliente (puede ser más de uno: una persona manda vSphere y otra
+  // Veeam). Sale de los mismos envíos que la hora: el log (columna K) y los envíos a mano.
+  const operadoresPorCliente = {};
+  const anotarOperador = function (cliente, operador) {
+    if (!operador) return;
+    const k = normalizar(cliente);
+    if (!operadoresPorCliente[k]) operadoresPorCliente[k] = [];
+    if (operadoresPorCliente[k].indexOf(operador) === -1) operadoresPorCliente[k].push(operador);
+  };
   const normalizar = function (nombre) {
     return String(nombre || '').toLowerCase().replace(/^operaciones\s+/i, '').trim();
   };
@@ -1283,6 +1294,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
       if (!horaPorClienteTech[clave] || r.horaStr < horaPorClienteTech[clave]) {
         horaPorClienteTech[clave] = r.horaStr;
       }
+      anotarOperador(r.cliente, r.operador);
     });
   } catch (e) {
     Logger.log("[WebApp] No se pudo leer el log de envíos para la matriz: " + e.message);
@@ -1300,6 +1312,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
       if (!horaPorClienteTech[clave] || m.hora < horaPorClienteTech[clave]) {
         horaPorClienteTech[clave] = m.hora;
       }
+      anotarOperador(m.cliente, m.operador);
     });
   } catch (e) {
     Logger.log("[WebApp] No se pudieron leer los envíos a mano para la matriz: " + e.message);
@@ -1381,10 +1394,18 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
       else if (enviado === false) pendientes++;
     });
 
+    const operadores = [];
+    clavesCli.forEach(function (k) {
+      (operadoresPorCliente[k] || []).forEach(function (o) {
+        if (operadores.indexOf(o) === -1) operadores.push(o);
+      });
+    });
+
     return {
       cliente: cli.nombre,
       empresa: cli.empresa,
       pod: cli.pod,
+      operadores: operadores,
       fila: cli.fila,
       tecnologias: tecs,
       enviados: enviados,

@@ -931,7 +931,10 @@
       }
       if (filtroEstado === 'pendientes' && cli.pendientes === 0) return false;
       if (filtroEstado === 'completos' && cli.pendientes > 0) return false;
-      if (filtroBuscar && cli.cliente.toLowerCase().indexOf(filtroBuscar) === -1) return false;
+      if (filtroBuscar) {
+        var textoOps = (cli.operadores || []).map(nombreOperador).join(' ').toLowerCase();
+        if (cli.cliente.toLowerCase().indexOf(filtroBuscar) === -1 && textoOps.indexOf(filtroBuscar) === -1) return false;
+      }
       return true;
     });
 
@@ -969,8 +972,10 @@
     // Thead
     var trHead = crear('tr');
     var thCli = crear('th', 'th-cliente', 'Cliente');
+    var thOp = crear('th', null, 'Operador');
     var thPod = crear('th', null, 'POD');
     trHead.appendChild(thCli);
+    trHead.appendChild(thOp);
     trHead.appendChild(thPod);
 
     (matrizGlobal.tecnologias || []).forEach(function(tech) {
@@ -993,6 +998,13 @@
       var tdCli = crear('td', null, cli.cliente);
       tdCli.style.fontWeight = '600';
       tr.appendChild(tdCli);
+
+      // Quién operó hoy: el que tildó en el Índice o el que mandó el mail a mano. Vacío hasta
+      // que salga el primer envío del día (o si el envío es anterior a que se registre).
+      var ops = (cli.operadores || []).map(nombreOperador);
+      var tdOp = crear('td', null, ops.length ? ops.join(', ') : '—');
+      if (!ops.length) tdOp.style.color = 'var(--gris-claro)';
+      tr.appendChild(tdOp);
 
       var tdPod = crear('td');
       tdPod.style.textAlign = 'center';
@@ -1122,7 +1134,12 @@
     });
     var porTexto = function(a, b) { return a.localeCompare(b); };
     llenar('filtroClienteHorarios', nombres.slice().sort(porTexto));
-    llenar('filtroTechHorarios', horariosGlobal.tecnologias.slice().sort(porTexto));
+    // Las tecnologías conocidas siempre se pueden elegir, aunque todavía no haya envíos (Tanzu
+    // arranca a registrarse con los mails a mano en copia): elegirla y ver "sin envíos" dice más
+    // que no encontrarla en la lista.
+    var techs = horariosGlobal.tecnologias.slice();
+    ORDEN_TECH.forEach(function(t) { if (techs.indexOf(t) === -1) techs.push(t); });
+    llenar('filtroTechHorarios', techs.sort(ordenarTechs));
     llenar('filtroPodHorarios', pods.sort(porTexto));
 
     // Operador: el valor es el mail; lo que se ve, el nombre.
