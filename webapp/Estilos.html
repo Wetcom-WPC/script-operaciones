@@ -712,6 +712,14 @@ footer { padding: 0 24px 28px; max-width: 1400px; margin: 0 auto; font-size: 11.
 .tab-btn:focus-visible,
 .nav-btn:focus-visible { outline: 2px solid var(--verde); outline-offset: 2px; }
 
+/* --- Historial día por día (Histórico de Horarios, con un cliente elegido) --- */
+.historial-tech { border: 1px solid var(--borde); border-radius: var(--radio-sm); margin-bottom: 10px; background: var(--blanco); }
+.historial-tech > summary { cursor: pointer; padding: 10px 14px; font-weight: 600; list-style-position: inside; }
+.historial-tech > summary .historial-resumen { font-weight: 400; color: var(--gris); margin-left: 8px; }
+.historial-tech[open] > summary { border-bottom: 1px solid var(--borde); }
+.historial-tech table { margin: 0; }
+.historial-sin-registro td { color: var(--gris-claro); font-style: italic; }
+
 /* --- Cumplimiento de Envíos: semáforo y scorecards --- */
 .scorecard-grid {
   display: grid;

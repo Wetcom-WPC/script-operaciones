@@ -1315,6 +1315,110 @@
     };
   }
 
+  var DIAS_SEMANA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+  /**
+   * Filas del historial de UN cliente, por tecnología: el primer envío de cada día hábil y,
+   * entre medio, los días hábiles sin registro. Los días sin registro cuentan solo desde el
+   * primer envío que haya de esa tecnología (antes no había log, no es que faltara) y no se
+   * muestran si se filtra por operador (un día sin envío no tiene operador).
+   */
+  function historialPorTecnologia(f, envios) {
+    var datos = horariosGlobal;
+    var primeraFecha = {};
+    datos.envios.forEach(function(e) {
+      if (datos.clientes[e[1]].nombre !== f.cliente) return;
+      var t = datos.tecnologias[e[2]];
+      if (!primeraFecha[t] || e[0] < primeraFecha[t]) primeraFecha[t] = e[0];
+    });
+    var desdeIso = filtrarEnviosHorarios(f).desdeIso;
+
+    var porTech = {};
+    envios.forEach(function(e) {
+      var t = datos.tecnologias[e[2]];
+      if (!porTech[t]) porTech[t] = {};
+      porTech[t][e[0]] = e;
+    });
+
+    return Object.keys(porTech).sort(ordenarTechs).map(function(t) {
+      var filas = [];
+      var inicio = primeraFecha[t] > desdeIso ? primeraFecha[t] : desdeIso;
+      var d = isoADate(datos.hoy);
+      var fin = isoADate(inicio);
+      for (; d >= fin; d.setDate(d.getDate() - 1)) {
+        if (d.getDay() === 0 || d.getDay() === 6) continue;
+        var iso = dateAIso(d);
+        var e = porTech[t][iso];
+        if (e) {
+          filas.push({ fecha: iso, dia: DIAS_SEMANA[d.getDay()], minutos: e[3], tarde: e[3] > datos.limiteMinutos,
+            operador: e[4] >= 0 ? nombreOperador(datos.operadores[e[4]]) : '—', origen: e[5] === 1 ? 'A mano' : 'Automático' });
+        } else if (!f.operador) {
+          // Hoy sin envío todavía no es "faltó": puede salir más tarde.
+          filas.push({ fecha: iso, dia: DIAS_SEMANA[d.getDay()], minutos: null, esHoy: iso === datos.hoy });
+        }
+      }
+      var enviados = filas.filter(function(x) { return x.minutos !== null; });
+      var tardes = enviados.filter(function(x) { return x.tarde; }).length;
+      var suma = enviados.reduce(function(a, x) { return a + x.minutos; }, 0);
+      return { tech: t, filas: filas, enviados: enviados.length, tardes: tardes, prom: enviados.length ? suma / enviados.length : null };
+    });
+  }
+
+  function pintarHistorialCliente(f, envios) {
+    var cont = document.getElementById('historialCliente');
+    var lista = document.getElementById('historialTechs');
+    if (!cont || !lista) return;
+    vaciar(lista);
+    if (!f.cliente) { cont.style.display = 'none'; return; }
+    cont.style.display = 'block';
+    var titulo = document.getElementById('tituloHistorialCliente');
+    if (titulo) titulo.textContent = 'Historial día por día — ' + f.cliente;
+
+    var techs = historialPorTecnologia(f, envios);
+    if (techs.length === 0) {
+      lista.appendChild(crear('p', 'ayuda', 'Sin envíos de este cliente en el período.'));
+      return;
+    }
+    techs.forEach(function(h) {
+      var det = crear('details', 'historial-tech');
+      if (h.tardes > 0) det.open = true;
+      var sum = crear('summary', null, h.tech);
+      var resumen = h.prom === null ? 'sin envíos en el período'
+        : 'promedio ' + minutosAHora(h.prom) + ' · ' + h.tardes + ' de ' + h.enviados + ' después de las 11:00';
+      var spanRes = crear('span', 'historial-resumen', resumen);
+      if (h.tardes > 0) spanRes.style.color = 'var(--rojo)';
+      sum.appendChild(spanRes);
+      det.appendChild(sum);
+
+      var tabla = crear('table', 'tabla-logs');
+      tabla.style.width = '100%';
+      var thead = crear('thead');
+      var trh = crear('tr');
+      ['Fecha', 'Día', 'Hora del envío', 'Operador', 'Origen'].forEach(function(t) { trh.appendChild(crear('th', null, t)); });
+      thead.appendChild(trh);
+      tabla.appendChild(thead);
+      var tbody = crear('tbody');
+      h.filas.forEach(function(x) {
+        var tr = crear('tr', x.minutos === null ? 'historial-sin-registro' : null);
+        tr.appendChild(crear('td', null, isoACorta(x.fecha)));
+        tr.appendChild(crear('td', null, x.dia));
+        var tdHora = crear('td');
+        if (x.minutos === null) {
+          tdHora.textContent = x.esHoy ? 'todavía no salió' : 'sin registro';
+        } else {
+          tdHora.appendChild(crear('span', 'tech-pill ' + (x.tarde ? 'status-err' : 'status-ok'), minutosAHora(x.minutos)));
+        }
+        tr.appendChild(tdHora);
+        tr.appendChild(crear('td', null, x.minutos === null ? '' : x.operador));
+        tr.appendChild(crear('td', null, x.minutos === null ? '' : x.origen));
+        tbody.appendChild(tr);
+      });
+      tabla.appendChild(tbody);
+      det.appendChild(tabla);
+      lista.appendChild(det);
+    });
+  }
+
   function pintarOperadores(envios, dias) {
     var tbody = document.getElementById('tbodyOperadores');
     if (!tbody) return;
@@ -1422,6 +1526,7 @@
     var btnSlack = document.getElementById('btnSlackHorarios');
     if (libre(btnSlack)) btnSlack.disabled = agg.n === 0;
 
+    pintarHistorialCliente(f, envios);
     pintarOperadores(envios, f.dias);
 
     var serie = serieHorarios(envios, f.dias);

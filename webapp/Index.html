@@ -256,6 +256,14 @@
           </div>
           <p id="horariosVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">No hay envíos registrados para los filtros seleccionados.</p>
 
+          <!-- Historial día por día: solo con un cliente elegido. Con todos los clientes serían
+               cientos de filas; así se arma con los datos que ya están en el navegador. -->
+          <div id="historialCliente" class="chart-card" style="display: none; margin-top: 20px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+            <h3 id="tituloHistorialCliente" style="margin-bottom: 4px; font-size: 16px;">Historial día por día</h3>
+            <p class="ayuda" style="margin: 0 0 12px 0;">Primer envío de cada día hábil del período. Se abren solas las tecnologías que tuvieron algún día después de las 11:00.</p>
+            <div id="historialTechs"></div>
+          </div>
+
           <!-- Cuánta gente operó: quién tildó la casilla en el Índice (automáticos) o quién mandó
                el mail con alarmas@ en copia (a mano). -->
           <div class="chart-card" style="margin-top: 20px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
