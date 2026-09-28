@@ -1881,6 +1881,27 @@ function _webappAdjuntarComentarios(res, sheetId, soloFecha) {
   return res;
 }
 
+// Historial de comentarios: una fila por cada alta, edición o borrado, con cómo estaba antes y
+// cómo quedó. Nunca se modifica ni se borra desde acá: aunque alguien borre un comentario desde
+// el dashboard, lo que decía queda registrado.
+const WEBAPP_TAB_HISTORIAL_COMENTARIOS = 'Historial de Comentarios';
+const WEBAPP_COLS_HISTORIAL_COMENTARIOS = ['Cuándo', 'Acción', 'Quién', 'Fecha del envío', 'Cliente', 'Tecnología',
+  'Comentario anterior', 'Comentario nuevo', 'No cuenta (antes)', 'No cuenta (después)'];
+
+function _webappRegistrarHistorialComentario(ss, accion, usuario, fecha, cliente, tecnologia, anterior, nuevo) {
+  let tab = ss.getSheetByName(WEBAPP_TAB_HISTORIAL_COMENTARIOS);
+  if (!tab) {
+    tab = ss.insertSheet(WEBAPP_TAB_HISTORIAL_COMENTARIOS);
+    tab.getRange(1, 1, 1, WEBAPP_COLS_HISTORIAL_COMENTARIOS.length).setValues([WEBAPP_COLS_HISTORIAL_COMENTARIOS])
+      .setFontWeight('bold').setBackground('#1A5276').setFontColor('#FFFFFF');
+    tab.setFrozenRows(1);
+  }
+  const fila = [new Date(), accion, usuario, fecha, cliente, tecnologia,
+    anterior ? _webappTextoSeguroParaCelda(anterior.comentario) : '', nuevo ? _webappTextoSeguroParaCelda(nuevo.comentario) : '',
+    anterior ? (anterior.excluir ? 'Sí' : 'No') : '', nuevo ? (nuevo.excluir ? 'Sí' : 'No') : ''];
+  tab.getRange(tab.getLastRow() + 1, 1, 1, fila.length).setValues([fila]);
+}
+
 // Un texto que empieza con = + - @ la planilla lo interpreta como fórmula.
 function _webappTextoSeguroParaCelda(texto) {
   return /^[=+\-@]/.test(texto) ? "'" + texto : texto;
@@ -1924,20 +1945,34 @@ function webapp_guardarComentarioEnvio(datos) {
     }
 
     let filaExistente = -1;
+    let anterior = null;
     if (tab.getLastRow() > 1) {
-      const valores = tab.getRange(2, 1, tab.getLastRow() - 1, 4).getValues();
+      const valores = tab.getRange(2, 1, tab.getLastRow() - 1, 6).getValues();
       for (let i = 0; i < valores.length; i++) {
         if (_webappFechaISO(valores[i][0]) === fecha && String(valores[i][2]) === clave && String(valores[i][3]) === tecnologia) {
           filaExistente = i + 2;
+          // Se guarda el texto tal cual: si tenía la comilla que neutraliza fórmulas, se le saca.
+          anterior = { comentario: String(valores[i][4] || '').replace(/^'(?=[=+\-@])/, ''), excluir: String(valores[i][5]).toLowerCase() === 'sí' };
           break;
         }
       }
     }
 
+    // Primero el historial y después el cambio: si el historial no se puede escribir, el
+    // cambio no se hace (así nunca hay un borrado o una edición sin constancia).
     if (!comentario) {
-      if (filaExistente > 0) tab.deleteRow(filaExistente);
+      if (filaExistente > 0) {
+        _webappRegistrarHistorialComentario(ss, 'Borrado', usuario, fecha, cliente, tecnologia, anterior, null);
+        tab.deleteRow(filaExistente);
+      }
       Logger.log('[WebApp] Comentario borrado por ' + usuario + ': ' + fecha + ' ' + cliente + ' ' + tecnologia);
       return { borrado: true, fecha: fecha, clave: clave, tecnologia: tecnologia };
+    }
+
+    const sinCambios = anterior && anterior.comentario === comentario && anterior.excluir === excluir;
+    if (!sinCambios) {
+      _webappRegistrarHistorialComentario(ss, anterior ? 'Editado' : 'Creado', usuario, fecha, cliente, tecnologia,
+        anterior, { comentario: comentario, excluir: excluir });
     }
 
     const ahora = new Date();
