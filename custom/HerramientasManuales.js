@@ -1355,4 +1355,19 @@ function manual_configurarActivadorVencimientoExcepciones() {
 function manual_eliminarActivadorVencimientoExcepciones() {
   eliminarActivadorAuditorExcepciones();
 }
-
+
+/**
+ * Diagnóstico del estado semanal de RVTools que muestra "Envíos de Hoy": por cada cliente,
+ * qué resolvió (ok / pendiente / falta / sin dato) y por qué. Mismo cálculo que el dashboard
+ * (webapp_obtenerEstadoRVTools), sin caché. No escribe nada ni manda nada.
+ */
+function manual_diagnosticarRVToolsSemanal() {
+  const estado = webapp_obtenerEstadoRVTools(true);
+  Logger.log('=== RVTools semanal — calculado ' + estado.calculadoA + ' ===');
+  if (estado.error) Logger.log('🔥 ' + estado.error);
+  const iconos = { ok: '✅', pendiente: '⏳', falta: '❌', sin_dato: '❔' };
+  Object.keys(estado.clientes).sort().forEach(function (cliente) {
+    const c = estado.clientes[cliente];
+    Logger.log((iconos[c.estado] || '?') + ' ' + cliente + ' -> ' + c.estado + ' | ' + c.detalle);
+  });
+}

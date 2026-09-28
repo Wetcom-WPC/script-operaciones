@@ -25,6 +25,20 @@ const HOJA_ADJUNTOS = "Adjuntos";
 // --- LISTA DE CORREOS VÁLIDOS (En testing se permite ian.lucero@wetcom.com como destinatario oficial) ---
 const CORREOS_PODS = ["pod1@wetcom.com", "pod2@wetcom.com", "pod3@wetcom.com", "pod4@wetcom.com", "pod5@wetcom.com", "ian.lucero@wetcom.com"];
 
+// Clientes que el auditor tiene que controlar aunque no estén en el Índice. Hoy es solo
+// Clínica Alemana: tiene únicamente Tanzu, que se manda a mano, y agregarla al Índice haría
+// que el auditor de RVTools la anuncie todos los días como "sin link de carpeta". Si algún
+// día entra al Índice, sacarla de acá (si no, se cuenta dos veces).
+const AUDITOR_CLIENTES_FUERA_DEL_INDICE = [
+  { cliente: "Clínica Alemana", pod: "POD4", tecnologias: ["Tanzu"] },
+];
+
+// Para comparar nombres de cliente del Índice con los del asunto: sin tildes ni mayúsculas,
+// así "Clínica Alemana" y "Clinica Alemana" son el mismo cliente.
+function _auditorNormalizar(texto) {
+  return String(texto || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
 function auditarMailsOperaciones() {
   const hoy = new Date();
   const diaDeLaSemana = hoy.getDay();
@@ -70,6 +84,14 @@ function auditarMailsOperaciones() {
   } else {
     Logger.log(`No se encontró la hoja secundaria: ${HOJA_ADJUNTOS}. Se continúa solo con ${HOJA_INDICE}.`);
   }
+
+  AUDITOR_CLIENTES_FUERA_DEL_INDICE.forEach(extra => {
+    if (!clientesPorPod[extra.pod]) clientesPorPod[extra.pod] = {};
+    if (!clientesPorPod[extra.pod][extra.cliente]) clientesPorPod[extra.pod][extra.cliente] = [];
+    extra.tecnologias.forEach(t => {
+      if (!clientesPorPod[extra.pod][extra.cliente].includes(t)) clientesPorPod[extra.pod][extra.cliente].push(t);
+    });
+  });
 
   // 3. BUSCAMOS EN GMAIL LA "REALIDAD"
   const fechaBusqueda = Utilities.formatDate(hoy, "GMT-3", "yyyy/MM/dd");
@@ -120,7 +142,7 @@ function auditarMailsOperaciones() {
             const subPartes = restoDelAsunto.split("-");
             
             if (subPartes.length >= 2) {
-                const nombreCliente = subPartes[0].trim().toLowerCase(); 
+                const nombreCliente = _auditorNormalizar(subPartes[0]); 
                 const tecnologiaMail = subPartes[1].trim().toLowerCase();
                 
                 Logger.log(`   ✅ ACEPTADO: Mapeado al cliente "${nombreCliente}" con tecnología "${tecnologiaMail}".`);
@@ -138,6 +160,10 @@ function auditarMailsOperaciones() {
                 }
                 if (tecnologiaMail.includes("horizon") && !enviosReales[nombreCliente].includes("Horizon")) {
                     enviosReales[nombreCliente].push("Horizon");
+                }
+                // Tanzu se manda a mano: el auditor lo ve porque va con alarmas@ en copia.
+                if (tecnologiaMail.includes("tanzu") && !enviosReales[nombreCliente].includes("Tanzu")) {
+                    enviosReales[nombreCliente].push("Tanzu");
                 }
             } else {
                 Logger.log(`   ⚠️ FORMATO DESCONOCIDO: No se pudo separar cliente y tecnología en "${restoDelAsunto}".`);
@@ -169,10 +195,11 @@ function auditarMailsOperaciones() {
 
         // BÚSQUEDA FLEXIBLE
         let tecsEnviadas = [];
+        const clienteNorm = _auditorNormalizar(cliente);
         for (const nombreExtraido in enviosReales) {
            if (
-             cliente.toLowerCase().includes(nombreExtraido) ||
-             nombreExtraido.includes(cliente.toLowerCase())
+             clienteNorm.includes(nombreExtraido) ||
+             nombreExtraido.includes(clienteNorm)
            ) {
                enviosReales[nombreExtraido].forEach(t => {
                    if (!tecsEnviadas.includes(t)) tecsEnviadas.push(t);
@@ -279,6 +306,9 @@ function procesarHoja(hoja, clientesPorPod, origen) {
     }
     if (serviciosStr.includes("horizon") && !clientesPorPod[pod][cliente].includes("Horizon")) {
       clientesPorPod[pod][cliente].push("Horizon");
+    }
+    if (serviciosStr.includes("tanzu") && !clientesPorPod[pod][cliente].includes("Tanzu")) {
+      clientesPorPod[pod][cliente].push("Tanzu");
     }
   });
 }
