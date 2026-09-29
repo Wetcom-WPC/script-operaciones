@@ -22,6 +22,23 @@ const OPERADOR_TILDE_COLS = ["Fila", "Columna", "Cliente (col L)", "Operador", "
 // si una fila quedó colgada de un día anterior, pasadas estas horas ya no vale.
 const OPERADOR_TILDE_VIGENCIA_HORAS = 20;
 
+/**
+ * La fecha guardada en la columna "Tildado", en milisegundos, o 0 si no se puede leer.
+ * No usa `instanceof Date`: esta función corre dentro de la librería, y un valor que viene de
+ * la planilla del proyecto que la llama no siempre pasa esa prueba. Cuando fallaba, la fecha
+ * quedaba en 0 y el tilde se descartaba como si fuera viejo (todos los envíos salían sin
+ * operador). Se mira si el valor sabe responder getTime(), y si no, se intenta interpretarlo.
+ */
+function _operadorTildeFechaMs(valor) {
+  if (!valor) return 0;
+  if (typeof valor.getTime === "function") {
+    const ms = valor.getTime();
+    return isNaN(ms) ? 0 : ms;
+  }
+  const ms = new Date(valor).getTime();
+  return isNaN(ms) ? 0 : ms;
+}
+
 function _operadorTildeHoja(spreadsheet, crearSiFalta) {
   let hoja = spreadsheet.getSheetByName(OPERADOR_TILDE_TAB);
   if (!hoja && crearSiFalta) {
@@ -53,12 +70,28 @@ function _operadorTildeBuscar(hoja, fila, col) {
 function registrarOperadorTilde(spreadsheet, fila, col, cliente, email) {
   const mail = String(email || "").trim().toLowerCase();
   if (!mail) return false;
-  const hoja = _operadorTildeHoja(spreadsheet, true);
-  const datos = [Number(fila), Number(col), String(cliente || "").trim(), mail, new Date()];
-  const existente = _operadorTildeBuscar(hoja, fila, col);
-  if (existente > 0) hoja.getRange(existente, 1, 1, datos.length).setValues([datos]);
-  else hoja.getRange(hoja.getLastRow() + 1, 1, 1, datos.length).setValues([datos]);
-  return true;
+  // Se tilda una casilla atrás de otra, y cada activador tarda varios segundos: sin candado,
+  // dos ejecuciones leen la misma última fila y la segunda pisa a la primera (ese tilde se
+  // pierde sin error). El candado las pone en fila.
+  const candado = LockService.getScriptLock();
+  try {
+    candado.waitLock(30000);
+  } catch (e) {
+    Logger.log("[Operador] No se pudo tomar el candado para la fila " + fila + ": el tilde no se anota.");
+    return false;
+  }
+  try {
+    const hoja = _operadorTildeHoja(spreadsheet, true);
+    const datos = [Number(fila), Number(col), String(cliente || "").trim(), mail, new Date()];
+    const existente = _operadorTildeBuscar(hoja, fila, col);
+    if (existente > 0) hoja.getRange(existente, 1, 1, datos.length).setValues([datos]);
+    else hoja.getRange(hoja.getLastRow() + 1, 1, 1, datos.length).setValues([datos]);
+    SpreadsheetApp.flush();
+    Logger.log("[Operador] Anotado: fila " + fila + ", col " + col + " (" + datos[2] + ") -> " + mail);
+    return true;
+  } finally {
+    candado.releaseLock();
+  }
 }
 
 /**
@@ -69,18 +102,33 @@ function registrarOperadorTilde(spreadsheet, fila, col, cliente, email) {
 function leerOperadorTilde(spreadsheet, fila, col, clienteActual) {
   const hoja = _operadorTildeHoja(spreadsheet, false);
   const existente = _operadorTildeBuscar(hoja, fila, col);
-  if (existente < 0) return "";
+  if (existente < 0) {
+    Logger.log("[Operador] No hay tilde anotado para la fila " + fila + " (col " + col + "): el envío queda sin operador.");
+    return "";
+  }
   const r = hoja.getRange(existente, 1, 1, OPERADOR_TILDE_COLS.length).getValues()[0];
   if (String(r[2] || "").trim() !== String(clienteActual || "").trim()) {
-    Logger.log("[Operador] La fila " + fila + " cambió de cliente desde el tilde: el envío queda sin operador.");
+    Logger.log("[Operador] La fila " + fila + " cambió de cliente desde el tilde (anotado \"" + r[2] +
+      "\", ahora \"" + clienteActual + "\"): el envío queda sin operador.");
     return "";
   }
-  const cuando = r[4] instanceof Date ? r[4].getTime() : 0;
-  if (!cuando || Date.now() - cuando > OPERADOR_TILDE_VIGENCIA_HORAS * 3600000) {
-    Logger.log("[Operador] El tilde de la fila " + fila + " es de hace más de " + OPERADOR_TILDE_VIGENCIA_HORAS + " h: no se usa.");
+  // Cada motivo se avisa por separado: antes todos caían en el mismo mensaje de "más de 20 h",
+  // así que una fecha ilegible parecía un tilde viejo.
+  const cuando = _operadorTildeFechaMs(r[4]);
+  if (!cuando) {
+    Logger.log("[Operador] No se pudo leer la fecha del tilde de la fila " + fila + " (valor: \"" + r[4] +
+      "\", tipo " + typeof r[4] + "): el envío queda sin operador.");
     return "";
   }
-  return String(r[3] || "");
+  const horas = (Date.now() - cuando) / 3600000;
+  if (horas > OPERADOR_TILDE_VIGENCIA_HORAS) {
+    Logger.log("[Operador] El tilde de la fila " + fila + " es de hace " + horas.toFixed(1) + " h (más de " +
+      OPERADOR_TILDE_VIGENCIA_HORAS + " h): no se usa.");
+    return "";
+  }
+  const operador = String(r[3] || "");
+  Logger.log("[Operador] Fila " + fila + " (col " + col + "): " + operador + ", tildado hace " + horas.toFixed(1) + " h.");
+  return operador;
 }
 
 /** Borra el tilde anotado (después de que el mail salió, o si se destildó). */
