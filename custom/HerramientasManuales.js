@@ -1441,3 +1441,54 @@ function manual_diagnosticarOperadorYEnviosManuales() {
     Logger.log('\n--- Sincronización forzada FALLÓ: ' + e.message + '\n' + e.stack);
   }
 }
+
+/**
+ * Por qué un envío quedó sin operador. Solo lee: no escribe ni manda nada.
+ *
+ * Muestra la pestaña oculta "_Operadores" del Índice real (lo que anota el activador
+ * registrarOperadorAlTildar y el dashboard al tildar) y la cruza con las casillas R/S/T/U que
+ * hoy están tildadas. Si la casilla está tildada y no hay fila en "_Operadores", el problema
+ * está en el activador del Índice (e.user vacío o el activador no corrió), no en el dashboard.
+ */
+function manual_diagnosticarTildesSinOperador() {
+  const tz = HORARIO_OPERATIVO_TZ;
+  const COLS = { 18: "R vSphere", 19: "S Veeam", 20: "T Nutanix", 21: "U RVTools" };
+  const ss = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
+  const hoja = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
+  Logger.log('=== Índice: "' + ss.getName() + '" | ejecuta ' + Session.getEffectiveUser().getEmail() + " ===");
+
+  // 1) La pestaña oculta con los tildes anotados
+  const tabOp = ss.getSheetByName("_Operadores");
+  Logger.log('\n--- Pestaña "_Operadores": ' + (tabOp ? (tabOp.getLastRow() - 1) + " fila(s)" : "NO EXISTE (nunca se anotó ningún tilde)"));
+  const anotados = {};
+  if (tabOp && tabOp.getLastRow() > 1) {
+    tabOp.getRange(2, 1, tabOp.getLastRow() - 1, 5).getValues().forEach(function (r) {
+      anotados[r[0] + "|" + r[1]] = r;
+      Logger.log("   fila " + r[0] + " · " + (COLS[r[1]] || "col " + r[1]) + " · " + r[2] +
+        " -> " + r[3] + " (" + (r[4] instanceof Date ? Utilities.formatDate(r[4], tz, "dd/MM HH:mm:ss") : r[4]) + ")");
+    });
+  }
+
+  // 2) Las casillas que están tildadas ahora mismo
+  Logger.log("\n--- Casillas tildadas en este momento:");
+  const datos = hoja.getRange(2, 1, hoja.getLastRow() - 1, 25).getValues();
+  let tildadas = 0;
+  let sinAnotar = 0;
+  datos.forEach(function (fila, i) {
+    const nroFila = i + 2;
+    Object.keys(COLS).forEach(function (col) {
+      if (fila[Number(col) - 1] !== true) return;
+      tildadas++;
+      const r = anotados[nroFila + "|" + col];
+      if (!r) sinAnotar++;
+      Logger.log("   fila " + nroFila + " · " + COLS[col] + " · " + fila[11] +
+        (r ? " -> operador " + r[3] : "  ⚠️ SIN OPERADOR ANOTADO"));
+    });
+  });
+  Logger.log("   -> " + tildadas + " casilla(s) tildada(s), " + sinAnotar + " sin operador anotado.");
+
+  // 3) El activador que tiene que anotarlos vive en el proyecto del Índice, no acá: desde este
+  //    lado solo se puede ver el resultado. Si hay tildes sin anotar, revisar sus ejecuciones.
+  Logger.log('\nSi hay casillas tildadas sin operador, mirar las ejecuciones de "registrarOperadorAlTildar"' +
+    ' en el proyecto BotonCheckBox: el log dice "[Operador] El evento no trae usuario" cuando e.user viene vacío.');
+}
