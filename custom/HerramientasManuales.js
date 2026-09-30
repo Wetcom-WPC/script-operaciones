@@ -1731,3 +1731,151 @@ function manual_simularTicketSnapshots() {
     (iTam === -1 ? "  ⚠️ NO SE AGREGÓ" : ""));
   Logger.log("\nNo se creó ni se comentó ningún ticket, y no se envió ningún correo.");
 }
+
+// =================================================================
+// RVTools: salud de los archivos subidos a Drive
+// =================================================================
+
+// Cliente a revisar a fondo (nombre o parte, como figura en el Índice). Vacío = solo el
+// listado rápido de todos, sin abrir ningún archivo.
+let MANUAL_RVTOOLS_CLIENTE_A_ABRIR = "";
+
+/**
+ * Cómo están los archivos de RVTools que hay hoy en Drive. Solo lee.
+ *
+ * Recorre la carpeta más reciente de cada cliente y lista los archivos con su tamaño y tipo.
+ * Sirve para dos cosas: ver si alguno quedó roto, y medir cuánto pesa un RVTools sano para
+ * poder fijar después un umbral con fundamento en vez de inventarlo.
+ *
+ * Con MANUAL_RVTOOLS_CLIENTE_A_ABRIR cargado, además ABRE los archivos de ese cliente
+ * (copia temporal a Google Sheets, igual que procesarRVToolsManual) y verifica que estén las
+ * pestañas que la automatización necesita. La copia temporal se borra siempre.
+ */
+function manual_diagnosticarArchivosRVTools() {
+  const filas = _rvtoolsLeerFilasIndice(WEBAPP_INDICE_SPREADSHEET_ID);
+  if (!filas) {
+    Logger.log("No se pudo leer el Índice.");
+    return;
+  }
+  const aAbrir = String(MANUAL_RVTOOLS_CLIENTE_A_ABRIR || "").trim().toLowerCase();
+  Logger.log("=== Archivos de RVTools por cliente (" + filas.length + " clientes en el Índice) ===");
+  if (aAbrir) Logger.log('Se van a ABRIR los archivos de los clientes que contengan "' + MANUAL_RVTOOLS_CLIENTE_A_ABRIR + '".\n');
+
+  const resumen = [];
+  filas.forEach(function (fila) {
+    if (!fila.folderId) {
+      resumen.push(fila.cliente + " -> sin link de carpeta en el Índice");
+      return;
+    }
+    let carpeta;
+    try {
+      carpeta = encontrarCarpetaMasReciente(DriveApp.getFolderById(fila.folderId));
+    } catch (e) {
+      resumen.push(fila.cliente + " -> no se pudo abrir la carpeta: " + e.message);
+      return;
+    }
+    if (!carpeta) {
+      resumen.push(fila.cliente + " -> sin subcarpetas con formato de fecha");
+      return;
+    }
+
+    const archivos = [];
+    const it = carpeta.getFiles();
+    while (it.hasNext()) {
+      const f = it.next();
+      archivos.push({
+        nombre: f.getName(),
+        bytes: f.getSize(),
+        tipo: f.getMimeType(),
+        actualizado: Utilities.formatDate(f.getLastUpdated(), HORARIO_OPERATIVO_TZ, "dd/MM/yyyy HH:mm"),
+        id: f.getId()
+      });
+    }
+    const planillas = archivos.filter(function (a) {
+      return /\.(xlsx|xlsm)$/i.test(a.nombre);
+    });
+
+    Logger.log("\n--- " + fila.cliente + " | carpeta: " + carpeta.getName() + " ---");
+    if (!archivos.length) {
+      Logger.log("   (la carpeta está VACÍA)");
+      resumen.push(fila.cliente + " -> ⚠️ carpeta " + carpeta.getName() + " VACÍA");
+      return;
+    }
+    archivos.forEach(function (a) {
+      Logger.log("   " + a.nombre + "  |  " + _rvtoolsTamanoLegible(a.bytes) + "  |  " + a.tipo + "  |  " + a.actualizado);
+    });
+    if (!planillas.length) {
+      resumen.push(fila.cliente + " -> ⚠️ carpeta " + carpeta.getName() + " sin .xlsx/.xlsm (" + archivos.length + " archivo(s))");
+      return;
+    }
+    const menor = planillas.reduce(function (a, b) { return a.bytes <= b.bytes ? a : b; });
+    resumen.push(fila.cliente + " -> " + planillas.length + " planilla(s), la más chica " +
+      _rvtoolsTamanoLegible(menor.bytes) + " (" + menor.nombre + ")" + (menor.bytes === 0 ? "  ⚠️ 0 BYTES" : ""));
+
+    // Verificación profunda, solo para el cliente elegido.
+    if (aAbrir && fila.cliente.toLowerCase().indexOf(aAbrir) !== -1) {
+      planillas.forEach(function (a) {
+        Logger.log("   >>> Abriendo " + a.nombre + "...");
+        Logger.log("       " + _rvtoolsVerificarPlanilla(a.id, a.nombre).detalle);
+      });
+    }
+  });
+
+  Logger.log("\n=== RESUMEN ===");
+  resumen.forEach(function (l) { Logger.log("   " + l); });
+}
+
+/** Bytes en algo que se lee de un vistazo. */
+function _rvtoolsTamanoLegible(bytes) {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / (1024 * 1024)).toFixed(2) + " MB";
+}
+
+// Pestañas que la automatización necesita para trabajar: vMetaData (de dónde sale el vCenter),
+// vHealth (Zombies VMDKs) y vNetwork (VMs sin connect at power on). Si falta alguna, el archivo
+// puede abrir igual pero nuestro proceso no saca nada de él.
+const RVTOOLS_PESTANAS_NECESARIAS = ["vMetaData", "vHealth", "vNetwork"];
+
+/**
+ * Abre un .xlsx de RVTools y revisa que tenga las pestañas necesarias con datos. Convierte a
+ * Google Sheets igual que procesarRVToolsManual, y borra siempre la copia temporal.
+ * @returns {{ok: boolean, detalle: string}}
+ */
+function _rvtoolsVerificarPlanilla(fileId, nombre) {
+  let tempId = null;
+  try {
+    const temp = executeDriveWithBackoff(function () {
+      return Drive.Files.copy({ mimeType: MimeType.GOOGLE_SHEETS, name: "[TEMP verificacion] " + nombre }, fileId);
+    });
+    tempId = temp.id;
+    const ss = SpreadsheetApp.openById(tempId);
+    const presentes = ss.getSheets().map(function (h) { return h.getName(); });
+    const faltan = RVTOOLS_PESTANAS_NECESARIAS.filter(function (p) { return presentes.indexOf(p) === -1; });
+    const vacias = RVTOOLS_PESTANAS_NECESARIAS.filter(function (p) {
+      const h = ss.getSheetByName(p);
+      return h && h.getLastRow() < 2; // solo encabezados, o nada
+    });
+    if (faltan.length) {
+      return { ok: false, detalle: "❌ ABRE pero le faltan pestañas: " + faltan.join(", ") +
+        ". Tiene " + presentes.length + ": " + presentes.slice(0, 12).join(", ") };
+    }
+    if (vacias.length) {
+      return { ok: false, detalle: "⚠️ ABRE y están las pestañas, pero sin datos: " + vacias.join(", ") };
+    }
+    const filasPorPestana = RVTOOLS_PESTANAS_NECESARIAS.map(function (p) {
+      return p + "=" + (ss.getSheetByName(p).getLastRow() - 1) + " filas";
+    });
+    return { ok: true, detalle: "✅ OK. " + presentes.length + " pestañas. " + filasPorPestana.join(", ") };
+  } catch (e) {
+    // Si la conversión falla, el archivo no es un Excel válido: es justo el caso que se busca.
+    return { ok: false, detalle: "❌ NO SE PUDO ABRIR (archivo corrupto o no es un Excel): " + e.message };
+  } finally {
+    if (tempId) {
+      try { DriveApp.getFileById(tempId).setTrashed(true); } catch (e) {
+        Logger.log("       No se pudo borrar la copia temporal " + tempId + ": " + e.message);
+      }
+    }
+  }
+}
