@@ -1496,7 +1496,11 @@ function manual_diagnosticarTildesSinOperador() {
 // El botón "Run" del editor no deja pasar parámetros: para mirar un reporte en detalle se
 // escribe acá el remitente (ej. "vro@bancosantacruz.com") y se corre
 // manual_diagnosticarUnidadesSnapshots. Vacío = resumen de los últimos 20 reportes.
-let MANUAL_UNIDADES_SNAPSHOTS_REMITENTE = "";
+let MANUAL_UNIDADES_SNAPSHOTS_REMITENTE = "vRealize@bancosantafe.com.ar";
+
+// Con un remitente cargado arriba, acá va el nombre (o parte) de una VM para ver TODAS sus
+// columnas y contrastarlas contra vCenter. Vacío = no se busca ninguna VM en particular.
+let MANUAL_UNIDADES_SNAPSHOTS_VM = "NBSFVEEAMPXY04";
 
 /**
  * Qué trae realmente la columna de tamaño del reporte de "VMs con snapshots". Solo lee: no
@@ -1616,6 +1620,25 @@ function manual_diagnosticarUnidadesSnapshots(remitente) {
       Logger.log('De: ' + de + '\nAsunto: "' + mensaje.getSubject() + '"\nAdjunto: "' + adjunto.getName() + '"');
       Logger.log("\n--- Encabezados ---");
       encabezados.forEach(function (h, i) { Logger.log("   [" + i + '] "' + h + '"'); });
+
+      // Con una VM elegida se muestran TODAS sus columnas. Sirve para contrastar contra lo que
+      // muestra vCenter: si el tamaño real aparece en otra columna, el script está leyendo la
+      // equivocada; si no aparece en ninguna, el dato ya viene mal del cliente.
+      const vm = String(MANUAL_UNIDADES_SNAPSHOTS_VM || "").trim().toLowerCase();
+      if (vm && iNombre !== -1) {
+        const encontradas = datos.filter(function (f) {
+          return String(f[iNombre]).toLowerCase().indexOf(vm) !== -1;
+        });
+        Logger.log('\n--- Fila(s) completas de "' + MANUAL_UNIDADES_SNAPSHOTS_VM + '": ' + encontradas.length + " encontrada(s) ---");
+        encontradas.slice(0, 5).forEach(function (f, n) {
+          Logger.log("   --- coincidencia " + (n + 1) + " ---");
+          encabezados.forEach(function (h, i) {
+            Logger.log('      "' + h + '" = "' + (f[i] === undefined ? "" : f[i]) + '"');
+          });
+        });
+        if (!encontradas.length) Logger.log("   (esa VM no está en este reporte)");
+      }
+
       Logger.log('\n--- Valores crudos de "' + encabezados[iEspacio] + '" (hasta 20 filas) ---');
       datos.slice(0, 20).forEach(function (f) {
         const crudo = String(f[iEspacio]);
