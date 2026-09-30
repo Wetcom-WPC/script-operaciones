@@ -144,9 +144,12 @@ const COLUMN_ALIASES = {
  * todo el mundo.
  *
  * @param {*} valor Celda del reporte, ej. "406.96", "10,239.75", "512 MB".
+ * @param {string} [unidadPorDefecto] Unidad a usar cuando el valor no la trae escrita, que es
+ *   lo normal: casi ningún cliente la escribe. Sale del encabezado (ver unidadDelEncabezado).
+ *   Si no se pasa ninguna se asume GB, que es como se venía interpretando siempre.
  * @returns {number} El tamaño en GB, o 0 si no se puede leer.
  */
-function parseTamanoAGB(valor) {
+function parseTamanoAGB(valor, unidadPorDefecto) {
   if (!valor) return 0;
   const str = valor.toString().trim().toUpperCase();
   let limpio = str.replace(/[^\d.,-]/g, '').trim();
@@ -156,10 +159,36 @@ function parseTamanoAGB(valor) {
   else if (ultimaComa > ultimoPunto) { limpio = limpio.replace(/\./g, '').replace(/,/g, '.'); }
   else { limpio = limpio.replace(/,/g, '.'); }
   const num = parseFloat(limpio) || 0;
-  if (str.includes('TB')) return num * 1024;
-  if (str.includes('MB')) return num / 1024;
-  if (str.includes('KB')) return num / (1024 * 1024);
-  return num; // sin unidad escrita se asume GB
+  // La unidad escrita en el propio valor manda sobre la del encabezado.
+  const unidad = ['TB', 'GB', 'MB', 'KB'].filter(function (u) { return str.includes(u); })[0] ||
+    String(unidadPorDefecto || '').toUpperCase();
+  if (unidad === 'TB') return num * 1024;
+  if (unidad === 'MB') return num / 1024;
+  if (unidad === 'KB') return num / (1024 * 1024);
+  return num; // GB, o sin unidad conocida
+}
+
+/**
+ * La unidad declarada en el nombre de una columna, ej. "Snapshot Space (GB)" -> "GB".
+ * Varios clientes la ponen ahí y es el único lugar donde la dicen: los valores vienen pelados.
+ * @returns {string} "TB" | "GB" | "MB" | "KB", o "" si el encabezado no la declara.
+ */
+function unidadDelEncabezado(encabezado) {
+  const m = String(encabezado || '').match(/\b(TB|GB|MB|KB)\b/i);
+  return m ? m[1].toUpperCase() : '';
+}
+
+/**
+ * Un tamaño en GB, escrito para que lo lea una persona y con la unidad puesta: los tickets
+ * mostraban el número pelado del reporte y no había forma de saber si eran MB, GB o TB.
+ * @param {number} gb @returns {string} ej. "27,08 GB", "512,00 MB", "1,25 TB".
+ */
+function formatearTamanoDesdeGB(gb) {
+  const n = Number(gb);
+  if (!isFinite(n) || n <= 0) return '';
+  if (n < 1) return (n * 1024).toFixed(2) + ' MB';
+  if (n >= 1024) return (n / 1024).toFixed(2) + ' TB';
+  return n.toFixed(2) + ' GB';
 }
 
 function normalizarEncabezado(header) {
