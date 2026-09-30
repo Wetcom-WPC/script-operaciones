@@ -21,7 +21,7 @@ const COL_FOLDER_ID = 13;     // Col N: ID de la Carpeta Raíz de Reportes
 
 // --- 3. CONFIGURACIÓN GENERAL ---
 const DOMINIO_EMAIL = '@wetcom.com';
-const CC_EMAIL = 'wpc@wetcom.com';
+const CC_EMAIL = 'wpc@wetcom.com, alarmas@wetcom.com';
 
 /**
  * FUNCIÓN PRINCIPAL: Iniciar aquí.
