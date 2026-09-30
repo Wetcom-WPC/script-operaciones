@@ -1654,3 +1654,80 @@ function manual_diagnosticarUnidadesSnapshots(remitente) {
   Logger.log('\nLos que digan "SIN unidad" se están comparando contra los umbrales como si fueran GB.' +
     "\nSi alguno de esos en realidad viene en MB, sus alertas de tamaño están mal.");
 }
+
+// Cliente a simular: remitente del reporte. Ej. "vRealize@bancosantafe.com.ar".
+let MANUAL_SIMULAR_SNAPSHOTS_REMITENTE = "vRealize@bancosantafe.com.ar";
+
+/**
+ * Corre la evaluación de "VMs con snapshots" sobre el último reporte real de un cliente y
+ * muestra la tabla que iría al ticket, SIN crear ni comentar nada en Jira y sin mandar
+ * ningún correo.
+ *
+ * Es seguro por construcción: llama únicamente a processData(), que solo lee la planilla de
+ * excepciones y calcula. Todo lo que escribe en Jira vive en handleAlerts(), que acá no se
+ * invoca. Tampoco marca correos como leídos ni los mueve de etiqueta.
+ */
+function manual_simularTicketSnapshots() {
+  const remitente = String(MANUAL_SIMULAR_SNAPSHOTS_REMITENTE || "").trim();
+  if (!remitente) {
+    Logger.log("Cargá un remitente en MANUAL_SIMULAR_SNAPSHOTS_REMITENTE.");
+    return;
+  }
+
+  const hilos = GmailApp.search('subject:"' + SNAPSHOTS_EMAIL_SUBJECT + '" has:attachment from:' + remitente, 0, 1);
+  if (!hilos.length) {
+    Logger.log("No se encontró ningún reporte de " + remitente);
+    return;
+  }
+  const mensajes = hilos[0].getMessages();
+  const mensaje = mensajes[mensajes.length - 1];
+  const adjunto = mensaje.getAttachments().filter(function (a) {
+    return a.getName().toLowerCase().indexOf(SNAPSHOTS_FILENAME_MATCH.toLowerCase()) !== -1;
+  })[0] || mensaje.getAttachments()[0];
+  if (!adjunto) {
+    Logger.log("El correo no tiene adjuntos.");
+    return;
+  }
+  Logger.log('De: ' + mensaje.getFrom() + ' | ' + Utilities.formatDate(mensaje.getDate(), HORARIO_OPERATIVO_TZ, "dd/MM/yyyy HH:mm") +
+    '\nAdjunto: "' + adjunto.getName() + '"');
+
+  const filas = parseCsvDeReporte(adjunto.getDataAsString("UTF-8"));
+  if (!filas || filas.length < 2) {
+    Logger.log("El reporte vino sin filas (ninguna VM con snapshots).");
+    return;
+  }
+
+  const remitenteReal = _webappEmailDe ? _webappEmailDe(mensaje.getFrom()) : remitente;
+  const config = getClientConfig(remitenteReal, SNAPSHOTS_OPERATION_NAME) ||
+    getClientConfig(remitente, SNAPSHOTS_OPERATION_NAME);
+  if (!config) {
+    Logger.log("No se encontró configuración de cliente para " + remitenteReal);
+    return;
+  }
+  config.senderEmail = remitenteReal;
+  Logger.log("Cliente: " + config.clientName + " | Proyecto Jira: " + config.jiraProjectKey);
+
+  const procesador = new VMsConSnapshotsProcessor();
+  procesador._currentSenderEmail = remitenteReal;
+  const reporte = { errores: [], advertencias: [], exitos: [] };
+  const r = procesador.processData(filas, config, reporte);
+  if (!r) {
+    Logger.log("processData no devolvió nada. Errores: " + JSON.stringify(reporte.errores));
+    return;
+  }
+
+  Logger.log("\n=== LO QUE IRÍA AL TICKET (simulación, no se creó nada) ===");
+  Logger.log("Encabezados: " + r.headers.join(" | "));
+  Logger.log("\nOperaciones: " + (procesador.opsAlerts || []).length + " VM(s)");
+  if (procesador.opsReasonsText) Logger.log(procesador.opsReasonsText);
+  (procesador.opsAlerts || []).slice(0, 10).forEach(function (f) { Logger.log("   " + f.join(" | ")); });
+
+  Logger.log("\nSoporte: " + (procesador.soporteAlerts || []).length + " VM(s)");
+  if (procesador.soporteReasonsText) Logger.log(procesador.soporteReasonsText);
+  (procesador.soporteAlerts || []).slice(0, 10).forEach(function (f) { Logger.log("   " + f.join(" | ")); });
+
+  const iTam = r.headers.indexOf(SNAPSHOTS_COLUMNA_TAMANO);
+  Logger.log('\nColumna "' + SNAPSHOTS_COLUMNA_TAMANO + '" en la posición ' + iTam +
+    (iTam === -1 ? "  ⚠️ NO SE AGREGÓ" : ""));
+  Logger.log("\nNo se creó ni se comentó ningún ticket, y no se envió ningún correo.");
+}
