@@ -137,21 +137,10 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       return parseFloat(clean) || 0;
     };
 
-    const parseSpaceToGB = (val) => {
-      if (!val) return 0;
-      let str = val.toString().trim().toUpperCase();
-      let clean = str.replace(/[^\d.,-]/g, '').trim();
-      let lastDot = clean.lastIndexOf('.');
-      let lastComma = clean.lastIndexOf(',');
-      if (lastDot > lastComma) { clean = clean.replace(/,/g, ''); }
-      else if (lastComma > lastDot) { clean = clean.replace(/\./g, '').replace(/,/g, '.'); }
-      else { clean = clean.replace(/,/g, '.'); }
-      let num = parseFloat(clean) || 0;
-      if (str.includes('TB')) return num * 1024;
-      if (str.includes('MB')) return num / 1024;
-      if (str.includes('KB')) return num / (1024 * 1024);
-      return num; // defaults to GB if no unit or 'GB'
-    };
+    // La conversión a GB vive en parseTamanoAGB (core/DataProcessingService.js): la usan
+    // también las herramientas de diagnóstico, y tener dos copias de un parseo fue el origen
+    // del incidente del 27/07/2026 (AGENTS.md §5). No reimplementarla acá.
+    const parseSpaceToGB = parseTamanoAGB;
 
     const detectedReasonsOps = new Set();
     const detectedReasonsSoporte = new Set();

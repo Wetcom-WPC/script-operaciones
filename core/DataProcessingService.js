@@ -135,6 +135,33 @@ const COLUMN_ALIASES = {
  * @param {string} header El texto del encabezado.
  * @returns {string} El texto normalizado y canónico.
  */
+/**
+ * Un tamaño del reporte, en GB. Vive acá y no dentro de cada operación: detectar la unidad y
+ * manejar los separadores decimales es la misma pieza de lógica para todas (AGENTS.md §5).
+ *
+ * Tolera "1.234,56" y "1,234.56" mirando cuál separador aparece último, y convierte si el
+ * valor trae TB/MB/KB escrito. Un número pelado se toma como GB, que es lo que manda hoy casi
+ * todo el mundo.
+ *
+ * @param {*} valor Celda del reporte, ej. "406.96", "10,239.75", "512 MB".
+ * @returns {number} El tamaño en GB, o 0 si no se puede leer.
+ */
+function parseTamanoAGB(valor) {
+  if (!valor) return 0;
+  const str = valor.toString().trim().toUpperCase();
+  let limpio = str.replace(/[^\d.,-]/g, '').trim();
+  const ultimoPunto = limpio.lastIndexOf('.');
+  const ultimaComa = limpio.lastIndexOf(',');
+  if (ultimoPunto > ultimaComa) { limpio = limpio.replace(/,/g, ''); }
+  else if (ultimaComa > ultimoPunto) { limpio = limpio.replace(/\./g, '').replace(/,/g, '.'); }
+  else { limpio = limpio.replace(/,/g, '.'); }
+  const num = parseFloat(limpio) || 0;
+  if (str.includes('TB')) return num * 1024;
+  if (str.includes('MB')) return num / 1024;
+  if (str.includes('KB')) return num / (1024 * 1024);
+  return num; // sin unidad escrita se asume GB
+}
+
 function normalizarEncabezado(header) {
   if (typeof header !== 'string') return '';
   const normalized = header

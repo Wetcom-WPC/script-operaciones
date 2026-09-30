@@ -1517,7 +1517,9 @@ function manual_diagnosticarUnidadesSnapshots(remitente) {
   remitente = remitente || MANUAL_UNIDADES_SNAPSHOTS_REMITENTE;
   const consulta = 'subject:"' + SNAPSHOTS_EMAIL_SUBJECT + '" has:attachment' +
     (remitente ? ' from:' + remitente : '');
-  const cuantos = remitente ? 1 : 20;
+  // 20 no alcanzaba para ver a todos los clientes: algunos (Banco de Entre Ríos) mandan menos
+  // seguido y quedaban fuera de la ventana.
+  const cuantos = remitente ? 1 : 60;
   Logger.log("--- Buscando: " + consulta);
   const hilos = GmailApp.search(consulta, 0, cuantos);
   if (hilos.length === 0) {
@@ -1584,18 +1586,21 @@ function manual_diagnosticarUnidadesSnapshots(remitente) {
     // ("Snapshot Space (GB)"). Y el tamaño de un snapshot no puede superar la capacidad del
     // disco: si lo supera, el número no está en la misma unidad que la capacidad.
     const unidadEnEncabezado = (encabezados[iEspacio].match(/\((TB|GB|MB|KB)\)/i) || [])[1];
+    // parseTamanoAGB (core/DataProcessingService.js) es la MISMA función con la que la
+    // operación decide si alerta. Antes acá había una cuenta propia que leía "10,239.75" como
+    // 10.239 y marcaba un problema inexistente (AGENTS.md §5: una sola implementación).
     let mayor = -1;
     let capacidadDelMayor = "";
     datos.forEach(function (f) {
-      const n = parseFloat(String(f[iEspacio]).replace(/[^\d.,-]/g, "").replace(",", "."));
-      if (!isNaN(n) && n > mayor) {
+      const n = parseTamanoAGB(f[iEspacio]);
+      if (n > mayor) {
         mayor = n;
         capacidadDelMayor = iTotal !== -1 ? String(f[iTotal]) : "";
       }
     });
-    const capNum = parseFloat(String(capacidadDelMayor).replace(/[^\d.,-]/g, "").replace(",", "."));
+    const capNum = parseTamanoAGB(capacidadDelMayor);
     let alerta = "";
-    if (!isNaN(capNum) && capNum > 0 && mayor > capNum) {
+    if (capNum > 0 && mayor > capNum) {
       alerta = "  ⚠️ el mayor (" + mayor + ") supera la capacidad total (" + capNum + "): no están en la misma unidad";
     }
 
