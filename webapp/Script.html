@@ -1092,6 +1092,12 @@
             pill.textContent = '✅🔍';
             pill.title = 'RVTools: archivos revisados, abren y tienen datos' + detalleTxt;
           }
+        } else if (tData.alertaArchivos) {
+          // El archivo está en Drive pero no se pudo leer. No es "no lo subieron": el equipo
+          // tiene que ir a mirarlo y volver a exportarlo, así que va en amarillo y no en rojo.
+          pill.classList.add('status-warn');
+          pill.textContent = '⚠️';
+          pill.title = 'RVTools: posible archivo corrupto. Está subido pero no se pudo abrir o no tiene los datos esperados' + detalleTxt;
         } else if (tData.pendienteEnVentana) {
           pill.classList.add('status-warn');
           pill.textContent = '⏳';

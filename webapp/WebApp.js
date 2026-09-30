@@ -1192,7 +1192,13 @@ const WEBAPP_CACHE_RVTOOLS_SEGUNDOS = 1800; // 30 minutos
  *
  * @param {boolean} [forzar] true para saltear el caché.
  * @returns {{calculadoA:string, error:(string|null), clientes:Object}} clientes[nombre] =
- *   { estado: 'ok'|'pendiente'|'falta'|'sin_dato', carpeta, detalle }
+ *   { estado, carpeta, detalle }, donde estado es:
+ *     'ok'              la carpeta está y, si se pudo revisar, los archivos abren
+ *     'pendiente'       falta, pero la ventana de subida sigue abierta
+ *     'falta'           no hay carpeta nueva
+ *     'archivos_faltan' la carpeta está pero no tiene nada usable (vacía, sin .xlsx, 0 bytes)
+ *     'archivos_alerta' hay archivo pero no se pudo leer, o es más viejo que la carpeta
+ *     'sin_dato'        no se pudo averiguar (nunca es lo mismo que "no se subió")
  */
 function webapp_obtenerEstadoRVTools(forzar) {
   const usuario = webapp_usuarioActual();
@@ -1293,7 +1299,15 @@ function webapp_obtenerEstadoRVTools(forzar) {
 function _webappEstadoDeCarpetaRVTools(cliente, hallazgo, forzar, contexto) {
   const nivel1 = rvtoolsRevisarCarpeta(hallazgo.carpeta, hallazgo.nombre);
   if (nivel1.estado !== 'ok') {
-    return { estado: 'archivos_mal', carpeta: hallazgo.nombre, detalle: nivel1.detalle };
+    // "No subieron nada" y "subieron algo que no sirve" piden acciones distintas. Lo primero
+    // es rojo, igual que si faltara la carpeta. Lo segundo es una advertencia: hay material,
+    // pero hay que mirarlo.
+    const esAlerta = nivel1.estado === 'desactualizada';
+    return {
+      estado: esAlerta ? 'archivos_alerta' : 'archivos_faltan',
+      carpeta: hallazgo.nombre,
+      detalle: nivel1.detalle
+    };
   }
 
   if (!forzar) {
@@ -1303,7 +1317,9 @@ function _webappEstadoDeCarpetaRVTools(cliente, hallazgo, forzar, contexto) {
 
   const nivel2 = rvtoolsVerificarPlanillas(cliente, hallazgo.nombre, nivel1.planillas, contexto);
   if (nivel2.estado === 'roto') {
-    return { estado: 'archivos_mal', carpeta: hallazgo.nombre, detalle: nivel2.detalle };
+    // El archivo está subido pero no se puede leer. No es "no lo subieron": es una advertencia
+    // para que alguien lo abra y lo vuelva a exportar.
+    return { estado: 'archivos_alerta', carpeta: hallazgo.nombre, detalle: nivel2.detalle };
   }
   if (nivel2.estado === 'pendiente') {
     return { estado: 'ok', carpeta: hallazgo.nombre, detalle: nivel1.detalle + '. ' + nivel2.detalle, verificando: true };
@@ -1440,6 +1456,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
       let pendienteEnVentana = false;
       let detalle = null;
       let archivosVerificados = false;
+      let alertaArchivos = false;
       if (tech === 'RVTools') {
         // Sin dato (no hay carpeta en el Índice, o Drive falló) se deja en null y el front lo
         // pinta distinto de rojo: "no pude fijarme" no es "no se subió".
@@ -1447,11 +1464,12 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
         if (!rv || rv.estado === 'sin_dato') {
           enviado = null;
         } else {
-          // 'archivos_mal' es rojo como 'falta', pero el detalle dice qué pasa: la carpeta
-          // está y lo que falla es el contenido.
           enviado = rv.estado === 'ok';
           pendienteEnVentana = rv.estado === 'pendiente';
           archivosVerificados = !!rv.verificado;
+          // El archivo está subido pero no se puede leer, o es viejo. Cuenta como pendiente
+          // (hay algo que hacer), pero se muestra como advertencia y no como "no llegó".
+          alertaArchivos = rv.estado === 'archivos_alerta';
         }
         detalle = rv ? rv.detalle : 'El cliente no figura con carpeta de RVTools en el Índice';
         fuente = 'drive';
@@ -1472,7 +1490,10 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
         detalle: detalle,
         // Solo RVTools: true si los archivos se abrieron y tienen datos. Sirve para no mostrar
         // igual "está subido" que "está subido y se pudo leer".
-        archivosVerificados: archivosVerificados
+        archivosVerificados: archivosVerificados,
+        // Solo RVTools: hay archivo pero no se pudo leer (o está viejo). Se pinta como
+        // advertencia, no como falta.
+        alertaArchivos: alertaArchivos
       };
 
       if (enviado === true) enviados++;
