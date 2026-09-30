@@ -1492,3 +1492,108 @@ function manual_diagnosticarTildesSinOperador() {
   Logger.log('\nSi hay casillas tildadas sin operador, mirar las ejecuciones de "registrarOperadorAlTildar"' +
     ' en el proyecto BotonCheckBox: el log dice "[Operador] El evento no trae usuario" cuando e.user viene vacío.');
 }
+
+/**
+ * Qué trae realmente la columna de tamaño del reporte de "VMs con snapshots". Solo lee: no
+ * manda mails, no toca Jira ni escribe en ninguna planilla.
+ *
+ * Hace falta porque parseSpaceToGB (VMsConSnapshots.js) decide la unidad mirando el texto: si
+ * el valor dice TB/MB/KB convierte, y si no dice nada lo toma como GB. Si el reporte viniera
+ * en MB sin aclararlo, los umbrales se estarían comparando contra un número ~1024 veces más
+ * grande. Esto muestra los valores crudos para saber cuál de los dos casos es.
+ *
+ * Sin parámetros recorre los últimos reportes de todos los clientes y deja un resumen de una
+ * línea por cada uno, para ubicar cuál es el que viene raro sin saber de antemano el cliente.
+ * Con un remitente muestra además los valores fila por fila de ese reporte.
+ *
+ * @param {string} [remitente] Opcional, ej. "@bancomacro.com.ar".
+ */
+function manual_diagnosticarUnidadesSnapshots(remitente) {
+  const consulta = 'subject:"' + SNAPSHOTS_EMAIL_SUBJECT + '" has:attachment' +
+    (remitente ? ' from:' + remitente : '');
+  const cuantos = remitente ? 1 : 20;
+  Logger.log("--- Buscando: " + consulta);
+  const hilos = GmailApp.search(consulta, 0, cuantos);
+  if (hilos.length === 0) {
+    Logger.log("No se encontró ningún correo con ese asunto.");
+    return;
+  }
+  Logger.log(hilos.length + " reporte(s) a revisar.\n");
+
+  const resumen = [];
+  hilos.forEach(function (hilo) {
+    const mensajes = hilo.getMessages();
+    const mensaje = mensajes[mensajes.length - 1];
+    const adjunto = mensaje.getAttachments().filter(function (a) {
+      return a.getName().toLowerCase().indexOf(SNAPSHOTS_FILENAME_MATCH.toLowerCase()) !== -1;
+    })[0] || mensaje.getAttachments()[0];
+    const de = mensaje.getFrom();
+    if (!adjunto) {
+      resumen.push(de + " -> el correo no tiene adjuntos");
+      return;
+    }
+
+    // Mismo parseo que usa el processor (parseCsvDeReporte, centralizado en
+    // DataProcessingService.js): así lo que se ve acá es exactamente lo que ve la operación.
+    let filas;
+    try {
+      filas = parseCsvDeReporte(adjunto.getDataAsString("UTF-8"));
+    } catch (e) {
+      resumen.push(de + " -> no se pudo parsear: " + e.message);
+      return;
+    }
+    if (!filas || filas.length < 2) {
+      resumen.push(de + ' -> "' + adjunto.getName() + '" vino vacío o no es CSV');
+      return;
+    }
+
+    const encabezados = filas[0].map(function (h) { return String(h).trim(); });
+    const buscar = function (parte) {
+      return encabezados.findIndex(function (h) { return h.toLowerCase().indexOf(parte.toLowerCase()) !== -1; });
+    };
+    const iNombre = buscar("Name");
+    const iEspacio = buscar("Snapshot_Space") !== -1 ? buscar("Snapshot_Space") : buscar("Space");
+    const iTotal = buscar("Total_Capacity") !== -1 ? buscar("Total_Capacity") : buscar("Capacity");
+
+    if (iEspacio === -1) {
+      resumen.push(de + " -> sin columna de tamaño. Encabezados: " + encabezados.join(" | "));
+      return;
+    }
+
+    // La última fila suele ser el total del reporte: no es una VM, no se cuenta.
+    const datos = filas.slice(1, filas.length - 1).filter(function (f) {
+      return String(f[iEspacio] === undefined ? "" : f[iEspacio]).trim() !== "";
+    });
+    let conUnidad = 0;
+    const unidades = {};
+    datos.forEach(function (f) {
+      const crudo = String(f[iEspacio]);
+      const u = crudo.match(/(TB|GB|MB|KB)/i);
+      if (u) { conUnidad++; unidades[u[1].toUpperCase()] = (unidades[u[1].toUpperCase()] || 0) + 1; }
+    });
+    const sinUnidad = datos.length - conUnidad;
+    const detalle = Object.keys(unidades).map(function (u) { return unidades[u] + " en " + u; }).join(", ");
+    resumen.push(de + ' | col "' + encabezados[iEspacio] + '" | ' + datos.length + " fila(s): " +
+      (conUnidad ? detalle : "") + (conUnidad && sinUnidad ? " y " : "") +
+      (sinUnidad ? sinUnidad + " SIN unidad (se toman como GB)" : "") +
+      ' | ejemplo: "' + (datos.length ? datos[0][iEspacio] : "-") + '"');
+
+    if (remitente) {
+      Logger.log('De: ' + de + '\nAsunto: "' + mensaje.getSubject() + '"\nAdjunto: "' + adjunto.getName() + '"');
+      Logger.log("\n--- Encabezados ---");
+      encabezados.forEach(function (h, i) { Logger.log("   [" + i + '] "' + h + '"'); });
+      Logger.log('\n--- Valores crudos de "' + encabezados[iEspacio] + '" (hasta 20 filas) ---');
+      datos.slice(0, 20).forEach(function (f) {
+        const crudo = String(f[iEspacio]);
+        Logger.log('   ' + (iNombre !== -1 ? String(f[iNombre]).substring(0, 30) : "?") +
+          ' | tamaño: "' + crudo + '"' + (/[a-z]/i.test(crudo) ? "  (trae unidad)" : "  (SIN unidad -> se toma como GB)") +
+          (iTotal !== -1 ? ' | capacidad total: "' + f[iTotal] + '"' : ""));
+      });
+    }
+  });
+
+  Logger.log("\n=== RESUMEN POR REPORTE ===");
+  resumen.forEach(function (l) { Logger.log("   " + l); });
+  Logger.log('\nLos que digan "SIN unidad" se están comparando contra los umbrales como si fueran GB.' +
+    "\nSi alguno de esos en realidad viene en MB, sus alertas de tamaño están mal.");
+}
