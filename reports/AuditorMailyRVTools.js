@@ -527,6 +527,17 @@ function _rvtoolsFechasEsperadas(fecha) {
  * @returns {string|null} El nombre real de la carpeta encontrada, o null.
  */
 function _rvtoolsBuscarCarpetaDeFecha(carpetaPadre, esperados, cliente, permitirBajarUnNivel) {
+  const hallazgo = _rvtoolsBuscarCarpetaObjeto(carpetaPadre, esperados, cliente, permitirBajarUnNivel);
+  return hallazgo ? hallazgo.nombre : null;
+}
+
+/**
+ * Igual que _rvtoolsBuscarCarpetaDeFecha pero devuelve también la carpeta en sí, para poder
+ * mirar los archivos que tiene adentro (ver RVTools_Verificacion.js). El recorrido vive acá
+ * una sola vez: la versión que devuelve solo el nombre llama a esta (AGENTS.md §5).
+ * @returns {{nombre: string, carpeta: Folder}|null}
+ */
+function _rvtoolsBuscarCarpetaObjeto(carpetaPadre, esperados, cliente, permitirBajarUnNivel) {
   const bajarUnNivel  = permitirBajarUnNivel !== false;
   const subCarpetas   = carpetaPadre.getFolders();
   const casiFechas    = [];
@@ -537,7 +548,7 @@ function _rvtoolsBuscarCarpetaDeFecha(carpetaPadre, esperados, cliente, permitir
     const nombre      = carpeta.getName();
     const soloDigitos = nombre.replace(/\D/g, "");
 
-    if (esperados.indexOf(soloDigitos) !== -1) return nombre;
+    if (esperados.indexOf(soloDigitos) !== -1) return { nombre: nombre, carpeta: carpeta };
     if (soloDigitos.length >= 6) casiFechas.push(nombre);
     else if (/^\d{4}$/.test(nombre.trim())) carpetasDeAnio.push(carpeta);
   }
@@ -546,8 +557,8 @@ function _rvtoolsBuscarCarpetaDeFecha(carpetaPadre, esperados, cliente, permitir
   // cuelgan las fechas de una subcarpeta de año. Bajamos un nivel solo en ese caso.
   if (bajarUnNivel && carpetasDeAnio.length > 0) {
     for (const carpetaAnio of carpetasDeAnio) {
-      const encontrada = _rvtoolsBuscarCarpetaDeFecha(carpetaAnio, esperados, cliente, false);
-      if (encontrada) return `${carpetaAnio.getName()}/${encontrada}`;
+      const encontrada = _rvtoolsBuscarCarpetaObjeto(carpetaAnio, esperados, cliente, false);
+      if (encontrada) return { nombre: `${carpetaAnio.getName()}/${encontrada.nombre}`, carpeta: encontrada.carpeta };
     }
   }
 

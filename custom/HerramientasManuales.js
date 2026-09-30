@@ -1802,7 +1802,7 @@ function manual_diagnosticarArchivosRVTools() {
       return;
     }
     archivos.forEach(function (a) {
-      Logger.log("   " + a.nombre + "  |  " + _rvtoolsTamanoLegible(a.bytes) + "  |  " + a.tipo + "  |  " + a.actualizado);
+      Logger.log("   " + a.nombre + "  |  " + rvtoolsTamanoLegible(a.bytes) + "  |  " + a.tipo + "  |  " + a.actualizado);
     });
     if (!planillas.length) {
       resumen.push(fila.cliente + " -> ⚠️ carpeta " + carpeta.getName() + " sin .xlsx/.xlsm (" + archivos.length + " archivo(s))");
@@ -1810,13 +1810,13 @@ function manual_diagnosticarArchivosRVTools() {
     }
     const menor = planillas.reduce(function (a, b) { return a.bytes <= b.bytes ? a : b; });
     resumen.push(fila.cliente + " -> " + planillas.length + " planilla(s), la más chica " +
-      _rvtoolsTamanoLegible(menor.bytes) + " (" + menor.nombre + ")" + (menor.bytes === 0 ? "  ⚠️ 0 BYTES" : ""));
+      rvtoolsTamanoLegible(menor.bytes) + " (" + menor.nombre + ")" + (menor.bytes === 0 ? "  ⚠️ 0 BYTES" : ""));
 
     // Verificación profunda, solo para el cliente elegido.
     if (aAbrir && fila.cliente.toLowerCase().indexOf(aAbrir) !== -1) {
       planillas.forEach(function (a) {
         Logger.log("   >>> Abriendo " + a.nombre + "...");
-        Logger.log("       " + _rvtoolsVerificarPlanilla(a.id, a.nombre).detalle);
+        Logger.log("       " + rvtoolsVerificarPlanilla(a.id, a.nombre).detalle);
       });
     }
   });
@@ -1825,57 +1825,3 @@ function manual_diagnosticarArchivosRVTools() {
   resumen.forEach(function (l) { Logger.log("   " + l); });
 }
 
-/** Bytes en algo que se lee de un vistazo. */
-function _rvtoolsTamanoLegible(bytes) {
-  const n = Number(bytes) || 0;
-  if (n < 1024) return n + " B";
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
-  return (n / (1024 * 1024)).toFixed(2) + " MB";
-}
-
-// Pestañas que la automatización necesita para trabajar: vMetaData (de dónde sale el vCenter),
-// vHealth (Zombies VMDKs) y vNetwork (VMs sin connect at power on). Si falta alguna, el archivo
-// puede abrir igual pero nuestro proceso no saca nada de él.
-const RVTOOLS_PESTANAS_NECESARIAS = ["vMetaData", "vHealth", "vNetwork"];
-
-/**
- * Abre un .xlsx de RVTools y revisa que tenga las pestañas necesarias con datos. Convierte a
- * Google Sheets igual que procesarRVToolsManual, y borra siempre la copia temporal.
- * @returns {{ok: boolean, detalle: string}}
- */
-function _rvtoolsVerificarPlanilla(fileId, nombre) {
-  let tempId = null;
-  try {
-    const temp = executeDriveWithBackoff(function () {
-      return Drive.Files.copy({ mimeType: MimeType.GOOGLE_SHEETS, name: "[TEMP verificacion] " + nombre }, fileId);
-    });
-    tempId = temp.id;
-    const ss = SpreadsheetApp.openById(tempId);
-    const presentes = ss.getSheets().map(function (h) { return h.getName(); });
-    const faltan = RVTOOLS_PESTANAS_NECESARIAS.filter(function (p) { return presentes.indexOf(p) === -1; });
-    const vacias = RVTOOLS_PESTANAS_NECESARIAS.filter(function (p) {
-      const h = ss.getSheetByName(p);
-      return h && h.getLastRow() < 2; // solo encabezados, o nada
-    });
-    if (faltan.length) {
-      return { ok: false, detalle: "❌ ABRE pero le faltan pestañas: " + faltan.join(", ") +
-        ". Tiene " + presentes.length + ": " + presentes.slice(0, 12).join(", ") };
-    }
-    if (vacias.length) {
-      return { ok: false, detalle: "⚠️ ABRE y están las pestañas, pero sin datos: " + vacias.join(", ") };
-    }
-    const filasPorPestana = RVTOOLS_PESTANAS_NECESARIAS.map(function (p) {
-      return p + "=" + (ss.getSheetByName(p).getLastRow() - 1) + " filas";
-    });
-    return { ok: true, detalle: "✅ OK. " + presentes.length + " pestañas. " + filasPorPestana.join(", ") };
-  } catch (e) {
-    // Si la conversión falla, el archivo no es un Excel válido: es justo el caso que se busca.
-    return { ok: false, detalle: "❌ NO SE PUDO ABRIR (archivo corrupto o no es un Excel): " + e.message };
-  } finally {
-    if (tempId) {
-      try { DriveApp.getFileById(tempId).setTrashed(true); } catch (e) {
-        Logger.log("       No se pudo borrar la copia temporal " + tempId + ": " + e.message);
-      }
-    }
-  }
-}

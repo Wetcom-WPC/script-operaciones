@@ -1086,6 +1086,12 @@
           var horaCorta = tData.hora ? String(tData.hora).substring(0, 5) : '';
           pill.textContent = horaCorta ? '✅ ' + horaCorta : '✅';
           pill.title = tech + ': enviado' + (tData.hora ? ' a las ' + tData.hora : '') + ' (' + origenTxt + ')' + detalleTxt;
+          // RVTools: el archivo puede estar subido y aun así no abrirse. La lupa distingue
+          // "la carpeta está" de "además los abrimos y tienen datos".
+          if (tech === 'RVTools' && tData.archivosVerificados) {
+            pill.textContent = '✅🔍';
+            pill.title = 'RVTools: archivos revisados, abren y tienen datos' + detalleTxt;
+          }
         } else if (tData.pendienteEnVentana) {
           pill.classList.add('status-warn');
           pill.textContent = '⏳';

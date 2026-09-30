@@ -1240,15 +1240,29 @@ function webapp_obtenerEstadoRVTools(forzar) {
     return resultado;
   }
 
+  // Contexto compartido de la verificación de archivos: el presupuesto es de toda la vuelta,
+  // no de cada cliente. Solo se abren archivos cuando el usuario aprieta "Actualizar"
+  // (forzar): en una carga normal se responde del caché y no se toca Drive.
+  const contextoVerif = {
+    memoria: forzar ? rvtoolsLeerMemoria(WEBAPP_LOGS_PROD_ID) : {},
+    nuevos: [],
+    comenzoEn: Date.now(),
+    abiertos: 0
+  };
+
   filas.forEach(function (fila) {
     if (!fila.folderId) {
       resultado.clientes[fila.cliente] = { estado: 'sin_dato', carpeta: null, detalle: 'Sin link de carpeta en la columna J del Índice' };
       return;
     }
     try {
-      const carpeta = _rvtoolsBuscarCarpetaDeFecha(DriveApp.getFolderById(fila.folderId), esperados, fila.cliente);
+      const hallazgo = _rvtoolsBuscarCarpetaObjeto(DriveApp.getFolderById(fila.folderId), esperados, fila.cliente);
+      const carpeta = hallazgo ? hallazgo.nombre : null;
       if (carpeta) {
-        resultado.clientes[fila.cliente] = { estado: 'ok', carpeta: carpeta, detalle: 'Subida: carpeta ' + carpeta };
+        // Que la carpeta exista no alcanza: puede estar vacía o traer archivos rotos, y así
+        // el semáforo daba verde mientras otra área abría un archivo ilegible.
+        resultado.clientes[fila.cliente] = _webappEstadoDeCarpetaRVTools(
+          fila.cliente, hallazgo, forzar, contextoVerif);
       } else if (enVentana) {
         resultado.clientes[fila.cliente] = { estado: 'pendiente', carpeta: null, detalle: 'Todavía no hay carpeta nueva desde el ' + desdeTxt + ' (la ventana es de miércoles a viernes)' };
       } else {
@@ -1259,11 +1273,42 @@ function webapp_obtenerEstadoRVTools(forzar) {
     }
   });
 
+  // Se guarda lo verificado recién al final: una sola escritura por vuelta.
+  rvtoolsGuardarEnMemoria(WEBAPP_LOGS_PROD_ID, contextoVerif.nuevos);
+
   try {
     const serializado = JSON.stringify(resultado);
     if (serializado.length < 90000) cache.put(cacheKey, serializado, WEBAPP_CACHE_RVTOOLS_SEGUNDOS);
   } catch (e) {}
   return resultado;
+}
+
+/**
+ * Estado de un cliente cuya carpeta de la semana SÍ existe. Primero lo barato (qué hay en la
+ * carpeta) y, solo si eso está bien y el usuario pidió actualizar, se abren los archivos.
+ *
+ * Los estados nuevos se separan a propósito de 'falta': "la carpeta no está" y "la carpeta
+ * está pero el archivo no sirve" mandan al equipo a hacer cosas distintas (AGENTS.md §7).
+ */
+function _webappEstadoDeCarpetaRVTools(cliente, hallazgo, forzar, contexto) {
+  const nivel1 = rvtoolsRevisarCarpeta(hallazgo.carpeta, hallazgo.nombre);
+  if (nivel1.estado !== 'ok') {
+    return { estado: 'archivos_mal', carpeta: hallazgo.nombre, detalle: nivel1.detalle };
+  }
+
+  if (!forzar) {
+    // Carga normal: no se abre nada. El caché de 30 minutos ya trae el último resultado real.
+    return { estado: 'ok', carpeta: hallazgo.nombre, detalle: nivel1.detalle };
+  }
+
+  const nivel2 = rvtoolsVerificarPlanillas(cliente, hallazgo.nombre, nivel1.planillas, contexto);
+  if (nivel2.estado === 'roto') {
+    return { estado: 'archivos_mal', carpeta: hallazgo.nombre, detalle: nivel2.detalle };
+  }
+  if (nivel2.estado === 'pendiente') {
+    return { estado: 'ok', carpeta: hallazgo.nombre, detalle: nivel1.detalle + '. ' + nivel2.detalle, verificando: true };
+  }
+  return { estado: 'ok', carpeta: hallazgo.nombre, detalle: nivel2.detalle, verificado: true };
 }
 
 // Columnas del semáforo. Solo van las tecnologías de las que EXISTE un registro de envío:
@@ -1394,6 +1439,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
       let fuente;
       let pendienteEnVentana = false;
       let detalle = null;
+      let archivosVerificados = false;
       if (tech === 'RVTools') {
         // Sin dato (no hay carpeta en el Índice, o Drive falló) se deja en null y el front lo
         // pinta distinto de rojo: "no pude fijarme" no es "no se subió".
@@ -1401,8 +1447,11 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
         if (!rv || rv.estado === 'sin_dato') {
           enviado = null;
         } else {
+          // 'archivos_mal' es rojo como 'falta', pero el detalle dice qué pasa: la carpeta
+          // está y lo que falla es el contenido.
           enviado = rv.estado === 'ok';
           pendienteEnVentana = rv.estado === 'pendiente';
+          archivosVerificados = !!rv.verificado;
         }
         detalle = rv ? rv.detalle : 'El cliente no figura con carpeta de RVTools en el Índice';
         fuente = 'drive';
@@ -1420,7 +1469,10 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
         hora: buscarPorNombre(horaPorClienteTech, clavesCli, '|' + key) || null,
         fuente: fuente,
         pendienteEnVentana: pendienteEnVentana,
-        detalle: detalle
+        detalle: detalle,
+        // Solo RVTools: true si los archivos se abrieron y tienen datos. Sirve para no mostrar
+        // igual "está subido" que "está subido y se pudo leer".
+        archivosVerificados: archivosVerificados
       };
 
       if (enviado === true) enviados++;
