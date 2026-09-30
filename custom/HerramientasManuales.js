@@ -1493,6 +1493,11 @@ function manual_diagnosticarTildesSinOperador() {
     ' en el proyecto BotonCheckBox: el log dice "[Operador] El evento no trae usuario" cuando e.user viene vacío.');
 }
 
+// El botón "Run" del editor no deja pasar parámetros: para mirar un reporte en detalle se
+// escribe acá el remitente (ej. "vro@bancosantacruz.com") y se corre
+// manual_diagnosticarUnidadesSnapshots. Vacío = resumen de los últimos 20 reportes.
+let MANUAL_UNIDADES_SNAPSHOTS_REMITENTE = "";
+
 /**
  * Qué trae realmente la columna de tamaño del reporte de "VMs con snapshots". Solo lee: no
  * manda mails, no toca Jira ni escribe en ninguna planilla.
@@ -1509,6 +1514,7 @@ function manual_diagnosticarTildesSinOperador() {
  * @param {string} [remitente] Opcional, ej. "@bancomacro.com.ar".
  */
 function manual_diagnosticarUnidadesSnapshots(remitente) {
+  remitente = remitente || MANUAL_UNIDADES_SNAPSHOTS_REMITENTE;
   const consulta = 'subject:"' + SNAPSHOTS_EMAIL_SUBJECT + '" has:attachment' +
     (remitente ? ' from:' + remitente : '');
   const cuantos = remitente ? 1 : 20;
@@ -1573,10 +1579,33 @@ function manual_diagnosticarUnidadesSnapshots(remitente) {
     });
     const sinUnidad = datos.length - conUnidad;
     const detalle = Object.keys(unidades).map(function (u) { return unidades[u] + " en " + u; }).join(", ");
-    resumen.push(de + ' | col "' + encabezados[iEspacio] + '" | ' + datos.length + " fila(s): " +
+
+    // La unidad no viene escrita en el valor, pero a veces sí en el nombre de la columna
+    // ("Snapshot Space (GB)"). Y el tamaño de un snapshot no puede superar la capacidad del
+    // disco: si lo supera, el número no está en la misma unidad que la capacidad.
+    const unidadEnEncabezado = (encabezados[iEspacio].match(/\((TB|GB|MB|KB)\)/i) || [])[1];
+    let mayor = -1;
+    let capacidadDelMayor = "";
+    datos.forEach(function (f) {
+      const n = parseFloat(String(f[iEspacio]).replace(/[^\d.,-]/g, "").replace(",", "."));
+      if (!isNaN(n) && n > mayor) {
+        mayor = n;
+        capacidadDelMayor = iTotal !== -1 ? String(f[iTotal]) : "";
+      }
+    });
+    const capNum = parseFloat(String(capacidadDelMayor).replace(/[^\d.,-]/g, "").replace(",", "."));
+    let alerta = "";
+    if (!isNaN(capNum) && capNum > 0 && mayor > capNum) {
+      alerta = "  ⚠️ el mayor (" + mayor + ") supera la capacidad total (" + capNum + "): no están en la misma unidad";
+    }
+
+    resumen.push(de + ' | col "' + encabezados[iEspacio] + '"' +
+      (unidadEnEncabezado ? " [el encabezado dice " + unidadEnEncabezado.toUpperCase() + "]" : " [el encabezado no dice la unidad]") +
+      " | " + datos.length + " fila(s): " +
       (conUnidad ? detalle : "") + (conUnidad && sinUnidad ? " y " : "") +
       (sinUnidad ? sinUnidad + " SIN unidad (se toman como GB)" : "") +
-      ' | ejemplo: "' + (datos.length ? datos[0][iEspacio] : "-") + '"');
+      ' | ejemplo: "' + (datos.length ? datos[0][iEspacio] : "-") + '" | mayor: ' + mayor +
+      (capacidadDelMayor ? " (capacidad total de esa VM: " + capacidadDelMayor + ")" : "") + alerta);
 
     if (remitente) {
       Logger.log('De: ' + de + '\nAsunto: "' + mensaje.getSubject() + '"\nAdjunto: "' + adjunto.getName() + '"');
