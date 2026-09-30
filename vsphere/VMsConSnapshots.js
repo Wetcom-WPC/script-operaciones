@@ -9,6 +9,9 @@ const SNAPSHOTS_EMAIL_SUBJECT = "VMs con snapshots";
 const SNAPSHOTS_FILENAME_MATCH = "VMs con snapshots";
 const SNAPSHOTS_SCHEDULED_TASK_NAME_TO_CLOSE = "VMs con snapshots";
 const SNAPSHOTS_ROW_LIMIT_FOR_TABLE = 5;
+// Columna que se agrega al final del ticket y del Excel con el tamaño ya legible y con su
+// unidad. El reporte del cliente trae el número pelado y no se sabía si eran MB, GB o TB.
+const SNAPSHOTS_COLUMNA_TAMANO = "Tamaño del snapshot";
 const SNAPSHOTS_JIRA_TICKET_SUMMARY_TABLE = "Se detectaron VMs con Snapshots";
 const SNAPSHOTS_JIRA_TICKET_SUMMARY_ATTACHMENT = "Se detectaron VMs con Snapshots";
 
@@ -125,6 +128,16 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     if (idxTotalCapacity !== -1 && !headers.includes("Used Space %")) {
       headers.push("Used Space %");
     }
+    // Los clientes mandan el tamaño como número pelado ("27.08"), así que el ticket no decía
+    // en qué unidad estaba. Esta columna muestra el mismo valor que el script usó para decidir
+    // si alerta, ya con la unidad puesta. No se pisa la columna original: esa es la evidencia
+    // de lo que mandó el cliente.
+    const unidadEspacio = unidadDelEncabezado(headers[idxSpace]);
+    const unidadCapacidad = idxTotalCapacity !== -1 ? unidadDelEncabezado(headers[idxTotalCapacity]) : '';
+    if (!headers.includes(SNAPSHOTS_COLUMNA_TAMANO)) {
+      headers.push(SNAPSHOTS_COLUMNA_TAMANO);
+    }
+    Logger.log(`[VMs con snapshots] Columna de tamaño: "${headers[idxSpace]}" -> unidad ${unidadEspacio || "no declarada, se asume GB"}.`);
     
     const parseSeguro = (val) => {
       if (!val) return 0;
@@ -137,21 +150,10 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       return parseFloat(clean) || 0;
     };
 
-    const parseSpaceToGB = (val) => {
-      if (!val) return 0;
-      let str = val.toString().trim().toUpperCase();
-      let clean = str.replace(/[^\d.,-]/g, '').trim();
-      let lastDot = clean.lastIndexOf('.');
-      let lastComma = clean.lastIndexOf(',');
-      if (lastDot > lastComma) { clean = clean.replace(/,/g, ''); }
-      else if (lastComma > lastDot) { clean = clean.replace(/\./g, '').replace(/,/g, '.'); }
-      else { clean = clean.replace(/,/g, '.'); }
-      let num = parseFloat(clean) || 0;
-      if (str.includes('TB')) return num * 1024;
-      if (str.includes('MB')) return num / 1024;
-      if (str.includes('KB')) return num / (1024 * 1024);
-      return num; // defaults to GB if no unit or 'GB'
-    };
+    // La conversión a GB vive en parseTamanoAGB (core/DataProcessingService.js): la usan
+    // también las herramientas de diagnóstico, y tener dos copias de un parseo fue el origen
+    // del incidente del 27/07/2026 (AGENTS.md §5). No reimplementarla acá.
+    const parseSpaceToGB = parseTamanoAGB;
 
     const detectedReasonsOps = new Set();
     const detectedReasonsSoporte = new Set();
@@ -196,17 +198,18 @@ class VMsConSnapshotsProcessor extends MailProcessor {
          if (snapName.includes("snapshot") || snapName.includes("template")) return;
       }
       
-      const space = parseSpaceToGB(row[idxSpace]);
+      const space = parseSpaceToGB(row[idxSpace], unidadEspacio);
       const count = parseSeguro(row[idxCount]);
-      
+
       let usedPercent = 0;
-      const totalCap = idxTotalCapacity !== -1 ? parseSpaceToGB(row[idxTotalCapacity]) : 0;
+      const totalCap = idxTotalCapacity !== -1 ? parseSpaceToGB(row[idxTotalCapacity], unidadCapacidad) : 0;
       if (totalCap > 0) {
          usedPercent = (space / totalCap) * 100;
       }
       if (idxTotalCapacity !== -1) {
         row.push(usedPercent > 0 ? usedPercent.toFixed(2) + "%" : "0.00%");
       }
+      row.push(formatearTamanoDesdeGB(space));
       
       // PASO 1: SOP siempre tiene prioridad
       const matchedSopRule = findMatchingSopRule(row, headers, sopRules);
@@ -410,7 +413,12 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     const reasonsText = opsReasonsText + '\n' + soporteReasonsText;
     
     const rowsForExport = [...finalAlerts];
-    if (summaryRow.length > 0) rowsForExport.push(summaryRow);
+    if (summaryRow.length > 0) {
+      // La fila de totales sale del reporte y no pasa por el bucle, así que no tiene las
+      // columnas que agregamos. Se rellena para que no quede corrida en la tabla del ticket.
+      while (summaryRow.length < headers.length) summaryRow.push("");
+      rowsForExport.push(summaryRow);
+    }
 
     return { headers, finalAlerts, rowsForExport, reasonsText };
   }
