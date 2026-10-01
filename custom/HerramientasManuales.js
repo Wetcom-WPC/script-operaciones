@@ -1826,8 +1826,10 @@ function manual_diagnosticarArchivosRVTools() {
 }
 
 
-// Remitente del correo de Malware Detection a simular. Ej. "veeam@balanz.com".
-let MANUAL_MALWARE_REMITENTE = "veeam@balanz.com";
+// Remitente del correo de Malware Detection a simular, cuando hay mas de un cliente mandando
+// y se quiere mirar uno puntual (ej. "veeam@cliente.com"). Vacio = el correo mas reciente,
+// venga de quien venga.
+let MANUAL_MALWARE_REMITENTE = "";
 
 /**
  * Muestra el ticket que se crearia con el ultimo correo de Malware Detection, SIN crear ni
