@@ -1312,3 +1312,70 @@ function manual_probarAvisoFeriadoEnMockSlack() {
   Logger.log("Resultado envío: " + (resultado ? "Éxito (200)" : "Revisar logs"));
   return resultado;
 }
+
+// Remitente del correo de Malware Detection a simular. Ej. "veeam@balanz.com".
+let MANUAL_MALWARE_REMITENTE = "veeam@balanz.com";
+
+/**
+ * Muestra el ticket que se crearia con el ultimo correo de Malware Detection, SIN crear ni
+ * comentar nada en Jira y sin mandar correos.
+ *
+ * Solo llama a processData(), que lee la planilla de excepciones y calcula. Todo lo que
+ * escribe en Jira vive en handleAlerts(), que aca no se invoca.
+ */
+function manual_simularTicketMalware() {
+  const remitente = String(MANUAL_MALWARE_REMITENTE || "").trim();
+  const hilos = GmailApp.search('subject:"' + MALWARE_EMAIL_SUBJECT + '" has:attachment' +
+    (remitente ? ' from:' + remitente : ''), 0, 1);
+  if (!hilos.length) {
+    Logger.log('No se encontro ningun correo con asunto "' + MALWARE_EMAIL_SUBJECT + '".');
+    return;
+  }
+  const mensajes = hilos[0].getMessages();
+  const mensaje = mensajes[mensajes.length - 1];
+  Logger.log('De: ' + mensaje.getFrom() + ' | ' + Utilities.formatDate(mensaje.getDate(), HORARIO_OPERATIVO_TZ, "dd/MM/yyyy HH:mm"));
+  Logger.log('Asunto: "' + mensaje.getSubject() + '"');
+
+  const procesador = new MalwareDetectionProcessor();
+  const reporte = { errores: [], advertencias: [], exitos: [] };
+
+  const adjunto = procesador.findAttachment(mensaje);
+  if (!adjunto) {
+    Logger.log("El correo no trae ningun .log adjunto.");
+    return;
+  }
+  Logger.log("Adjuntos .log: " + procesador.logsDelCorreo.map(function (b) { return b.getName(); }).join(", "));
+
+  // Sin depender de _webappEmailDe: esa funcion vive en la carpeta webapp, que existe en
+  // Playground pero NO en Operativo, y alla esta linea tiraba ReferenceError.
+  const emailRemitente = (String(mensaje.getFrom()).match(/[\w.+-]+@[\w.-]+/) || [remitente])[0];
+  const config = getClientConfig(emailRemitente, MALWARE_OPERATION_NAME);
+  if (!config) {
+    Logger.log("No se encontro configuracion de cliente para " + emailRemitente +
+      '. Revisar que exista la pestaña "' + MALWARE_OPERATION_NAME + '" en la planilla de excepciones.');
+    return;
+  }
+  config.senderEmail = emailRemitente;
+  Logger.log("Cliente: " + config.clientName + " | Proyecto Jira: " + config.jiraProjectKey);
+  Logger.log("Excepciones cargadas: " + Object.keys(config.exceptions || {}).length + " regla(s)");
+
+  const detecciones = procesador.parseAttachment(adjunto, reporte);
+  const r = procesador.processData(detecciones, config, reporte);
+  if (!r) {
+    Logger.log("processData no devolvio nada. Errores: " + JSON.stringify(reporte.errores));
+    return;
+  }
+
+  Logger.log("\n=== DESCRIPCION DEL TICKET (si se creara hoy) ===");
+  Logger.log(procesador.descripcionDelTicket(r.finalAlerts.length, config, r.headers, r.finalAlerts));
+
+  Logger.log("\n=== COMENTARIO (si el ticket ya existiera) ===");
+  Logger.log(procesador.textoProblemaPersiste(r.finalAlerts.length, config, r.headers, r.finalAlerts));
+
+  Logger.log("\n=== ADJUNTO: " + r.finalAlerts.length + " fila(s) ===");
+  Logger.log(r.headers.join(" | "));
+  r.finalAlerts.slice(0, 15).forEach(function (f) { Logger.log("   " + f.join(" | ")); });
+  if (r.finalAlerts.length > 15) Logger.log("   ... y " + (r.finalAlerts.length - 15) + " mas");
+
+  Logger.log("\nNo se creo ni se comento ningun ticket, y no se envio ningun correo.");
+}
