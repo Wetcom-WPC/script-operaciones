@@ -1859,7 +1859,9 @@ function manual_simularTicketMalware() {
   }
   Logger.log("Adjuntos .log: " + procesador.logsDelCorreo.map(function (b) { return b.getName(); }).join(", "));
 
-  const emailRemitente = _webappEmailDe ? _webappEmailDe(mensaje.getFrom()) : remitente;
+  // Sin depender de _webappEmailDe: esa funcion vive en la carpeta webapp, que existe en
+  // Playground pero NO en Operativo, y alla esta linea tiraba ReferenceError.
+  const emailRemitente = (String(mensaje.getFrom()).match(/[\w.+-]+@[\w.-]+/) || [remitente])[0];
   const config = getClientConfig(emailRemitente, MALWARE_OPERATION_NAME);
   if (!config) {
     Logger.log("No se encontro configuracion de cliente para " + emailRemitente +
