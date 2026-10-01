@@ -527,6 +527,21 @@ class MailProcessor {
     return { status: 'FAILURE' };
   }
 
+  /**
+   * Texto del ticket cuando se crea por primera vez. Existe para que una subclase pueda
+   * contar algo más útil que "se encontraron N alertas" (por ejemplo el detalle por máquina)
+   * sin tener que reescribir todo handleAlerts() y duplicar el manejo de Jira (AGENTS.md §5).
+   * El texto por defecto es el que se venía usando: no cambia nada para los demás processors.
+   */
+  descripcionDelTicket(alertCount, clientConfig, headers, finalAlerts) {
+    return `Se encontraron ${alertCount} alertas. Se adjunta el reporte completo para su revisión.`;
+  }
+
+  /** Comentario cuando el ticket ya existía. Mismo criterio que descripcionDelTicket(). */
+  textoProblemaPersiste(alertCount, clientConfig, headers, finalAlerts) {
+    return `🚨 **El problema persiste.** Se adjunta el reporte actualizado con **${alertCount}** objetos afectados.`;
+  }
+
   handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName, attachmentBlob = null) {
     if (!this.ticketSummary) {
       throw new Error("handleAlerts() debe ser implementado por la subclase, o bien proveer 'ticketSummary' en la configuración base.");
@@ -555,7 +570,7 @@ class MailProcessor {
       const attachmentResult = addAttachmentToJiraTicket(existingTicketKey, xlsxBlob);
 
       if (attachmentResult.status === 'SUCCESS') {
-        const commentText = `🚨 **El problema persiste.** Se adjunta el reporte actualizado con **${alertCount}** objetos afectados.`;
+        const commentText = this.textoProblemaPersiste(alertCount, clientConfig, headers, finalAlerts);
         addCommentToJiraTicket(existingTicketKey, commentText);
 
         const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName);
@@ -574,7 +589,7 @@ class MailProcessor {
         return { status: attachmentResult.status === 'HTTP_500' ? 'HTTP_500' : 'FAILURE' };
       }
     } else {
-      const description = `Se encontraron ${alertCount} alertas. Se adjunta el reporte completo para su revisión.`;
+      const description = this.descripcionDelTicket(alertCount, clientConfig, headers, finalAlerts);
       const creationResult = createTicketAndNotify(this.ticketSummary, description, xlsxBlob, clientConfig, this.operationName);
 
       if (creationResult.status === 'SUCCESS') {

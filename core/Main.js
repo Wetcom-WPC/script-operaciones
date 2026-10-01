@@ -48,6 +48,9 @@ function obtenerRegistroDeProcesadores() {
     { tarea: 'processHorizonProblemMachinesEmails', crear: () => new HorizonProblemMachinesProcessor() },
     { tarea: 'processTanzuEmails',                crear: () => new TanzuMailProcessor() },
 
+    // --- Veeam Malware Detection (logs que manda la tarea programada de VEEAM13) ---
+    { tarea: 'processMalwareDetectionEmails',     crear: () => new MalwareDetectionProcessor() },
+
     // --- Reportes de Nutanix (OPS-NTX-001 al 004) ---
     { tarea: 'processNutanixOpsEmails',           crear: () => new NutanixOpsProcessor() },
 
