@@ -78,24 +78,66 @@ function llegadasEmailDe(from) {
  * Índice real por ID, el mismo que usa el resto del dashboard.
  */
 function llegadasMapaClientes() {
-  const mapa = {};
+  const mapa = { exactos: {}, dominios: {} };
   try {
     const ss = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
     const hoja = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
     if (hoja.getLastRow() < 2) return mapa;
-    // A = remitente(s) separados por coma, B = nombre del cliente.
-    hoja.getRange(2, 1, hoja.getLastRow() - 1, 2).getValues().forEach(function (fila) {
-      const cliente = String(fila[1] || "").trim();
-      if (!cliente) return;
+
+    // A = remitente(s), B = "Operaciones <Cliente>", I = PODs, L = nombre corto del cliente.
+    hoja.getRange(2, 1, hoja.getLastRow() - 1, 12).getValues().forEach(function (fila) {
+      const entrada = {
+        cliente: String(fila[11] || "").trim() || String(fila[1] || "").trim(),
+        pod: String(fila[8] || "").trim()
+      };
+      if (!entrada.cliente) return;
+
       String(fila[0] || "").split(",").forEach(function (r) {
-        const mail = r.trim().toLowerCase();
-        if (mail) mapa[mail] = cliente;
+        const v = r.trim().toLowerCase();
+        if (!v) return;
+        // El Índice carga casi todos los remitentes como DOMINIO ("@bancosantacruz.com") y no
+        // como casilla completa. Era lo que hacía fallar el mapeo: se buscaba
+        // "vrops@bancosantacruz.com" contra "@bancosantacruz.com" y no coincidía nunca.
+        if (v.charAt(0) === "@") {
+          const dominio = v.substring(1);
+          if (!mapa.dominios[dominio]) mapa.dominios[dominio] = entrada;
+        } else if (v.indexOf("@") !== -1) {
+          mapa.exactos[v] = entrada;
+        }
       });
     });
   } catch (e) {
     Logger.log("[Llegadas] No se pudo leer el Índice para mapear remitentes: " + e.message);
   }
   return mapa;
+}
+
+/**
+ * Cliente y POD de un remitente.
+ *
+ * Primero busca la casilla exacta y después por dominio. Si varios dominios encajan se queda
+ * con el más específico: "vroprisma@serv.externos.prismamp.com" tiene que resolver contra
+ * "@prismamp.com", pero si algún día se carga "@serv.externos.prismamp.com" tiene que ganar ese.
+ *
+ * @returns {{cliente:string, pod:string}} cliente vacío si no se pudo resolver.
+ */
+function llegadasResolverCliente(remitente, mapa) {
+  const mail = String(remitente || "").toLowerCase().trim();
+  if (!mail || !mapa) return { cliente: "", pod: "" };
+  if (mapa.exactos[mail]) return mapa.exactos[mail];
+
+  const dominio = mail.split("@")[1] || "";
+  if (!dominio) return { cliente: "", pod: "" };
+
+  let mejor = null;
+  Object.keys(mapa.dominios).forEach(function (d) {
+    // Coincide el dominio entero, o es un subdominio suyo ("serv.externos.prismamp.com" cae
+    // bajo "prismamp.com"). Sin el punto, "mibancosantafe.com" matchearía "bancosantafe.com".
+    if (dominio === d || dominio.slice(-(d.length + 1)) === "." + d) {
+      if (!mejor || d.length > mejor.length) mejor = d;
+    }
+  });
+  return mejor ? mapa.dominios[mejor] : { cliente: "", pod: "" };
 }
 
 function _llegadasTab(crearSiFalta) {
@@ -213,7 +255,7 @@ function llegadasRegistrar(dias, segundosMax) {
           minutos,
           llegadasOrigenDelRemitente(remitente),
           remitente,
-          clientes[remitente] || "",
+          llegadasResolverCliente(remitente, clientes).cliente,
           reporte,
           minutos > LLEGADAS_HORA_LIMITE_MIN ? "Sí" : "No",
           id
@@ -248,18 +290,26 @@ function llegadasLeer(desdeISO) {
   const tab = _llegadasTab(false);
   if (!tab || tab.getLastRow() < 2) return [];
   const datos = tab.getRange(2, 1, tab.getLastRow() - 1, LLEGADAS_COLS.length).getValues();
+  // El cliente y el POD se resuelven acá y no se toman de la columna guardada: así, si el
+  // Índice cambia (o si se arregla un mapeo que estaba mal), las filas viejas se muestran
+  // bien sin tener que reprocesar nada.
+  const mapa = llegadasMapaClientes();
   const out = [];
   datos.forEach(function (r) {
     const fecha = r[0] instanceof Date ? Utilities.formatDate(r[0], HORARIO_OPERATIVO_TZ, "yyyy-MM-dd") : String(r[0] || "");
     if (!fecha || (desdeISO && fecha < desdeISO)) return;
     const partes = fecha.split("-");
+    const remitente = String(r[4] || "");
+    const quien = llegadasResolverCliente(remitente, mapa);
     out.push({
       fecha: fecha,
       hora: r[1] instanceof Date ? Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, "HH:mm") : String(r[1] || ""),
       minutos: Number(r[2]) || 0,
       origen: String(r[3] || "Otro"),
-      remitente: String(r[4] || ""),
-      cliente: String(r[5] || "") || String(r[4] || ""),
+      remitente: remitente,
+      // Si no se puede resolver se muestra el mail: nunca una fila sin identificar.
+      cliente: quien.cliente || String(r[5] || "") || remitente,
+      pod: quien.pod || "",
       reporte: String(r[6] || ""),
       tarde: String(r[7] || "") === "Sí",
       // 0 = domingo. Se calcula acá y no en el navegador para que no dependa de la zona
