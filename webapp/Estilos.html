@@ -1015,4 +1015,52 @@ tr:hover .btn-comentario { opacity: .75; }
   overflow-y: auto;
 }
 
+
+/* --- Filtros ---------------------------------------------------------------
+   Hasta ahora cada <select> de la barra de filtros traía sus estilos escritos a
+   mano en el atributo style, repetidos en cada uno. Un control nuevo que usara
+   solo la clase quedaba con la apariencia por defecto del navegador, que fue lo
+   que pasó con Llegada de Reportes. Los valores son los mismos que ya venían en
+   línea, así que los que los tienen escritos siguen viéndose igual. */
+.select-control {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 14px;
+  background: white;
+  color: #333;
+  cursor: pointer;
+  outline: none;
+  max-width: 260px;
+}
+.select-control:hover { border-color: #9ca3af; }
+.select-control:focus-visible { border-color: var(--verde); box-shadow: 0 0 0 2px rgba(46,125,50,.15); }
+
+.filter-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
+/* Casilla de filtro al lado de los desplegables: se alinea con ellos y toda la
+   etiqueta es clickeable, no solo el cuadradito. */
+.check-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: white;
+  user-select: none;
+}
+.check-inline:hover { border-color: #9ca3af; }
+.check-inline input { cursor: pointer; margin: 0; }
+
+
+/* --- Patrones de llegada: marcas de atendido --- */
+.btn-chico { padding: 4px 10px; font-size: 12.5px; white-space: nowrap; }
+.patron-volvio { font-size: 12px; color: #C0392B; margin-top: 4px; line-height: 1.5; }
+.patron-atendido { font-size: 12px; color: var(--verde-osc, #1E8449); margin-top: 4px; line-height: 1.5; }
+.patron-reincidente { font-size: 12px; color: #C0392B; font-weight: 600; }
 </style>

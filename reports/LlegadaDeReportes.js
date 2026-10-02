@@ -319,3 +319,111 @@ function llegadasLeer(desdeISO) {
   });
   return out;
 }
+
+// =================================================================
+// PATRONES ATENDIDOS
+// =================================================================
+//
+// Marcar un patrón como atendido NO lo da por resuelto: deja constancia de que alguien lo vio
+// y de qué hizo. Si el problema vuelve, vuelve a aparecer, y entonces el historial muestra que
+// ya se había intentado arreglar. Esa es justamente la información útil: un patrón que se
+// marcó tres veces y volvió tres veces no es un descuido del equipo, es algo que no se está
+// pudiendo resolver por ese camino.
+//
+// Por eso nada se borra ni se oculta para siempre: la marca tiene fecha, y vale solo para la
+// evidencia que existía hasta ese momento.
+
+const PATRONES_TAB = "Patrones Atendidos";
+const PATRONES_COLS = ["Cuándo", "Quién", "Tipo", "Cliente", "Remitente", "Reporte",
+  "Hasta la evidencia del", "Qué se hizo"];
+
+function _patronesTab(crearSiFalta) {
+  const ss = SpreadsheetApp.openById(WEBAPP_LOGS_PROD_ID);
+  let tab = ss.getSheetByName(PATRONES_TAB);
+  if (!tab && crearSiFalta) {
+    tab = ss.insertSheet(PATRONES_TAB);
+    tab.getRange(1, 1, 1, PATRONES_COLS.length).setValues([PATRONES_COLS])
+      .setFontWeight("bold").setBackground("#1A5276").setFontColor("#FFFFFF");
+    tab.setFrozenRows(1);
+    tab.setColumnWidth(8, 420);
+  }
+  return tab;
+}
+
+/** La clave de un patrón: el tipo más la casilla y el reporte en los que se detectó. */
+function patronesClave(tipo, remitente, reporte) {
+  return [String(tipo || ""), String(remitente || "").toLowerCase(), String(reporte || "")].join("|");
+}
+
+/**
+ * Deja constancia de que alguien se ocupó de un patrón.
+ *
+ * @param {string} evidenciaHasta Fecha (yyyy-MM-dd) de la última evidencia que tenía el patrón
+ *   cuando se marcó. Es lo que permite que el patrón vuelva a aparecer si después pasa algo
+ *   nuevo, en vez de quedar tapado para siempre.
+ */
+function patronesMarcarAtendido(tipo, remitente, reporte, cliente, evidenciaHasta, nota, usuario) {
+  if (!tipo || !remitente || !reporte) throw new Error("Falta identificar el patrón.");
+  const tab = _patronesTab(true);
+  const candado = LockService.getScriptLock();
+  try {
+    candado.waitLock(20000);
+  } catch (e) {
+    throw new Error("Hay otra escritura en curso, probá de nuevo en unos segundos.");
+  }
+  try {
+    tab.getRange(tab.getLastRow() + 1, 1, 1, PATRONES_COLS.length).setValues([[
+      new Date(), usuario || "", tipo, cliente || "", String(remitente).toLowerCase(), reporte,
+      evidenciaHasta || "", _webappTextoSeguroParaCelda(String(nota || "").substring(0, 500))
+    ]]);
+    tab.getRange(2, 1, tab.getLastRow() - 1, 1).setNumberFormat("dd/MM/yyyy HH:mm:ss");
+  } finally {
+    try { candado.releaseLock(); } catch (e) {}
+  }
+  return true;
+}
+
+/**
+ * Todo lo marcado, en orden. Devuelve la lista completa (el historial) y, por clave, la marca
+ * más reciente, que es contra la que se compara si el patrón volvió.
+ */
+function patronesAtendidosLeer() {
+  const salida = { historial: [], ultima: {} };
+  const tab = _patronesTab(false);
+  if (!tab || tab.getLastRow() < 2) return salida;
+
+  tab.getRange(2, 1, tab.getLastRow() - 1, PATRONES_COLS.length).getValues().forEach(function (r) {
+    const cuando = r[0] instanceof Date ? r[0] : new Date(r[0]);
+    if (isNaN(cuando.getTime())) return;
+    const item = {
+      cuando: Utilities.formatDate(cuando, HORARIO_OPERATIVO_TZ, "dd/MM/yyyy HH:mm"),
+      cuandoISO: Utilities.formatDate(cuando, HORARIO_OPERATIVO_TZ, "yyyy-MM-dd"),
+      quien: String(r[1] || ""),
+      tipo: String(r[2] || ""),
+      cliente: String(r[3] || ""),
+      remitente: String(r[4] || ""),
+      reporte: String(r[5] || ""),
+      evidenciaHasta: r[6] instanceof Date
+        ? Utilities.formatDate(r[6], HORARIO_OPERATIVO_TZ, "yyyy-MM-dd")
+        : String(r[6] || ""),
+      nota: String(r[7] || "").replace(/^'(?=[=+\-@])/, "")
+    };
+    item.clave = patronesClave(item.tipo, item.remitente, item.reporte);
+    salida.historial.push(item);
+    // Se queda con la más reciente: es la que decide si el patrón sigue atendido.
+    const previa = salida.ultima[item.clave];
+    if (!previa || item.cuandoISO >= previa.cuandoISO) salida.ultima[item.clave] = item;
+  });
+
+  salida.historial.reverse();   // lo más nuevo primero
+  return salida;
+}
+
+/** Llamado desde el dashboard al tildar un patrón. */
+function webapp_marcarPatronAtendido(datos) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+  const d = datos || {};
+  patronesMarcarAtendido(d.tipo, d.remitente, d.reporte, d.cliente, d.evidenciaHasta, d.nota, usuario);
+  return { ok: true, atendidos: patronesAtendidosLeer() };
+}

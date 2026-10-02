@@ -2326,8 +2326,15 @@ function webapp_obtenerLlegadasReportes(dias, forzar) {
     registroDesde: null,
     aviso: null,
     llegadas: [],
-    faltantes: []
+    faltantes: [],
+    atendidos: { historial: [], ultima: {} }
   };
+
+  try {
+    resultado.atendidos = patronesAtendidosLeer();
+  } catch (e) {
+    Logger.log('[WebApp] No se pudo leer el historial de patrones atendidos: ' + e.message);
+  }
 
   if (forzar) {
     try {

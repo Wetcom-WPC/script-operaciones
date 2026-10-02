@@ -2870,6 +2870,15 @@
   // Cada uno responde una pregunta distinta y por eso no se mezclan en un solo puntaje: lo que
   // hay que hacer con "llega tarde todos los miércoles" no es lo mismo que con "dejó de llegar".
 
+  /** La fecha del ultimo dia en que ESTE grupo llego tarde: es la evidencia del patron. */
+  function ultimaEvidenciaTarde(llegadas, g) {
+    var fechas = llegadas
+      .filter(function(l) { return l.remitente === g.remitente && l.reporte === g.reporte && l.tarde; })
+      .map(function(l) { return l.fecha; })
+      .sort();
+    return fechas.length ? fechas[fechas.length - 1] : '';
+  }
+
   function patronesLlegadas(grupos, llegadas) {
     var hoy = new Date();
     var patrones = { diaFijo: [], corriendose: [], sinLlegar: [], erratico: [] };
@@ -2888,7 +2897,8 @@
         // Al menos 2 ocurrencias y que falle en todas: con una sola vez no hay patrón, es un día malo.
         if (x.total >= 2 && x.tarde === x.total) {
           patrones.diaFijo.push({
-            cliente: g.cliente, pod: g.pod, reporte: g.reporte, remitente: g.remitente,
+            tipo: 'diaFijo', cliente: g.cliente, pod: g.pod, reporte: g.reporte, remitente: g.remitente,
+            evidencia: ultimaEvidenciaTarde(llegadas, g) || g.ultima,
             detalle: 'Llegó tarde los ' + NOMBRE_DIA[d] + ' las ' + x.total + ' veces que se midió'
           });
         }
@@ -2910,6 +2920,7 @@
       // 20 minutos: por debajo de eso es el ruido normal de un cron que no arranca clavado.
       if (deriva >= 20) {
         patrones.corriendose.push({
+          tipo: 'corriendose', evidencia: g.ultima,
           cliente: g.cliente, pod: g.pod, reporte: g.reporte, remitente: g.remitente,
           detalle: 'Se corrió ' + deriva + ' min: pasó de llegar ' + minutosAHora(antes) +
             ' a ' + minutosAHora(ahora)
@@ -2924,6 +2935,7 @@
       var dias = Math.floor((hoy - new Date(g.ultima + 'T12:00:00')) / 86400000);
       if (dias >= 2) {
         patrones.sinLlegar.push({
+          tipo: 'sinLlegar', evidencia: g.ultima,
           cliente: g.cliente, pod: g.pod, reporte: g.reporte, remitente: g.remitente,
           detalle: 'Última llegada hace ' + dias + ' días (' + g.ultima + '), y antes venía llegando ' +
             g.total + ' veces'
@@ -2939,6 +2951,7 @@
       var desvio = Math.round(Math.sqrt(varianza));
       if (desvio >= 60) {
         patrones.erratico.push({
+          tipo: 'erratico', evidencia: g.ultima,
           cliente: g.cliente, pod: g.pod, reporte: g.reporte, remitente: g.remitente,
           detalle: 'Varía ±' + desvio + ' min entre días (de ' + minutosAHora(Math.min.apply(null, g.minutos)) +
             ' a ' + minutosAHora(Math.max.apply(null, g.minutos)) + ')'
@@ -2947,6 +2960,85 @@
     });
 
     return patrones;
+  }
+
+  function claveDePatron(p) {
+    return [p.tipo, String(p.remitente || '').toLowerCase(), p.reporte].join('|');
+  }
+
+  /**
+   * Separa lo que hay que mirar de lo que alguien ya atendió.
+   *
+   * Una marca vale solo para la evidencia que existía cuando se puso. Si después aparece
+   * evidencia nueva, el patrón vuelve a la lista activa con la aclaración de que ya se había
+   * intentado arreglar. Eso es lo que buscábamos: un patrón que se marcó tres veces y volvió
+   * tres veces no es un descuido, es algo que no se resuelve por ese camino.
+   */
+  function clasificarPorAtencion(items) {
+    var ultima = (llegadasGlobal.atendidos || {}).ultima || {};
+    var activos = [];
+    var atendidos = [];
+    items.forEach(function(p) {
+      var marca = ultima[claveDePatron(p)];
+      if (!marca) { activos.push(p); return; }
+      // Hay evidencia posterior a la marca: el intento no alcanzó.
+      if (p.evidencia && marca.evidenciaHasta && p.evidencia > marca.evidenciaHasta) {
+        p.volvio = marca;
+        activos.push(p);
+      } else {
+        p.marca = marca;
+        atendidos.push(p);
+      }
+    });
+    return { activos: activos, atendidos: atendidos };
+  }
+
+  function filaDePatron(p, conBoton) {
+    var tr = crear('tr');
+    var tdCli = crear('td', null, p.cliente);
+    tdCli.title = p.remitente;   // la casilla exacta, que es donde hay que ir a mirar
+    tr.appendChild(tdCli);
+    tr.appendChild(crear('td', null, p.pod || '-'));
+    tr.appendChild(crear('td', null, p.reporte));
+
+    var tdQue = crear('td');
+    tdQue.appendChild(document.createTextNode(p.detalle));
+    if (p.volvio) {
+      var volvio = crear('div', 'patron-volvio',
+        '↩ Se marcó como atendido el ' + p.volvio.cuando + ' por ' + nombreOperador(p.volvio.quien) +
+        ' y volvió a aparecer' + (p.volvio.nota ? ': "' + p.volvio.nota + '"' : ''));
+      tdQue.appendChild(volvio);
+    }
+    if (p.marca) {
+      var ok = crear('div', 'patron-atendido',
+        '✓ ' + p.marca.cuando + ' · ' + nombreOperador(p.marca.quien) +
+        (p.marca.nota ? ' · ' + p.marca.nota : ''));
+      tdQue.appendChild(ok);
+    }
+    tr.appendChild(tdQue);
+
+    var tdAcc = crear('td');
+    if (conBoton) {
+      var btn = crear('button', 'btn-secundario btn-chico', 'Marcar atendido');
+      btn.addEventListener('click', function() { abrirModalPatron(p); });
+      tdAcc.appendChild(btn);
+    }
+    tr.appendChild(tdAcc);
+    return tr;
+  }
+
+  function tablaDePatrones(items, conBoton) {
+    var tabla = crear('table', 'matriz-table tabla-logs');
+    tabla.style.cssText = 'width: 100%; border-collapse: collapse;';
+    var thead = crear('thead');
+    var trh = crear('tr');
+    ['Cliente', 'POD', 'Reporte', 'Qué pasa', ''].forEach(function(t) { trh.appendChild(crear('th', null, t)); });
+    thead.appendChild(trh);
+    tabla.appendChild(thead);
+    var tbody = crear('tbody');
+    items.forEach(function(p) { tbody.appendChild(filaDePatron(p, conBoton)); });
+    tabla.appendChild(tbody);
+    return tabla;
   }
 
   function pintarPatrones(patrones) {
@@ -2963,39 +3055,170 @@
     ];
 
     var hubo = false;
+    var atendidosTodos = [];
+
     bloques.forEach(function(b) {
-      var items = patrones[b.clave] || [];
-      if (!items.length) return;
+      var partido = clasificarPorAtencion(patrones[b.clave] || []);
+      atendidosTodos = atendidosTodos.concat(partido.atendidos);
+      if (!partido.activos.length) return;
       hubo = true;
+
       var card = crear('div', 'chart-card');
       card.style.cssText = 'border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px;';
-      card.appendChild(crear('h3', null, b.titulo + ' (' + items.length + ')')).style.cssText = 'margin: 0 0 4px 0; font-size: 16px;';
-      card.appendChild(crear('p', 'ayuda', b.ayuda)).style.cssText = 'margin: 0 0 12px 0;';
+      var h = crear('h3', null, b.titulo + ' (' + partido.activos.length + ')');
+      h.style.cssText = 'margin: 0 0 4px 0; font-size: 16px;';
+      card.appendChild(h);
+      var ay = crear('p', 'ayuda', b.ayuda);
+      ay.style.cssText = 'margin: 0 0 12px 0;';
+      card.appendChild(ay);
+      card.appendChild(tablaDePatrones(partido.activos, true));
+      cont.appendChild(card);
+    });
+
+    // Los atendidos no se esconden: se corren abajo. Esconderlos haría que un reporte que
+    // nunca más llega desaparezca de la pantalla, que es justo lo que queremos evitar.
+    if (atendidosTodos.length) {
+      hubo = true;
+      var card = crear('div', 'chart-card');
+      card.style.cssText = 'border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; opacity: .75;';
+      var h = crear('h3', null, '✓ Ya atendidos (' + atendidosTodos.length + ')');
+      h.style.cssText = 'margin: 0 0 4px 0; font-size: 16px;';
+      card.appendChild(h);
+      var ay = crear('p', 'ayuda', 'Alguien ya los miró. Siguen acá a la vista: si vuelve a pasar algo nuevo, suben solos al bloque de arriba.');
+      ay.style.cssText = 'margin: 0 0 12px 0;';
+      card.appendChild(ay);
+      card.appendChild(tablaDePatrones(atendidosTodos, false));
+      cont.appendChild(card);
+    }
+
+    // Historial completo, incluidas las marcas de patrones que ya no se detectan.
+    var hist = ((llegadasGlobal.atendidos || {}).historial) || [];
+    if (hist.length) {
+      hubo = true;
+      var cardH = crear('div', 'chart-card');
+      cardH.style.cssText = 'border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;';
+      var hh = crear('h3', null, '🗒 Historial de lo atendido (' + hist.length + ')');
+      hh.style.cssText = 'margin: 0 0 4px 0; font-size: 16px;';
+      cardH.appendChild(hh);
+      var ah = crear('p', 'ayuda', 'Todo lo que se marcó alguna vez, aunque el patrón ya no aparezca. Si un mismo caso figura varias veces, es que se intentó arreglar varias veces.');
+      ah.style.cssText = 'margin: 0 0 12px 0;';
+      cardH.appendChild(ah);
+
+      // Cuántas veces se marcó cada caso: ver el número repetido es el dato.
+      var veces = {};
+      hist.forEach(function(x) { veces[x.clave] = (veces[x.clave] || 0) + 1; });
 
       var tabla = crear('table', 'matriz-table tabla-logs');
       tabla.style.cssText = 'width: 100%; border-collapse: collapse;';
       var thead = crear('thead');
       var trh = crear('tr');
-      ['Cliente', 'POD', 'Reporte', 'Qué pasa'].forEach(function(t) { trh.appendChild(crear('th', null, t)); });
+      ['Cuándo', 'Quién', 'Cliente', 'Reporte', 'Patrón', 'Qué se hizo'].forEach(function(t) {
+        trh.appendChild(crear('th', null, t));
+      });
       thead.appendChild(trh);
       tabla.appendChild(thead);
       var tbody = crear('tbody');
-      items.forEach(function(it) {
+      hist.forEach(function(x) {
         var tr = crear('tr');
-        var tdCli = crear('td', null, it.cliente);
-        tdCli.title = it.remitente;   // la casilla exacta, que es donde hay que ir a mirar
-        tr.appendChild(tdCli);
-        tr.appendChild(crear('td', null, it.pod || '-'));
-        tr.appendChild(crear('td', null, it.reporte));
-        tr.appendChild(crear('td', null, it.detalle));
+        var td0 = crear('td', null, x.cuando);
+        td0.style.whiteSpace = 'nowrap';
+        tr.appendChild(td0);
+        tr.appendChild(crear('td', null, nombreOperador(x.quien)));
+        var tdc = crear('td', null, x.cliente || x.remitente);
+        tdc.title = x.remitente;
+        tr.appendChild(tdc);
+        tr.appendChild(crear('td', null, x.reporte));
+        var tdp = crear('td');
+        tdp.appendChild(crear('span', 'badge', NOMBRE_PATRON[x.tipo] || x.tipo));
+        if (veces[x.clave] > 1) {
+          tdp.appendChild(crear('span', 'patron-reincidente', ' · ' + veces[x.clave] + ' intentos'));
+        }
+        tr.appendChild(tdp);
+        tr.appendChild(crear('td', null, x.nota || '-'));
         tbody.appendChild(tr);
       });
       tabla.appendChild(tbody);
-      card.appendChild(tabla);
-      cont.appendChild(card);
-    });
+      cardH.appendChild(tabla);
+      cont.appendChild(cardH);
+    }
 
     if (vacio) vacio.style.display = hubo ? 'none' : 'block';
+  }
+
+  var NOMBRE_PATRON = {
+    sinLlegar: 'Dejó de llegar',
+    diaFijo: 'Tarde el mismo día',
+    corriendose: 'Se está corriendo',
+    erratico: 'Horario errático'
+  };
+
+  // --- Marcar un patrón como atendido -------------------------------------------------------
+
+  function abrirModalPatron(p) {
+    var fondo = crear('div', 'modal-overlay');
+    var caja = crear('div', 'modal-card');
+    caja.style.cssText = 'max-width: 560px; padding: 22px;';
+
+    var titulo = crear('h3', null, 'Marcar como atendido');
+    titulo.style.cssText = 'margin: 0 0 4px 0;';
+    caja.appendChild(titulo);
+
+    var sub = crear('p', 'ayuda', p.cliente + ' · ' + p.reporte + ' · ' + (NOMBRE_PATRON[p.tipo] || p.tipo));
+    sub.style.cssText = 'margin: 0 0 2px 0;';
+    caja.appendChild(sub);
+    var sub2 = crear('p', 'ayuda', p.detalle);
+    sub2.style.cssText = 'margin: 0 0 12px 0;';
+    caja.appendChild(sub2);
+
+    var ayuda = crear('p', 'ayuda',
+      'Esto no da el problema por resuelto: deja constancia de que lo miraste. Si vuelve a pasar, ' +
+      'el patrón reaparece y queda registrado que ya se había intentado.');
+    ayuda.style.cssText = 'margin: 0 0 12px 0;';
+    caja.appendChild(ayuda);
+
+    var ta = crear('textarea');
+    ta.placeholder = 'Qué hiciste o qué averiguaste (opcional)';
+    ta.maxLength = 500;
+    ta.style.cssText = 'width: 100%; min-height: 90px; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-family: inherit; font-size: 14px;';
+    caja.appendChild(ta);
+
+    var acciones = crear('div');
+    acciones.style.cssText = 'display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px;';
+    var cancelar = crear('button', 'btn-secundario', 'Cancelar');
+    var guardar = crear('button', 'btn-primario', 'Marcar atendido');
+    acciones.appendChild(cancelar);
+    acciones.appendChild(guardar);
+    caja.appendChild(acciones);
+
+    var cerrar = function() { if (fondo.parentNode) document.body.removeChild(fondo); };
+    cancelar.addEventListener('click', cerrar);
+    fondo.addEventListener('click', function(e) { if (e.target === fondo) cerrar(); });
+
+    guardar.addEventListener('click', function() {
+      ocupar(guardar, 'Guardando...');
+      google.script.run
+        .withSuccessHandler(function(r) {
+          cerrar();
+          if (r && r.atendidos) llegadasGlobal.atendidos = r.atendidos;
+          pintarLlegadas();
+        })
+        .withFailureHandler(function(err) {
+          liberar(guardar);
+          var aviso = document.getElementById('avisoLlegadas');
+          if (aviso) mostrarAviso(aviso, 'error', 'No se pudo guardar: ' + err.message);
+        })
+        .webapp_marcarPatronAtendido({
+          tipo: p.tipo, remitente: p.remitente, reporte: p.reporte, cliente: p.cliente,
+          // Se guarda hasta qué evidencia vale la marca. Sin esto no habría forma de saber si
+          // lo que aparece después es el mismo problema o uno nuevo.
+          evidenciaHasta: p.evidencia || '',
+          nota: ta.value
+        });
+    });
+
+    fondo.appendChild(caja);
+    document.body.appendChild(fondo);
+    ta.focus();
   }
 
   // --- Pintado general --------------------------------------------------------------------
@@ -3103,13 +3326,13 @@
     if (forzar && btn) ocupar(btn, 'Buscando correos nuevos...');
     google.script.run
       .withSuccessHandler(function(r) {
-        if (btn) ocupar(btn, null);
+        if (btn) liberar(btn);
         llegadasGlobal = r;
         llenarFiltrosLlegadas();
         pintarLlegadas();
       })
       .withFailureHandler(function(err) {
-        if (btn) ocupar(btn, null);
+        if (btn) liberar(btn);
         if (aviso) mostrarAviso(aviso, 'error', 'No se pudieron traer las llegadas: ' + err.message);
       })
       .webapp_obtenerLlegadasReportes(f.dias, !!forzar);
