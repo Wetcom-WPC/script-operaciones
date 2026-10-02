@@ -32,9 +32,8 @@ const LLEGADAS_HORA_LIMITE_MIN = 8 * 60 + 30;   // 08:30
 const LLEGADAS_ASUNTOS_POR_CONSULTA = 8;
 const LLEGADAS_HILOS_POR_CONSULTA = 450;
 
-// Días que se miran hacia atrás cuando la pestaña ya tiene datos. Alcanza con cubrir un fin de
-// semana largo: lo anterior ya está registrado.
-const LLEGADAS_DIAS_AL_DIA = 4;
+// Tope de días hacia atrás cuando hubo un hueco (nadie abrió el dashboard en varios días).
+const LLEGADAS_DIAS_MAX = 10;
 
 /**
  * El sistema que mandó el reporte, deducido del remitente.
@@ -139,13 +138,16 @@ function llegadasRegistrar(dias, segundosMax) {
   if (!dias) {
     const ultima = llegadasUltimaFechaRegistrada();
     if (!ultima) {
-      Logger.log("[Llegadas] La pestaña está vacía. Se miran " + LLEGADAS_DIAS_AL_DIA +
-        " días; para cargar historial usar manual_cargarHistorialDeLlegadas().");
-      dias = LLEGADAS_DIAS_AL_DIA;
+      // Primera corrida: se mira SOLO el día de hoy. No se reconstruye historial hacia atrás a
+      // propósito. La búsqueda de Gmail devuelve lo más reciente primero y se trunca sin avisar,
+      // así que los días viejos quedarían a medias y no habría forma de distinguir "no llegó" de
+      // "no lo miré". El historial arranca el día que esto corre por primera vez.
+      Logger.log("[Llegadas] Primera corrida: se registra desde hoy en adelante.");
+      dias = 1;
     } else {
       const diasDesde = Math.ceil((Date.now() - new Date(ultima + "T00:00:00").getTime()) / 86400000);
       // Siempre se re-mira el último día registrado: puede haber llegado algo después del corte.
-      dias = Math.max(1, Math.min(diasDesde + 1, 30));
+      dias = Math.max(1, Math.min(diasDesde + 1, LLEGADAS_DIAS_MAX));
     }
   }
 

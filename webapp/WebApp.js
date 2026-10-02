@@ -2285,3 +2285,94 @@ function webapp_enviarResumenHorariosSlack(datos) {
   Logger.log('[WebApp] Resumen de horarios enviado a Slack por ' + usuario + '.');
   return { ok: true };
 }
+
+// =================================================================
+// LLEGADA DE REPORTES: a qué hora llega lo que mandan los vRO / vROps de los clientes
+// =================================================================
+
+const WEBAPP_CACHE_LLEGADAS_SEGUNDOS = 900;  // 15 minutos
+
+/**
+ * Lo registrado en "Llegada de Reportes", para el gráfico de puntualidad.
+ *
+ * Cuando el usuario aprieta "Actualizar" (forzar) aprovecha y registra lo que haya llegado
+ * desde la última vez. Así el registro se mantiene al día sin un activador nuevo: si nadie
+ * abre el dashboard por tres días, la próxima vez mira esos tres días y se pone al día solo.
+ *
+ * El historial arranca la primera vez que esto corre. No se reconstruye hacia atrás: la
+ * búsqueda de Gmail devuelve lo más reciente primero y se trunca sin avisar, así que los días
+ * viejos quedarían a medias y un "no llegó" podría ser en realidad "no lo miré".
+ *
+ * Lo que NUNCA llega no sale de acá, porque no deja ninguna fila: eso lo aporta
+ * "Logs Reportes Faltantes", que compara contra los reportes esperados del Índice.
+ */
+function webapp_obtenerLlegadasReportes(dias, forzar) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirAutorizacion(usuario);
+
+  const cuantos = Math.min(Math.max(Number(dias) || 30, 1), 180);
+  const cacheKey = 'webapp_llegadas_v1_' + cuantos;
+  const cache = CacheService.getScriptCache();
+  if (!forzar) {
+    const guardado = cache.get(cacheKey);
+    if (guardado) {
+      try { return JSON.parse(guardado); } catch (e) {}
+    }
+  }
+
+  const resultado = {
+    calculadoA: Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'dd/MM HH:mm'),
+    limiteMinutos: LLEGADAS_HORA_LIMITE_MIN,
+    registroDesde: null,
+    aviso: null,
+    llegadas: [],
+    faltantes: []
+  };
+
+  if (forzar) {
+    try {
+      const r = llegadasRegistrar();
+      if (r.truncadas) {
+        resultado.aviso = 'La búsqueda de correos llegó al tope: puede faltar registrar algún día viejo.';
+      }
+    } catch (e) {
+      // Que falle el registro no puede dejar sin datos a quien ya los tenía guardados.
+      Logger.log('[WebApp] No se pudieron registrar las llegadas nuevas: ' + e.message);
+      resultado.aviso = 'No se pudieron registrar las llegadas de hoy: ' + e.message;
+    }
+  }
+
+  const desde = Utilities.formatDate(new Date(Date.now() - cuantos * 86400000), HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
+  try {
+    resultado.llegadas = llegadasLeer(desde);
+  } catch (e) {
+    resultado.aviso = 'No se pudo leer el registro de llegadas: ' + e.message;
+    return resultado;
+  }
+  if (resultado.llegadas.length) {
+    resultado.registroDesde = resultado.llegadas.map(function (l) { return l.fecha; }).sort()[0];
+  }
+
+  // Los que NO llegaron salen de la auditoría diaria, que es la única que sabe qué se esperaba.
+  try {
+    const logs = webapp_obtenerLogs();
+    (logs.reportesFaltantes || []).forEach(function (f) {
+      const partes = String(f.fecha || '').split('/');   // dd/MM/yyyy
+      if (partes.length !== 3) return;
+      const iso = partes[2] + '-' + partes[1] + '-' + partes[0];
+      if (iso < desde) return;
+      resultado.faltantes.push({
+        fecha: iso, cliente: f.cliente || '', reporte: f.operacion || '',
+        pod: f.pod || '', tecnologia: f.tecnologia || ''
+      });
+    });
+  } catch (e) {
+    Logger.log('[WebApp] No se pudieron leer los reportes faltantes: ' + e.message);
+  }
+
+  try {
+    const serializado = JSON.stringify(resultado);
+    if (serializado.length < 90000) cache.put(cacheKey, serializado, WEBAPP_CACHE_LLEGADAS_SEGUNDOS);
+  } catch (e) {}
+  return resultado;
+}
