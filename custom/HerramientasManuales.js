@@ -1901,7 +1901,7 @@ function manual_simularTicketMalware() {
 
 // Cuantos dias hacia atras mirar. Con 7 alcanza para ver un patron y entra comodo en el
 // limite de 6 minutos de Apps Script.
-let MANUAL_PUNTUALIDAD_DIAS = 7;
+let MANUAL_PUNTUALIDAD_DIAS = 5;
 
 // A partir de esta hora un reporte se considera tarde. Es el acuerdo con el equipo: todos los
 // reportes tienen que llegar automaticamente antes de las 8:30.
@@ -1914,6 +1914,11 @@ const PUNTUALIDAD_ASUNTOS_POR_CONSULTA = 8;
 // Margen para cortar antes de que Apps Script mate la ejecucion a los 6 minutos. Cortar por
 // las nuestras deja un resultado parcial util; que nos corte Google deja la nada.
 const PUNTUALIDAD_SEGUNDOS_MAX = 260;
+
+// Tope de hilos por consulta. Gmail devuelve lo mas reciente primero: si una consulta llega al
+// tope, los dias mas viejos quedan afuera y se verian como "no llego" cuando en realidad no se
+// miraron. Por eso cuando pasa se avisa fuerte, en vez de devolver un faltante inventado.
+const PUNTUALIDAD_HILOS_POR_CONSULTA = 450;
 
 /**
  * A que hora llego cada reporte de cada cliente, dia por dia. Solo lee Gmail.
@@ -1945,6 +1950,7 @@ function manual_medirPuntualidadDeReportes() {
   const diasVistos = {};
   let mensajes = 0;
   let cortadoPorTiempo = false;
+  let gruposTruncados = 0;
 
   for (let i = 0; i < asuntos.length; i += PUNTUALIDAD_ASUNTOS_POR_CONSULTA) {
     if ((Date.now() - comenzoEn) / 1000 > PUNTUALIDAD_SEGUNDOS_MAX) {
@@ -1958,7 +1964,7 @@ function manual_medirPuntualidadDeReportes() {
 
     let hilos;
     try {
-      hilos = GmailApp.search(consulta, 0, 300);
+      hilos = GmailApp.search(consulta, 0, PUNTUALIDAD_HILOS_POR_CONSULTA);
     } catch (e) {
       Logger.log("No se pudo buscar el grupo " + (i / PUNTUALIDAD_ASUNTOS_POR_CONSULTA + 1) + ": " + e.message);
       continue;
@@ -1966,7 +1972,10 @@ function manual_medirPuntualidadDeReportes() {
     // getMessagesForThreads trae los mensajes de TODOS los hilos de una, en vez de una llamada
     // por hilo. Es la diferencia entre entrar en los 6 minutos y no entrar.
     const porHilo = GmailApp.getMessagesForThreads(hilos);
-    Logger.log("   grupo " + (i / PUNTUALIDAD_ASUNTOS_POR_CONSULTA + 1) + ": " + hilos.length + " hilo(s)");
+    const truncado = hilos.length >= PUNTUALIDAD_HILOS_POR_CONSULTA;
+    if (truncado) gruposTruncados++;
+    Logger.log("   grupo " + (i / PUNTUALIDAD_ASUNTOS_POR_CONSULTA + 1) + ": " + hilos.length + " hilo(s)" +
+      (truncado ? "  ⚠️ LLEGO AL TOPE: de este grupo faltan los dias mas viejos" : ""));
 
     porHilo.forEach(function (mensajesDelHilo) {
       mensajesDelHilo.forEach(function (m) {
@@ -2029,5 +2038,12 @@ function manual_medirPuntualidadDeReportes() {
   if (faltantes.length > 25) Logger.log("   ... y " + (faltantes.length - 25) + " mas");
 
   Logger.log("\nOjo: los dias incluyen sabados y domingos, en los que varios reportes no se esperan.");
+  if (gruposTruncados > 0) {
+    Logger.log("\n⚠️⚠️ " + gruposTruncados + " consulta(s) llegaron al tope de " + PUNTUALIDAD_HILOS_POR_CONSULTA +
+      " hilos. Gmail devuelve lo mas reciente primero, asi que en esos grupos LOS DIAS MAS VIEJOS NO SE" +
+      " MIRARON y aparecen como si no hubiera llegado nada.\n" +
+      "   NO tomar esos '--' como faltantes. Bajar MANUAL_PUNTUALIDAD_DIAS y volver a correr.\n" +
+      "   Los que figuran como TARDIOS si son confiables: un correo que aparece, existe.");
+  }
   if (cortadoPorTiempo) Logger.log("⚠️ RESULTADO PARCIAL: bajar MANUAL_PUNTUALIDAD_DIAS y volver a correr.");
 }
