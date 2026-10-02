@@ -36,6 +36,7 @@
         <button class="nav-btn active" data-seccion="seccion-inicio">Inicio y Bandeja</button>
         <button class="nav-btn" data-seccion="seccion-operaciones">📊 Cumplimiento de Envíos</button>
         <button class="nav-btn" data-seccion="seccion-indice">Control de Envíos</button>
+        <button class="nav-btn" data-seccion="seccion-llegadas">📥 Llegada de Reportes</button>
         <button class="nav-btn" data-seccion="seccion-logs">Logs del Sistema</button>
         <button class="nav-btn" data-seccion="seccion-jira">Tickets Jira</button>
         <button class="nav-btn" data-seccion="seccion-reportes">Reportes Analíticos</button>
@@ -283,6 +284,131 @@
       </section>
 
       <!-- 3. Logs del Sistema ----------------------------------------------------------- -->
+      <!-- ============ LLEGADA DE REPORTES ============
+           A qué hora llega lo que mandan los vRO / vROps / Veeam ONE de los clientes.
+           Dos sub-pestañas: los datos, y los patrones que se deducen de ellos. -->
+      <section id="seccion-llegadas" class="tarjeta vista-seccion">
+        <header>
+          <div>
+            <h2>Llegada de Reportes</h2>
+            <p class="ayuda">
+              A qué hora llega cada reporte de los clientes. Lo que importa no es que llegue en hora,
+              sino lo que llega <strong>tarde</strong> y, sobre todo, lo que <strong>no llega</strong>.
+            </p>
+          </div>
+          <button id="btnActualizarLlegadas" class="btn-primario">Actualizar</button>
+        </header>
+
+        <div class="tabs-container" role="tablist" aria-label="Subpestañas de llegada de reportes" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
+          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-llegadas="datos">Datos</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab-llegadas="patrones">Patrones</button>
+        </div>
+
+        <div class="filter-toolbar" style="margin-bottom: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <select id="filtroDiasLlegadas" class="select-control" aria-label="Período">
+            <option value="7">Últimos 7 días</option>
+            <option value="30" selected>Últimos 30 días</option>
+            <option value="90">Últimos 90 días</option>
+          </select>
+          <select id="filtroClienteLlegadas" class="select-control" aria-label="Filtrar por cliente">
+            <option value="">Todos los clientes</option>
+          </select>
+          <select id="filtroPodLlegadas" class="select-control" aria-label="Filtrar por POD">
+            <option value="">Todos los PODs</option>
+          </select>
+          <select id="filtroReporteLlegadas" class="select-control" aria-label="Filtrar por reporte">
+            <option value="">Todos los reportes</option>
+          </select>
+          <select id="filtroOrigenLlegadas" class="select-control" aria-label="Filtrar por origen">
+            <option value="">Todos los orígenes</option>
+          </select>
+          <select id="filtroDiaSemanaLlegadas" class="select-control" aria-label="Filtrar por día de la semana">
+            <option value="">Todos los días</option>
+            <option value="1">Lunes</option>
+            <option value="2">Martes</option>
+            <option value="3">Miércoles</option>
+            <option value="4">Jueves</option>
+            <option value="5">Viernes</option>
+          </select>
+          <label class="check-inline" style="display: flex; align-items: center; gap: 6px; font-size: 13px;">
+            <input type="checkbox" id="filtroSoloTardeLlegadas"> Solo los que llegaron tarde
+          </label>
+        </div>
+
+        <div class="aviso" id="avisoLlegadas" hidden></div>
+        <p id="llegadasDesde" class="ayuda" style="margin: 0 0 12px 0;"></p>
+
+        <!-- ---------- Sub-pestaña: Datos ---------- -->
+        <div id="panelLlegadasDatos">
+          <div class="scorecard-grid" style="margin-bottom: 20px;">
+            <div class="scorecard-card">
+              <span class="scorecard-label">Reportes recibidos</span>
+              <div id="scLlegadasTotal" class="scorecard-value">-</div>
+            </div>
+            <div class="scorecard-card" id="scLlegadasTardeCard">
+              <span class="scorecard-label">Llegaron después de las 08:30</span>
+              <div id="scLlegadasTarde" class="scorecard-value">-</div>
+            </div>
+            <div class="scorecard-card">
+              <span class="scorecard-label">Hora promedio de llegada</span>
+              <div id="scLlegadasPromedio" class="scorecard-value">-</div>
+            </div>
+            <div class="scorecard-card" id="scLlegadasFaltantesCard">
+              <span class="scorecard-label">Reportes que no llegaron</span>
+              <div id="scLlegadasFaltantes" class="scorecard-value">-</div>
+            </div>
+          </div>
+
+          <div class="chart-card" style="margin-bottom: 20px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px;">
+            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px;">
+              <h3 id="tituloChartLlegadas" style="margin: 0; font-size: 16px;">Evolución de la hora de llegada</h3>
+              <select id="agrupacionChartLlegadas" class="select-control" aria-label="Agrupar el gráfico por" style="margin-left: auto;">
+                <option value="origen" selected>Una línea por origen</option>
+                <option value="cliente">Una línea por cliente</option>
+                <option value="reporte">Una línea por reporte</option>
+              </select>
+            </div>
+            <div id="chart_llegadas_div" style="width: 100%; height: 300px;"></div>
+          </div>
+
+          <div class="matriz-container" style="overflow-x: auto;">
+            <table class="matriz-table tabla-logs" id="tablaLlegadas" style="width: 100%; border-collapse: collapse;">
+              <thead>
+                <tr>
+                  <th class="th-cliente">Cliente</th>
+                  <th>POD</th>
+                  <th>Reporte</th>
+                  <th>Origen</th>
+                  <th>Hora promedio</th>
+                  <th>Días tarde</th>
+                  <th>Última llegada</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyLlegadas"></tbody>
+            </table>
+          </div>
+          <p id="llegadasVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">
+            Todavía no hay llegadas registradas para estos filtros. El registro arranca la primera vez
+            que se aprieta Actualizar y se va acumulando día a día.
+          </p>
+        </div>
+
+        <!-- ---------- Sub-pestaña: Patrones ---------- -->
+        <div id="panelLlegadasPatrones" style="display: none;">
+          <p class="ayuda" style="margin: 0 0 16px 0;">
+            Lo que se repite, que es lo que conviene mirar antes de que se rompa del todo.
+            Cada patrón se calcula por <strong>casilla remitente</strong> y reporte, no por cliente:
+            varios clientes mandan desde varias casillas (ASSIST CARD tiene cuatro), y promediarlas
+            taparía un sitio caído detrás de los que andan bien.
+          </p>
+          <div id="patronesLlegadas"></div>
+          <p id="patronesVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">
+            No se detectó ningún patrón con los datos que hay. Hacen falta varios días de registro
+            para que esto tenga algo que decir.
+          </p>
+        </div>
+      </section>
+
       <section id="seccion-logs" class="tarjeta vista-seccion">
         <header>
           <div>

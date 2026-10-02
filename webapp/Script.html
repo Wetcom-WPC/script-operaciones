@@ -2158,6 +2158,10 @@
       cargarLogs();
     } else if (targetId === 'seccion-indice' && !datosIndiceGlobal) {
       cargarEstadoIndice();
+    } else if (targetId === 'seccion-llegadas' && !llegadasGlobal) {
+      // Al entrar solo se LEE lo registrado. Buscar correos nuevos tarda minutos, así que eso
+      // pasa únicamente cuando el usuario aprieta Actualizar.
+      inicializarLlegadas();
     }
   }
 
@@ -2702,5 +2706,448 @@
       finDeSemana: finDeSemana
     };
   }
+
+  // =================================================================
+  // LLEGADA DE REPORTES
+  // A qué hora llega lo que mandan los vRO / vROps / Veeam ONE de los clientes.
+  // =================================================================
+
+  var llegadasGlobal = null;
+  var llegadasTabActiva = 'datos';
+
+  var COLORES_ORIGEN = { 'vRO': '#2E86C1', 'vROps': '#7D3C98', 'Veeam ONE': '#1E8449', 'Otro': '#8A9891' };
+  var NOMBRE_DIA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+
+  function minutosAHora(min) {
+    var t = Math.round(min);
+    var h = Math.floor(t / 60);
+    var m = t % 60;
+    return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+  }
+
+  function leerFiltrosLlegadas() {
+    var v = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
+    return {
+      dias: parseInt(v('filtroDiasLlegadas'), 10) || 30,
+      cliente: v('filtroClienteLlegadas'),
+      pod: v('filtroPodLlegadas'),
+      reporte: v('filtroReporteLlegadas'),
+      origen: v('filtroOrigenLlegadas'),
+      diaSemana: v('filtroDiaSemanaLlegadas'),
+      soloTarde: !!(document.getElementById('filtroSoloTardeLlegadas') || {}).checked
+    };
+  }
+
+  function filtrarLlegadas(f) {
+    if (!llegadasGlobal) return [];
+    return (llegadasGlobal.llegadas || []).filter(function(l) {
+      if (f.cliente && l.cliente !== f.cliente) return false;
+      if (f.pod && l.pod !== f.pod) return false;
+      if (f.reporte && l.reporte !== f.reporte) return false;
+      if (f.origen && l.origen !== f.origen) return false;
+      if (f.diaSemana && String(l.diaSemana) !== f.diaSemana) return false;
+      if (f.soloTarde && !l.tarde) return false;
+      return true;
+    });
+  }
+
+  // Los faltantes vienen de otra fuente (la auditoría diaria), así que solo se pueden filtrar
+  // por lo que esa fuente conoce: cliente y reporte.
+  function filtrarFaltantes(f) {
+    if (!llegadasGlobal) return [];
+    return (llegadasGlobal.faltantes || []).filter(function(x) {
+      if (f.cliente && x.cliente.indexOf(f.cliente) === -1) return false;
+      if (f.reporte && x.reporte !== f.reporte) return false;
+      return true;
+    });
+  }
+
+  /** Una fila por casilla remitente + reporte: es la unidad en la que algo se rompe. */
+  function agruparLlegadas(llegadas) {
+    var porClave = {};
+    llegadas.forEach(function(l) {
+      var clave = l.remitente + '|' + l.reporte;
+      if (!porClave[clave]) {
+        porClave[clave] = {
+          clave: clave, remitente: l.remitente, cliente: l.cliente, pod: l.pod,
+          reporte: l.reporte, origen: l.origen,
+          minutos: [], dias: {}, tarde: 0, ultima: ''
+        };
+      }
+      var g = porClave[clave];
+      // Si un reporte llega dos veces el mismo día vale el PRIMERO: es cuando el cliente
+      // cumplió. Un reenvío posterior no lo vuelve tardío.
+      if (g.dias[l.fecha] === undefined || l.minutos < g.dias[l.fecha]) g.dias[l.fecha] = l.minutos;
+      if (l.fecha > g.ultima) g.ultima = l.fecha;
+    });
+    return Object.keys(porClave).map(function(k) {
+      var g = porClave[k];
+      var valores = Object.keys(g.dias).map(function(d) { return g.dias[d]; });
+      g.minutos = valores;
+      g.promedio = valores.reduce(function(a, b) { return a + b; }, 0) / valores.length;
+      g.tarde = valores.filter(function(m) { return m > llegadasGlobal.limiteMinutos; }).length;
+      g.total = valores.length;
+      return g;
+    });
+  }
+
+  /** Promedio por día, para el gráfico. Una línea por lo que se haya elegido agrupar. */
+  function serieLlegadas(llegadas, agrupacion) {
+    var porDia = {};
+    var lineas = {};
+    llegadas.forEach(function(l) {
+      var linea = agrupacion === 'cliente' ? l.cliente : (agrupacion === 'reporte' ? l.reporte : l.origen);
+      lineas[linea] = true;
+      if (!porDia[l.fecha]) porDia[l.fecha] = {};
+      if (!porDia[l.fecha][linea]) porDia[l.fecha][linea] = [];
+      porDia[l.fecha][linea].push(l.minutos);
+    });
+    // Con una línea por cliente o por reporte pueden salir 30 y el gráfico se vuelve ilegible:
+    // se muestran las que más datos tienen y el resto queda en la tabla de abajo.
+    var nombres = Object.keys(lineas);
+    if (nombres.length > 8) {
+      var peso = {};
+      llegadas.forEach(function(l) {
+        var k = agrupacion === 'cliente' ? l.cliente : (agrupacion === 'reporte' ? l.reporte : l.origen);
+        peso[k] = (peso[k] || 0) + 1;
+      });
+      nombres = nombres.sort(function(a, b) { return peso[b] - peso[a]; }).slice(0, 8);
+    }
+    var puntos = Object.keys(porDia).sort().map(function(d) {
+      var prom = {};
+      nombres.forEach(function(n) {
+        var vs = porDia[d][n];
+        if (vs && vs.length) prom[n] = vs.reduce(function(a, b) { return a + b; }, 0) / vs.length;
+      });
+      return { etiqueta: d.substring(8) + '/' + d.substring(5, 7), prom: prom };
+    });
+    return { lineas: nombres, puntos: puntos, recortado: Object.keys(lineas).length > nombres.length };
+  }
+
+  function dibujarChartLlegadas(serie) {
+    var div = document.getElementById('chart_llegadas_div');
+    if (!div) return;
+    if (typeof google === 'undefined' || !google.visualization || !google.visualization.LineChart) {
+      div.textContent = 'No se pudo cargar la librería de gráficos.';
+      return;
+    }
+    if (!serie.puntos.length) { div.innerHTML = ''; return; }
+
+    var aHoraDelDia = function(min) {
+      var t = Math.round(min);
+      return [Math.floor(t / 60), t % 60, 0];
+    };
+    var dt = new google.visualization.DataTable();
+    dt.addColumn('string', 'Día');
+    serie.lineas.forEach(function(n) { dt.addColumn('timeofday', n); });
+    dt.addColumn('timeofday', 'Límite 08:30');
+    serie.puntos.forEach(function(p) {
+      // Un día sin llegada queda vacío (null), no en cero: un cero sería "llegó a las 00:00"
+      // y arrastraría la línea hasta abajo.
+      var fila = [p.etiqueta];
+      serie.lineas.forEach(function(n) { fila.push(p.prom[n] !== undefined ? aHoraDelDia(p.prom[n]) : null); });
+      fila.push(aHoraDelDia(llegadasGlobal.limiteMinutos));
+      dt.addRow(fila);
+    });
+
+    var paleta = ['#2E86C1', '#7D3C98', '#1E8449', '#D68910', '#CB4335', '#17A589', '#5D6D7E', '#AF7AC5'];
+    var colores = serie.lineas.map(function(n, i) { return COLORES_ORIGEN[n] || paleta[i % paleta.length]; }).concat(['#C0392B']);
+    var series = {};
+    series[serie.lineas.length] = { lineDashStyle: [6, 4], pointSize: 0, enableInteractivity: false };
+
+    new google.visualization.LineChart(div).draw(dt, {
+      colors: colores,
+      series: series,
+      interpolateNulls: true,
+      pointSize: 5,
+      legend: { position: 'top' },
+      chartArea: { width: '85%', height: '68%' },
+      vAxis: { format: 'HH:mm' }
+    });
+  }
+
+  // --- Patrones ---------------------------------------------------------------------------
+  // Cada uno responde una pregunta distinta y por eso no se mezclan en un solo puntaje: lo que
+  // hay que hacer con "llega tarde todos los miércoles" no es lo mismo que con "dejó de llegar".
+
+  function patronesLlegadas(grupos, llegadas) {
+    var hoy = new Date();
+    var patrones = { diaFijo: [], corriendose: [], sinLlegar: [], erratico: [] };
+
+    // 1. Tarde siempre el mismo día de la semana.
+    grupos.forEach(function(g) {
+      var porDiaSemana = {};
+      llegadas.filter(function(l) { return l.remitente === g.remitente && l.reporte === g.reporte; })
+        .forEach(function(l) {
+          if (!porDiaSemana[l.diaSemana]) porDiaSemana[l.diaSemana] = { total: 0, tarde: 0 };
+          porDiaSemana[l.diaSemana].total++;
+          if (l.tarde) porDiaSemana[l.diaSemana].tarde++;
+        });
+      Object.keys(porDiaSemana).forEach(function(d) {
+        var x = porDiaSemana[d];
+        // Al menos 2 ocurrencias y que falle en todas: con una sola vez no hay patrón, es un día malo.
+        if (x.total >= 2 && x.tarde === x.total) {
+          patrones.diaFijo.push({
+            cliente: g.cliente, pod: g.pod, reporte: g.reporte, remitente: g.remitente,
+            detalle: 'Llegó tarde los ' + NOMBRE_DIA[d] + ' las ' + x.total + ' veces que se midió'
+          });
+        }
+      });
+    });
+
+    // 2. Se está corriendo: la mitad más nueva contra la mitad más vieja.
+    grupos.forEach(function(g) {
+      var fechas = Object.keys(g.dias).sort();
+      if (fechas.length < 4) return;
+      var corte = Math.floor(fechas.length / 2);
+      var prom = function(desde, hasta) {
+        var vs = fechas.slice(desde, hasta).map(function(d) { return g.dias[d]; });
+        return vs.reduce(function(a, b) { return a + b; }, 0) / vs.length;
+      };
+      var antes = prom(0, corte);
+      var ahora = prom(corte, fechas.length);
+      var deriva = Math.round(ahora - antes);
+      // 20 minutos: por debajo de eso es el ruido normal de un cron que no arranca clavado.
+      if (deriva >= 20) {
+        patrones.corriendose.push({
+          cliente: g.cliente, pod: g.pod, reporte: g.reporte, remitente: g.remitente,
+          detalle: 'Se corrió ' + deriva + ' min: pasó de llegar ' + minutosAHora(antes) +
+            ' a ' + minutosAHora(ahora)
+        });
+      }
+    });
+
+    // 3. Dejó de llegar: la deducción que no necesita que nadie declare nada. Si algo venía
+    //    llegando y hace días que no, es un faltante aunque no esté en ninguna lista.
+    grupos.forEach(function(g) {
+      if (g.total < 3) return;   // sin historia suficiente no se puede afirmar que "venía llegando"
+      var dias = Math.floor((hoy - new Date(g.ultima + 'T12:00:00')) / 86400000);
+      if (dias >= 2) {
+        patrones.sinLlegar.push({
+          cliente: g.cliente, pod: g.pod, reporte: g.reporte, remitente: g.remitente,
+          detalle: 'Última llegada hace ' + dias + ' días (' + g.ultima + '), y antes venía llegando ' +
+            g.total + ' veces'
+        });
+      }
+    });
+
+    // 4. Errático: el promedio puede dar bien y aun así el horario saltar de 6 a 10.
+    grupos.forEach(function(g) {
+      if (g.total < 4) return;
+      var media = g.promedio;
+      var varianza = g.minutos.reduce(function(a, m) { return a + (m - media) * (m - media); }, 0) / g.minutos.length;
+      var desvio = Math.round(Math.sqrt(varianza));
+      if (desvio >= 60) {
+        patrones.erratico.push({
+          cliente: g.cliente, pod: g.pod, reporte: g.reporte, remitente: g.remitente,
+          detalle: 'Varía ±' + desvio + ' min entre días (de ' + minutosAHora(Math.min.apply(null, g.minutos)) +
+            ' a ' + minutosAHora(Math.max.apply(null, g.minutos)) + ')'
+        });
+      }
+    });
+
+    return patrones;
+  }
+
+  function pintarPatrones(patrones) {
+    var cont = document.getElementById('patronesLlegadas');
+    var vacio = document.getElementById('patronesVacio');
+    if (!cont) return;
+    cont.innerHTML = '';
+
+    var bloques = [
+      { clave: 'sinLlegar', titulo: '🔴 Dejaron de llegar', ayuda: 'Venían llegando y hace días que no. Es el más urgente: puede que el reporte ya no se esté generando.' },
+      { clave: 'diaFijo', titulo: '📅 Tarde siempre el mismo día', ayuda: 'Se repite en el mismo día de la semana, así que no es casualidad: algo compite por el recurso ese día.' },
+      { clave: 'corriendose', titulo: '📈 Se están corriendo', ayuda: 'Todavía llegan, pero cada vez más tarde. Es el aviso temprano: conviene mirarlo antes de que cruce el límite.' },
+      { clave: 'erratico', titulo: '🎲 Horario errático', ayuda: 'El promedio puede dar bien y aun así el horario salta mucho de un día a otro.' }
+    ];
+
+    var hubo = false;
+    bloques.forEach(function(b) {
+      var items = patrones[b.clave] || [];
+      if (!items.length) return;
+      hubo = true;
+      var card = crear('div', 'chart-card');
+      card.style.cssText = 'border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px;';
+      card.appendChild(crear('h3', null, b.titulo + ' (' + items.length + ')')).style.cssText = 'margin: 0 0 4px 0; font-size: 16px;';
+      card.appendChild(crear('p', 'ayuda', b.ayuda)).style.cssText = 'margin: 0 0 12px 0;';
+
+      var tabla = crear('table', 'matriz-table tabla-logs');
+      tabla.style.cssText = 'width: 100%; border-collapse: collapse;';
+      var thead = crear('thead');
+      var trh = crear('tr');
+      ['Cliente', 'POD', 'Reporte', 'Qué pasa'].forEach(function(t) { trh.appendChild(crear('th', null, t)); });
+      thead.appendChild(trh);
+      tabla.appendChild(thead);
+      var tbody = crear('tbody');
+      items.forEach(function(it) {
+        var tr = crear('tr');
+        var tdCli = crear('td', null, it.cliente);
+        tdCli.title = it.remitente;   // la casilla exacta, que es donde hay que ir a mirar
+        tr.appendChild(tdCli);
+        tr.appendChild(crear('td', null, it.pod || '-'));
+        tr.appendChild(crear('td', null, it.reporte));
+        tr.appendChild(crear('td', null, it.detalle));
+        tbody.appendChild(tr);
+      });
+      tabla.appendChild(tbody);
+      card.appendChild(tabla);
+      cont.appendChild(card);
+    });
+
+    if (vacio) vacio.style.display = hubo ? 'none' : 'block';
+  }
+
+  // --- Pintado general --------------------------------------------------------------------
+
+  function pintarLlegadas() {
+    if (!llegadasGlobal) return;
+    var f = leerFiltrosLlegadas();
+    var llegadas = filtrarLlegadas(f);
+    var grupos = agruparLlegadas(llegadas);
+    var faltantes = filtrarFaltantes(f);
+
+    var total = llegadas.length;
+    var tarde = llegadas.filter(function(l) { return l.tarde; }).length;
+    var prom = total ? llegadas.reduce(function(a, l) { return a + l.minutos; }, 0) / total : 0;
+
+    var set = function(id, txt) { var el = document.getElementById(id); if (el) el.textContent = txt; };
+    set('scLlegadasTotal', String(total));
+    set('scLlegadasTarde', total ? tarde + ' de ' + total : '-');
+    set('scLlegadasPromedio', total ? minutosAHora(prom) : '-');
+    set('scLlegadasFaltantes', String(faltantes.length));
+
+    var cardTarde = document.getElementById('scLlegadasTardeCard');
+    if (cardTarde) cardTarde.classList.toggle('alerta', tarde > 0);
+    var cardFalta = document.getElementById('scLlegadasFaltantesCard');
+    if (cardFalta) cardFalta.classList.toggle('alerta', faltantes.length > 0);
+
+    var desde = document.getElementById('llegadasDesde');
+    if (desde) {
+      desde.textContent = llegadasGlobal.registroDesde
+        ? 'Registro desde el ' + llegadasGlobal.registroDesde + '. Actualizado ' + llegadasGlobal.calculadoA + '.'
+        : 'Todavía no hay nada registrado. Apretá Actualizar para empezar.';
+    }
+    var aviso = document.getElementById('avisoLlegadas');
+    if (aviso) {
+      if (llegadasGlobal.aviso) mostrarAviso(aviso, 'warn', llegadasGlobal.aviso);
+      else aviso.hidden = true;
+    }
+
+    var agrup = (document.getElementById('agrupacionChartLlegadas') || {}).value || 'origen';
+    var serie = serieLlegadas(llegadas, agrup);
+    dibujarChartLlegadas(serie);
+    var titulo = document.getElementById('tituloChartLlegadas');
+    if (titulo) {
+      titulo.textContent = 'Evolución de la hora de llegada' +
+        (serie.recortado ? ' (las ' + serie.lineas.length + ' con más datos)' : '');
+    }
+
+    var tbody = document.getElementById('tbodyLlegadas');
+    var vacio = document.getElementById('llegadasVacio');
+    if (tbody) {
+      tbody.innerHTML = '';
+      grupos.sort(function(a, b) { return b.tarde - a.tarde || b.promedio - a.promedio; }).forEach(function(g) {
+        var tr = crear('tr');
+        var tdCli = crear('td', null, g.cliente);
+        tdCli.title = g.remitente;
+        tr.appendChild(tdCli);
+        tr.appendChild(crear('td', null, g.pod || '-'));
+        tr.appendChild(crear('td', null, g.reporte));
+        tr.appendChild(crear('td', null, g.origen));
+        var tdProm = crear('td');
+        var pill = crear('span', 'tech-pill ' + (g.promedio > llegadasGlobal.limiteMinutos ? 'status-err' : 'status-ok'),
+          minutosAHora(g.promedio));
+        tdProm.appendChild(pill);
+        tr.appendChild(tdProm);
+        var tdTarde = crear('td', null, g.tarde + ' de ' + g.total);
+        if (g.tarde > 0) tdTarde.style.color = '#C0392B';
+        tr.appendChild(tdTarde);
+        tr.appendChild(crear('td', null, g.ultima));
+        tbody.appendChild(tr);
+      });
+      if (vacio) vacio.style.display = grupos.length ? 'none' : 'block';
+    }
+
+    pintarPatrones(patronesLlegadas(grupos, llegadas));
+  }
+
+  function llenarFiltrosLlegadas() {
+    var llenar = function(id, valores) {
+      var sel = document.getElementById(id);
+      if (!sel) return;
+      var actual = sel.value;
+      while (sel.options.length > 1) sel.remove(1);
+      valores.filter(function(v) { return v; }).sort().forEach(function(v) {
+        var o = document.createElement('option');
+        o.value = v; o.textContent = v;
+        sel.appendChild(o);
+      });
+      sel.value = actual;
+    };
+    var unicos = function(campo) {
+      var s = {};
+      (llegadasGlobal.llegadas || []).forEach(function(l) { if (l[campo]) s[l[campo]] = true; });
+      return Object.keys(s);
+    };
+    llenar('filtroClienteLlegadas', unicos('cliente'));
+    llenar('filtroPodLlegadas', unicos('pod'));
+    llenar('filtroReporteLlegadas', unicos('reporte'));
+    llenar('filtroOrigenLlegadas', unicos('origen'));
+  }
+
+  function cargarLlegadas(forzar) {
+    var btn = document.getElementById('btnActualizarLlegadas');
+    var aviso = document.getElementById('avisoLlegadas');
+    var f = leerFiltrosLlegadas();
+    if (forzar && btn) ocupar(btn, 'Buscando correos nuevos...');
+    google.script.run
+      .withSuccessHandler(function(r) {
+        if (btn) ocupar(btn, null);
+        llegadasGlobal = r;
+        llenarFiltrosLlegadas();
+        pintarLlegadas();
+      })
+      .withFailureHandler(function(err) {
+        if (btn) ocupar(btn, null);
+        if (aviso) mostrarAviso(aviso, 'error', 'No se pudieron traer las llegadas: ' + err.message);
+      })
+      .webapp_obtenerLlegadasReportes(f.dias, !!forzar);
+  }
+
+  function inicializarLlegadas() {
+    var btn = document.getElementById('btnActualizarLlegadas');
+    // Al apretar Actualizar, además de refrescar, se registra lo que haya llegado desde la
+    // última vez: así el historial se mantiene al día sin un activador nuevo.
+    if (btn) btn.addEventListener('click', function() { cargarLlegadas(true); });
+
+    ['filtroClienteLlegadas', 'filtroPodLlegadas', 'filtroReporteLlegadas', 'filtroOrigenLlegadas',
+     'filtroDiaSemanaLlegadas', 'filtroSoloTardeLlegadas', 'agrupacionChartLlegadas'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('change', pintarLlegadas);
+    });
+    // El período cambia cuántos días pide el servidor, así que hay que volver a traer.
+    var selDias = document.getElementById('filtroDiasLlegadas');
+    if (selDias) selDias.addEventListener('change', function() { cargarLlegadas(false); });
+
+    document.querySelectorAll('[data-tab-llegadas]').forEach(function(b) {
+      b.addEventListener('click', function() {
+        llegadasTabActiva = b.getAttribute('data-tab-llegadas');
+        document.querySelectorAll('[data-tab-llegadas]').forEach(function(x) {
+          x.classList.toggle('active', x === b);
+          x.setAttribute('aria-selected', x === b ? 'true' : 'false');
+        });
+        var datos = document.getElementById('panelLlegadasDatos');
+        var patr = document.getElementById('panelLlegadasPatrones');
+        if (datos) datos.style.display = llegadasTabActiva === 'datos' ? '' : 'none';
+        if (patr) patr.style.display = llegadasTabActiva === 'patrones' ? '' : 'none';
+        // El gráfico se dibuja mal si el div estaba oculto: se redibuja al volver.
+        if (llegadasTabActiva === 'datos') pintarLlegadas();
+      });
+    });
+
+    cargarLlegadas(false);
+  }
+
 })();
 </script>
