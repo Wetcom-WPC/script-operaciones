@@ -2101,3 +2101,67 @@ function manual_registrarLlegadasDeReportes() {
     }
   }
 }
+
+/**
+ * Donde estan los remitentes de los clientes, y en que planilla.
+ *
+ * Hay dos Indices distintos y es facil confundirlos:
+ *   - "Indice - General" (WEBAPP_INDICE_SPREADSHEET_ID): el de los envios, con los checkboxes
+ *     R/S/T/U, POD en I, carpeta en J y cliente en L.
+ *   - El Indice Maestro (Script Property MASTER_INDEX_SHEET_ID): remitente en A, cliente en B.
+ *     En Playground esta propiedad apunta a uno de PRUEBA con 3 clientes.
+ *
+ * Esto muestra que hay en cada uno para no volver a adivinar. Solo lee.
+ */
+function manual_diagnosticarIndices() {
+  const mostrar = function (etiqueta, id) {
+    Logger.log("\n=== " + etiqueta + " ===");
+    if (!id) { Logger.log("   (sin ID configurado)"); return; }
+    Logger.log("   ID: " + id);
+    let ss;
+    try { ss = SpreadsheetApp.openById(id); } catch (e) { Logger.log("   No se pudo abrir: " + e.message); return; }
+    Logger.log('   Nombre: "' + ss.getName() + '"');
+    Logger.log("   Pestañas: " + ss.getSheets().map(function (h) { return h.getName(); }).join(", "));
+
+    const hoja = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
+    const filas = hoja.getLastRow();
+    const cols = Math.min(hoja.getLastColumn(), 14);
+    Logger.log('   Hoja "' + hoja.getName() + '": ' + filas + " fila(s), " + hoja.getLastColumn() + " columna(s)");
+    if (filas < 1) return;
+
+    const letra = function (i) { return String.fromCharCode(65 + i); };
+    const encabezados = hoja.getRange(1, 1, 1, cols).getValues()[0];
+    Logger.log("   --- Encabezados ---");
+    encabezados.forEach(function (h, i) { Logger.log("      " + letra(i) + ": " + (h || "(vacia)")); });
+
+    if (filas >= 2) {
+      Logger.log("   --- Primeras filas (recortadas a 45 caracteres) ---");
+      const muestra = hoja.getRange(2, 1, Math.min(3, filas - 1), cols).getValues();
+      muestra.forEach(function (fila, n) {
+        Logger.log("      fila " + (n + 2) + ":");
+        fila.forEach(function (v, i) {
+          const txt = String(v == null ? "" : v).trim();
+          if (txt) Logger.log("         " + letra(i) + ": " + txt.substring(0, 45));
+        });
+      });
+    }
+
+    // Donde aparecen los mails: es lo que hace falta para mapear remitente -> cliente.
+    Logger.log("   --- Columnas que contienen algo con '@' ---");
+    const n = Math.min(filas - 1, 40);
+    if (n > 0) {
+      const datos = hoja.getRange(2, 1, n, cols).getValues();
+      for (let c = 0; c < cols; c++) {
+        const conArroba = datos.filter(function (f) { return String(f[c] || "").indexOf("@") !== -1; });
+        if (conArroba.length) {
+          Logger.log("      " + letra(c) + ": " + conArroba.length + "/" + n + " filas  | ej: " +
+            String(conArroba[0][c]).substring(0, 60));
+        }
+      }
+    }
+  };
+
+  mostrar("Indice - General (el que usa el dashboard)", WEBAPP_INDICE_SPREADSHEET_ID);
+  mostrar("Indice Maestro (Script Property MASTER_INDEX_SHEET_ID)",
+    PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID"));
+}
