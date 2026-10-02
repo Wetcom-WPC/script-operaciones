@@ -548,7 +548,14 @@ class MailProcessor {
     }
     
     const alertCount = finalAlerts.length;
-    const newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
+    let newFileName = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "-FILTRADO.xlsx");
+    // El reemplazo de arriba solo contempla esas cuatro extensiones. Con cualquier otra (un
+    // .log, por ejemplo) no hacía nada, y el adjunto salía con el nombre original aunque el
+    // contenido ya fuera un Excel: Windows le cree a la extensión y el archivo "no se puede
+    // abrir". Pasó con Malware Detection. El nombre tiene que terminar en .xlsx siempre.
+    if (!/\.xlsx$/i.test(newFileName)) {
+      newFileName = newFileName.replace(/\.[^.\\\/]+$/, "") + "-FILTRADO.xlsx";
+    }
     const xlsxBlob = convertDataToXlsxBlob([headers, ...finalAlerts], newFileName);
 
     // convertDataToXlsxBlob() devuelve null si falla (datos mal formados, error de Drive, etc).
