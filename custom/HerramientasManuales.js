@@ -2047,3 +2047,50 @@ function manual_medirPuntualidadDeReportes() {
   }
   if (cortadoPorTiempo) Logger.log("⚠️ RESULTADO PARCIAL: bajar MANUAL_PUNTUALIDAD_DIAS y volver a correr.");
 }
+
+// Cuantos dias hacia atras cargar de una. Mas de 5 hace que la busqueda de Gmail se trunque y
+// los dias mas viejos queden sin registrar, asi que conviene correrla varias veces.
+let MANUAL_LLEGADAS_DIAS = 4;
+
+/**
+ * Carga en la pestaña "Llegada de Reportes" el historial de los ultimos dias.
+ *
+ * Correrla varias veces NO duplica nada: cada correo se identifica por su id de mensaje. Para
+ * cargar mas historial, subir MANUAL_LLEGADAS_DIAS de a poco y volver a correr, mirando que no
+ * avise de consultas truncadas.
+ */
+function manual_cargarHistorialDeLlegadas() {
+  const r = llegadasRegistrar(Number(MANUAL_LLEGADAS_DIAS) || 4);
+  Logger.log("\n=== Resultado ===");
+  Logger.log("Llegadas nuevas registradas: " + r.nuevos);
+  Logger.log("Dias mirados: " + r.dias);
+  if (r.truncadas) {
+    Logger.log("⚠️ " + r.truncadas + " consulta(s) llegaron al tope de Gmail. Los dias mas viejos de" +
+      " esos grupos NO se registraron. Bajar MANUAL_LLEGADAS_DIAS y volver a correr.");
+  }
+  if (r.cortado) Logger.log("⚠️ Se corto por tiempo: volver a correr para completar.");
+
+  const ultima = llegadasUltimaFechaRegistrada();
+  Logger.log("Fecha mas nueva registrada: " + (ultima || "(pestaña vacia)"));
+
+  const filas = llegadasLeer(null);
+  Logger.log("Total acumulado en la pestaña: " + filas.length + " llegada(s)");
+  if (filas.length) {
+    const dias = {};
+    const origenes = {};
+    let tarde = 0;
+    filas.forEach(function (f) {
+      dias[f.fecha] = (dias[f.fecha] || 0) + 1;
+      origenes[f.origen] = (origenes[f.origen] || 0) + 1;
+      if (f.tarde) tarde++;
+    });
+    Logger.log("Por dia: " + Object.keys(dias).sort().map(function (d) { return d + "=" + dias[d]; }).join("  "));
+    Logger.log("Por origen: " + Object.keys(origenes).map(function (o) { return o + "=" + origenes[o]; }).join("  "));
+    Logger.log("Llegaron despues de las 08:30: " + tarde + " de " + filas.length);
+    const sinCliente = filas.filter(function (f) { return f.cliente === f.remitente; }).length;
+    if (sinCliente) {
+      Logger.log("⚠️ " + sinCliente + " llegada(s) cuyo remitente no esta en la columna A del Indice:" +
+        " se muestran con el mail en vez del nombre del cliente.");
+    }
+  }
+}
