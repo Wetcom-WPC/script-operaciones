@@ -1894,3 +1894,123 @@ function manual_simularTicketMalware() {
 
   Logger.log("\nNo se creo ni se comento ningun ticket, y no se envio ningun correo.");
 }
+
+// =================================================================
+// Puntualidad de los reportes que mandan los vRO / vROps de los clientes
+// =================================================================
+
+// Cuantos dias hacia atras mirar.
+let MANUAL_PUNTUALIDAD_DIAS = 14;
+
+// A partir de esta hora un reporte se considera tarde. Es el acuerdo: todos los reportes
+// tienen que llegar automaticamente antes de las 8:30.
+const PUNTUALIDAD_HORA_LIMITE = 8.5;
+
+/**
+ * A que hora llego cada reporte de cada cliente, dia por dia. Solo lee Gmail.
+ *
+ * El dashboard hoy solo sabe de los reportes que FALTARON (pestaña "Logs Reportes Faltantes"):
+ * cuando el reporte llega bien no queda registro de a que hora. Asi no se puede detectar el
+ * caso que importa, que es el reporte que sigue llegando pero cada vez mas tarde, porque el
+ * script del cliente se esta degradando antes de romperse del todo.
+ *
+ * La hora se toma del correo y no del archivo en Drive a proposito: la fecha del archivo es
+ * cuando NOSOTROS lo archivamos, asi que una demora de nuestro ciclo apareceria como un
+ * retraso del cliente.
+ *
+ * Esto mide si los datos alcanzan para construir el grafico. No escribe nada.
+ */
+function manual_medirPuntualidadDeReportes() {
+  const dias = Number(MANUAL_PUNTUALIDAD_DIAS) || 14;
+  const desde = new Date(Date.now() - dias * 86400000);
+  const desdeStr = Utilities.formatDate(desde, HORARIO_OPERATIVO_TZ, "yyyy/MM/dd");
+  const asuntos = obtenerAsuntosConProcessor();
+
+  Logger.log("=== Puntualidad de los ultimos " + dias + " dias (desde " + desdeStr + ") ===");
+  Logger.log(asuntos.length + " tipo(s) de reporte con processor propio.\n");
+
+  // clave "cliente|reporte" -> { dia -> hora }
+  const llegadas = {};
+  const diasVistos = {};
+  let mensajes = 0;
+  let sinCliente = 0;
+
+  asuntos.forEach(function (asunto) {
+    let hilos;
+    try {
+      hilos = GmailApp.search('subject:"' + asunto + '" has:attachment after:' + desdeStr, 0, 200);
+    } catch (e) {
+      Logger.log('No se pudo buscar "' + asunto + '": ' + e.message);
+      return;
+    }
+    hilos.forEach(function (hilo) {
+      hilo.getMessages().forEach(function (m) {
+        if (String(m.getSubject() || "").indexOf(asunto) === -1) return;
+        if (m.getDate() < desde) return;
+        mensajes++;
+
+        const remitente = DriveClientIndexSingleton.emailDeFrom(m.getFrom());
+        let cliente = remitente;
+        try {
+          const entrada = DriveClientIndexSingleton.resolverPorRemitente(m.getFrom());
+          if (entrada && entrada.nombreCliente) cliente = entrada.nombreCliente;
+          else sinCliente++;
+        } catch (e) { sinCliente++; }
+
+        const dia = Utilities.formatDate(m.getDate(), HORARIO_OPERATIVO_TZ, "yyyy-MM-dd");
+        const hora = Utilities.formatDate(m.getDate(), HORARIO_OPERATIVO_TZ, "HH:mm");
+        diasVistos[dia] = true;
+
+        const clave = cliente + " | " + asunto;
+        if (!llegadas[clave]) llegadas[clave] = {};
+        // Si el mismo reporte llega dos veces el mismo dia, vale el PRIMERO: es cuando el
+        // cliente cumplio. Un reenvio posterior no lo vuelve tardio.
+        if (!llegadas[clave][dia] || hora < llegadas[clave][dia]) llegadas[clave][dia] = hora;
+      });
+    });
+  });
+
+  const claves = Object.keys(llegadas).sort();
+  const diasOrdenados = Object.keys(diasVistos).sort();
+  Logger.log(mensajes + " correo(s) | " + claves.length + " combinacion(es) cliente+reporte | " +
+    diasOrdenados.length + " dia(s) con datos");
+  if (sinCliente > 0) {
+    Logger.log("⚠️ " + sinCliente + " correo(s) cuyo remitente no se pudo mapear a un cliente del Índice. " +
+      "En Playground es esperable: el Índice de las Script Properties es el de prueba.");
+  }
+
+  Logger.log("\n=== HORA DE LLEGADA POR DIA (vacio = no llego) ===");
+  Logger.log("Limite acordado: 08:30. Un '!' marca que llego despues.\n");
+  Logger.log("Dias: " + diasOrdenados.join("  "));
+
+  const tardios = [];
+  const faltantes = [];
+  claves.forEach(function (clave) {
+    const porDia = llegadas[clave];
+    const celdas = diasOrdenados.map(function (d) {
+      const h = porDia[d];
+      if (!h) return "  --  ";
+      const partes = h.split(":");
+      const decimal = Number(partes[0]) + Number(partes[1]) / 60;
+      return (decimal > PUNTUALIDAD_HORA_LIMITE ? "!" : " ") + h + " ";
+    });
+    Logger.log(clave + "\n   " + celdas.join("|"));
+
+    const llegadasTarde = diasOrdenados.filter(function (d) {
+      const h = porDia[d];
+      if (!h) return false;
+      const p = h.split(":");
+      return Number(p[0]) + Number(p[1]) / 60 > PUNTUALIDAD_HORA_LIMITE;
+    }).length;
+    const diasSin = diasOrdenados.filter(function (d) { return !porDia[d]; }).length;
+    if (llegadasTarde > 0) tardios.push(clave + ": " + llegadasTarde + " de " + diasOrdenados.length + " dias tarde");
+    if (diasSin > 0) faltantes.push(clave + ": sin llegar " + diasSin + " de " + diasOrdenados.length + " dias");
+  });
+
+  Logger.log("\n=== LLEGAN TARDE ===");
+  tardios.length ? tardios.forEach(function (l) { Logger.log("   " + l); }) : Logger.log("   Ninguno.");
+  Logger.log("\n=== DIAS SIN LLEGAR ===");
+  faltantes.length ? faltantes.slice(0, 30).forEach(function (l) { Logger.log("   " + l); }) : Logger.log("   Ninguno.");
+  if (faltantes.length > 30) Logger.log("   ... y " + (faltantes.length - 30) + " mas");
+  Logger.log("\nOjo: los dias incluyen sabados y domingos, en los que varios reportes no se esperan.");
+}
