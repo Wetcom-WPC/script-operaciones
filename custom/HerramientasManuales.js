@@ -587,6 +587,7 @@ const TAREAS_QUE_CIERRA_LA_AUTOMATIZACION = [
   "Estado de Agentes View",
   "Idle VMs",
   "Jobs de Veeam",
+  "Malware Detection",
   "Oversized VMs",
   "Storage DRS",
   "Undersized VMs",
