@@ -1108,7 +1108,56 @@
           pill.title = tech + ': todavía NO se envió (' + origenTxt + ')' + detalleTxt;
         }
 
+        // Corregido a mano: el estado de arriba lo puso una persona, no el sistema. Se avisa
+        // en el tooltip y con un borde distinto, para que nadie lea un ✅ como "el log lo vio".
+        if (tData && tData.correccion) {
+          pill.classList.add('corregido-a-mano');
+          pill.title = tech + ': marcado a mano como ' +
+            (tData.correccion.estado === 'enviado' ? 'ENVIADO' : 'NO enviado') +
+            ' por ' + nombreOperador(tData.correccion.autor) +
+            (tData.correccion.actualizado ? ' (' + tData.correccion.actualizado + ')' : '') +
+            '. Motivo: ' + tData.correccion.motivo;
+        }
+
+        // La celda es editable: si el mail salió pero nadie puso a alarmas@ en copia, el
+        // semáforo no se entera y hasta ahora no había forma de arreglarlo.
+        if (tData && tData.contratado && matrizGlobal.fechaISO) {
+          pill.classList.add('pill-editable');
+          pill.setAttribute('role', 'button');
+          pill.tabIndex = 0;
+          var abrirCorreccion = function(ev) {
+            ev.stopPropagation();
+            abrirModalCorreccion({
+              fecha: matrizGlobal.fechaISO,
+              cliente: cli.empresa || cli.cliente,
+              tecnologia: tech,
+              deducido: tData.enviado,
+              actual: tData.correccion || null
+            });
+          };
+          pill.addEventListener('click', abrirCorreccion);
+          pill.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter' || ev.key === ' ') abrirCorreccion(ev);
+          });
+        }
+
         td.appendChild(pill);
+
+        // RVTools: botón directo a la carpeta de Drive del cliente (la de la semana si se
+        // encontró, si no la raíz de la columna J del Índice). Evita tener que abrir el
+        // Índice, copiar el link y pegarlo cada vez que una celda da rojo.
+        if (tech === 'RVTools' && tData && tData.carpetaUrl) {
+          var link = crear('a', 'btn-carpeta', '📁');
+          link.href = tData.carpetaUrl;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.title = 'Abrir en Drive la carpeta de RVTools de ' + (cli.empresa || cli.cliente) +
+            (tData.detalle ? ' — ' + tData.detalle : '');
+          link.setAttribute('aria-label', 'Abrir la carpeta de RVTools de ' + (cli.empresa || cli.cliente) + ' en Drive');
+          link.addEventListener('click', function(ev) { ev.stopPropagation(); });
+          td.appendChild(link);
+        }
+
         // Lápiz para dejar constancia de lo que pasó hoy con este cliente y tecnología.
         if (tData && tData.contratado && matrizGlobal.fechaISO) {
           td.appendChild(botonComentario(matrizGlobal.fechaISO, cli.empresa || cli.cliente, cli.claves || [cli.clave], tech));
@@ -1344,6 +1393,196 @@
       })
       .webapp_guardarComentarioEnvio({ sheetId: sheetIdLogsActual(), fecha: ctx.fecha, cliente: ctx.cliente,
         tecnologia: ctx.tecnologia, comentario: texto, excluir: excluir });
+  }
+
+  // --- Corregir a mano una celda del semáforo ------------------------------------------------
+  // El caso que lo motivó: el reporte salió, pero quien lo mandó se olvidó de poner a
+  // alarmas@wetcom.com en copia. El mail existe, el semáforo no puede verlo, y el cliente
+  // figura incompleto todo el día. Acá se fuerza el estado dejando constancia de quién y por
+  // qué: el log y el Índice no se tocan.
+
+  var MOTIVOS_CORRECCION = [
+    'Se envió sin alarmas@ en copia',
+    'Se envió desde otra casilla',
+    'El Índice no registró el tilde',
+    'Se mandó por otro canal (Teams / chat)'
+  ];
+  var modalCorreccion = null;
+
+  function construirModalCorreccion() {
+    var overlay = crear('div', 'modal-overlay');
+    overlay.id = 'modalCorreccion';
+    overlay.style.display = 'none';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'tituloModalCorreccion');
+
+    var card = crear('div', 'modal-card modal-comentario');
+    var header = crear('header', 'modal-header');
+    var cab = crear('div');
+    var titulo = crear('h3', null, 'Corregir el estado del envío');
+    titulo.id = 'tituloModalCorreccion';
+    var sub = crear('div', 'modal-subtitulo');
+    cab.appendChild(titulo);
+    cab.appendChild(sub);
+    var cerrar = crear('button', 'modal-close', '×');
+    cerrar.type = 'button';
+    cerrar.setAttribute('aria-label', 'Cerrar');
+    header.appendChild(cab);
+    header.appendChild(cerrar);
+
+    var body = crear('div', 'modal-body');
+    var deducido = crear('p', 'meta-comentario');
+    body.appendChild(deducido);
+
+    body.appendChild(crear('div', 'etiqueta-campo', 'Marcar como'));
+    var opciones = crear('div', 'chips-motivo');
+    var radios = {};
+    [['enviado', '✅ Sí se envió'], ['no_enviado', '❌ No se envió']].forEach(function(par) {
+      var lbl = crear('label', 'check-inline');
+      var rb = crear('input');
+      rb.type = 'radio';
+      rb.name = 'estadoCorreccion';
+      rb.value = par[0];
+      lbl.appendChild(rb);
+      lbl.appendChild(crear('span', null, par[1]));
+      opciones.appendChild(lbl);
+      radios[par[0]] = rb;
+    });
+    body.appendChild(opciones);
+
+    body.appendChild(crear('div', 'etiqueta-campo', 'Motivos frecuentes'));
+    var chips = crear('div', 'chips-motivo');
+    MOTIVOS_CORRECCION.forEach(function(m) {
+      var chip = crear('button', 'chip-motivo', m);
+      chip.type = 'button';
+      chip.addEventListener('click', function() {
+        texto.value = m;
+        texto.focus();
+      });
+      chips.appendChild(chip);
+    });
+    body.appendChild(chips);
+
+    var lbl2 = crear('label', 'etiqueta-campo', '¿Por qué lo corregís?');
+    lbl2.setAttribute('for', 'motivoCorreccion');
+    body.appendChild(lbl2);
+    var texto = crear('textarea', 'textarea-comentario');
+    texto.id = 'motivoCorreccion';
+    texto.maxLength = 300;
+    texto.rows = 3;
+    texto.placeholder = 'Ej: lo mandó Juancruz 09:40 pero sin alarmas@ en copia.';
+    body.appendChild(texto);
+
+    var ayuda = crear('p', 'meta-comentario',
+      'Esto no reescribe el log ni el Índice: queda guardado aparte, con tu usuario y la hora, y la celda muestra que la corrigió una persona.');
+    body.appendChild(ayuda);
+
+    var meta = crear('p', 'meta-comentario');
+    body.appendChild(meta);
+    var aviso = crear('div', 'aviso');
+    aviso.hidden = true;
+    body.appendChild(aviso);
+
+    var footer = crear('footer', 'modal-footer');
+    var quitar = crear('button', 'btn-secundario btn-borrar-comentario', 'Quitar corrección');
+    quitar.type = 'button';
+    var cancelar = crear('button', 'btn-secundario', 'Cancelar');
+    cancelar.type = 'button';
+    var guardar = crear('button', 'btn-primario', 'Guardar');
+    guardar.type = 'button';
+    footer.appendChild(quitar);
+    footer.appendChild(crear('span', 'separador-flex'));
+    footer.appendChild(cancelar);
+    footer.appendChild(guardar);
+
+    card.appendChild(header);
+    card.appendChild(body);
+    card.appendChild(footer);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+
+    cerrar.addEventListener('click', cerrarModalCorreccion);
+    cancelar.addEventListener('click', cerrarModalCorreccion);
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) cerrarModalCorreccion(); });
+    overlay.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') cerrarModalCorreccion();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) guardar.click();
+    });
+
+    modalCorreccion = { overlay: overlay, sub: sub, deducido: deducido, radios: radios, texto: texto,
+      meta: meta, aviso: aviso, quitar: quitar, guardar: guardar, contexto: null, foco: null };
+
+    guardar.addEventListener('click', function() { enviarCorreccion(false); });
+    quitar.addEventListener('click', function() { enviarCorreccion(true); });
+  }
+
+  function abrirModalCorreccion(ctx) {
+    if (!modalCorreccion) construirModalCorreccion();
+    var m = modalCorreccion;
+    m.contexto = ctx;
+    m.foco = document.activeElement;
+    m.sub.textContent = ctx.cliente + ' · ' + ctx.tecnologia + ' · ' + isoACorta(ctx.fecha);
+
+    var queVio = ctx.deducido === true ? 'que SÍ se envió'
+      : (ctx.deducido === false ? 'que NO se envió' : 'que no pudo verificarlo');
+    m.deducido.textContent = 'El sistema detectó ' + queVio + '.';
+
+    var estadoActual = ctx.actual ? ctx.actual.estado : (ctx.deducido === true ? 'no_enviado' : 'enviado');
+    Object.keys(m.radios).forEach(function(k) { m.radios[k].checked = (k === estadoActual); });
+    m.texto.value = ctx.actual ? ctx.actual.motivo : '';
+    m.meta.textContent = ctx.actual && ctx.actual.autor
+      ? 'Corregido por ' + nombreOperador(ctx.actual.autor) + (ctx.actual.actualizado ? ' · ' + ctx.actual.actualizado : '')
+      : '';
+    m.quitar.style.display = ctx.actual ? '' : 'none';
+    m.aviso.hidden = true;
+    m.overlay.style.display = 'flex';
+    m.texto.focus();
+  }
+
+  function cerrarModalCorreccion() {
+    if (!modalCorreccion) return;
+    modalCorreccion.overlay.style.display = 'none';
+    if (modalCorreccion.foco && modalCorreccion.foco.focus) modalCorreccion.foco.focus();
+  }
+
+  function enviarCorreccion(quitar) {
+    var m = modalCorreccion;
+    var ctx = m.contexto;
+    var estado = '';
+    Object.keys(m.radios).forEach(function(k) { if (m.radios[k].checked) estado = k; });
+    var motivo = m.texto.value.trim();
+
+    if (!quitar) {
+      if (!estado) {
+        mostrarAviso(m.aviso, 'error', 'Elegí si se envió o no.');
+        return;
+      }
+      if (!motivo) {
+        mostrarAviso(m.aviso, 'error', 'Contá por qué lo corregís: la celda queda con tu nombre al lado.');
+        m.texto.focus();
+        return;
+      }
+    }
+
+    var boton = quitar ? m.quitar : m.guardar;
+    ocupar(boton, quitar ? 'Quitando...' : 'Guardando...');
+    google.script.run
+      .withSuccessHandler(function() {
+        liberar(boton);
+        cerrarModalCorreccion();
+        // Se recarga el semáforo entero en vez de parchear la celda: así los contadores de
+        // "Faltan N" y el resumen de arriba quedan consistentes con lo que se ve.
+        cargarMatrizSalud(false);
+      })
+      .withFailureHandler(function(err) {
+        liberar(boton);
+        mostrarAviso(m.aviso, 'error', 'No se pudo guardar: ' + err.message);
+      })
+      .webapp_corregirEnvio({
+        sheetId: sheetIdLogsActual(), fecha: ctx.fecha, cliente: ctx.cliente,
+        tecnologia: ctx.tecnologia, estado: quitar ? '' : estado, motivo: quitar ? '' : motivo
+      });
   }
 
   /** Clave de cliente del Histórico a partir de su nombre. */

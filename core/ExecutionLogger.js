@@ -36,11 +36,29 @@ const _EF_COL = {
   ULTIMA_ACT:     11,  // L
 };
 // ─── MAPEO operationName → tecnología ────────────────────────────────────────
-const _LOG_TECNOLOGIA_MAP = {
+//
+// ÚNICA fuente de verdad de "qué tecnología genera este reporte" (AGENTS.md §5). La usan el
+// log de Estado Final (_registrarEnLog) y el log de Reportes Faltantes (_deducirTecnologia en
+// core/ScheduledLogger.js). Antes eran dos mapas distintos y se contradecían: el de faltantes
+// adivinaba por palabras sueltas y acertaba 17 de 31 operaciones.
+//
+// La tecnología es la MISMA que la carpeta en la que vive el procesador en Apps Script
+// (vro/, vrops/, veeam/, veeamone/, rvtools/, horizon/, nutanix/, tanzu/). Si se mueve un
+// archivo de carpeta, hay que mover también su línea acá: son el mismo dato en dos lugares y
+// Apps Script no puede leer sus propios nombres de archivo en tiempo de ejecución.
+//
+// Las claves tienen que ser EXACTAMENTE el operationName del procesador (la constante
+// *_OPERATION_NAME de su archivo). Una clave con un typo no rompe nada: simplemente la
+// operación queda registrada como "Otro" y nadie se entera — así estuvo "Jobs Veeam" (el
+// nombre real es "Jobs de Veeam").
+const TECNOLOGIA_POR_OPERACION = {
+  // vro/
   "Affinity Rules":                                   "vRO",
   "Alertas de vSphere":                               "vRO",
   "VMs con preguntas":                                "vRO",
+  "VMs con snapshots":                                "vRO",
   "Discos montados en proxy":                         "vRO",
+  // vrops/
   "Alertas de vROps":                                 "vROps",
   "Cluster DRS":                                      "vROps",
   "Storage DRS":                                      "vROps",
@@ -49,22 +67,41 @@ const _LOG_TECNOLOGIA_MAP = {
   "VMs inaccesibles":                                 "vROps",
   "VMs en datastores locales":                        "vROps",
   "VMs operativas":                                   "vROps",
-  "VMs con snapshots":                                "vROps",
   "VMs apagadas por periodo de tiempo significativo": "vROps",
   "Idle VMs":                                         "vROps",
   "Undersized VMs":                                   "vROps",
   "Oversized VMs":                                    "vROps",
+  "Reporte de Consumo vSphere":                       "vROps",
+  // veeam/
+  "Jobs de Veeam":                                    "Veeam",
+  "Proxies de Veeam":                                 "Veeam",
+  "Backup por tag":                                   "Veeam",
+  "Malware Detection":                                "Veeam",
+  // veeamone/
   "Orphaned VMs":                                     "Veeam ONE",
   "VMs en mas de un Job":                             "Veeam ONE",
-  "Espacio en Repositorios":                          "Veeam BR",
-  "Jobs Veeam":                                       "Veeam BR",
-  "Proxies de Veeam":                                 "Veeam BR",
+  "Espacio en Repositorios":                          "Veeam ONE",
+  // horizon/
   "Componentes de View":                              "Connection Server",
   "Dashboard View":                                   "Connection Server",
   "Estado de Agentes View":                           "Connection Server",
+  // rvtools/
   "Zombies VMDKs":                                    "RVTools",
   "VMs sin connect at power on":                      "RVTools",
+  // nutanix/ y tanzu/
+  "Operaciones Nutanix":                              "Nutanix",
+  "Tanzu":                                            "Tanzu",
 };
+
+/**
+ * Tecnología de una operación, por nombre exacto.
+ * @param {string} operationName Nombre de la operación (constante *_OPERATION_NAME).
+ * @returns {string} Tecnología, o "Otro" si el nombre no está en el mapa.
+ */
+function tecnologiaDeOperacion(operationName) {
+  const limpio = String(operationName || "").trim();
+  return TECNOLOGIA_POR_OPERACION[limpio] || "Otro";
+}
 // --- BUFFERS EN MEMORIA PARA ESCRITURA EN BLOQUE (BATCHED WRITES) ---
 const _bufferEstadoFinal = [];
 const _bufferErrores = [];
@@ -138,7 +175,7 @@ function _registrarEnLog(operationName, summaryReport) {
     const clienteRVTools  = esRVToolsManual
       ? operationName.replace("RVTools MANUAL:", "").trim()
       : null;
-    const tecnologia      = esRVToolsManual ? "RVTools" : (_LOG_TECNOLOGIA_MAP[operationName] || "Otro");
+    const tecnologia      = esRVToolsManual ? "RVTools" : tecnologiaDeOperacion(operationName);
     const opNombre        = esRVToolsManual ? "RVTools Manual" : operationName;
     const exitos       = summaryReport.exitos       || [];
     const errores      = summaryReport.errores      || [];

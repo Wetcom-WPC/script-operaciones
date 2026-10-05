@@ -816,7 +816,7 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
 /**
  * Busca el ticket de REPORTE abierto de una operación (no una Tarea Programada).
  *
- * Estaba duplicada byte a byte en veeam/VMsEnMasDeUnJob.js y vsphere/OrphanedVMs.js
+ * Estaba duplicada byte a byte en veeamone/VMsEnMasDeUnJob.js y veeamone/OrphanedVMs.js
  * (AGENTS.md §5). Al unificarla se corrigieron dos cosas de la versión original:
  *
  * 1. Armaba el header de autorización a mano en vez de usar getJiraHeaders(), que es el

@@ -722,6 +722,29 @@ footer { padding: 0 24px 28px; max-width: 1400px; margin: 0 auto; font-size: 11.
 tr:hover .btn-comentario { opacity: .75; }
 .btn-comentario:hover, .btn-comentario:focus-visible { opacity: 1; background: var(--fondo); border-color: var(--borde); outline: none; }
 .btn-comentario.tiene-comentario { opacity: 1; background: var(--azul-suave); border-color: #CFE0F3; }
+
+/* Botón 📁 a la carpeta de RVTools del cliente en Drive. Mismo peso visual que el lápiz: es
+   un atajo, no una acción principal. */
+.btn-carpeta {
+  display: inline-block; text-decoration: none;
+  border: 1px solid transparent; background: transparent; cursor: pointer;
+  font-size: 13px; line-height: 1; padding: 4px 5px; margin-left: 2px; border-radius: 6px;
+  opacity: .35; transition: opacity var(--trans-fast), background var(--trans-fast);
+  vertical-align: middle;
+}
+tr:hover .btn-carpeta { opacity: .75; }
+.btn-carpeta:hover, .btn-carpeta:focus-visible { opacity: 1; background: var(--fondo); border-color: var(--borde); outline: none; }
+
+/* Celda del semáforo que se puede corregir a mano. */
+.tech-pill.pill-editable { cursor: pointer; }
+.tech-pill.pill-editable:hover { filter: brightness(.95); }
+.tech-pill.pill-editable:focus-visible { outline: 2px solid var(--azul); outline-offset: 1px; }
+/* Estado puesto por una persona, no deducido por el sistema. El borde punteado es para que
+   un ✅ corregido a mano NO se lea igual que uno que el log vio de verdad. */
+.tech-pill.corregido-a-mano { border: 1px dashed var(--gris); position: relative; }
+.tech-pill.corregido-a-mano::after {
+  content: '✎'; font-size: 9px; margin-left: 3px; opacity: .7; vertical-align: super;
+}
 .modal-comentario { max-width: 560px; }
 .modal-subtitulo { font-size: 13px; color: var(--gris); margin-top: 2px; }
 .etiqueta-campo { display: block; font-size: 12px; font-weight: 600; color: var(--gris); text-transform: uppercase; letter-spacing: .04em; margin: 4px 0 8px; }

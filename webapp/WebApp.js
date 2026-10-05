@@ -1169,6 +1169,9 @@ function webapp_calcularProximoEnvio() {
 // que mira paga el escaneo y el resto lee lo guardado; cuando nadie mira, no cuesta nada. El
 // botón "Actualizar" lo fuerza.
 const WEBAPP_CACHE_RVTOOLS_SEGUNDOS = 1800; // 30 minutos
+// Prefijo de un link a carpeta de Drive. El caché de RVTools guarda los links ya armados, así
+// que si esto cambia hay que apretar "Actualizar" para que se regeneren.
+const _WEBAPP_DRIVE_CARPETA_URL = 'https://drive.google.com/drive/folders/';
 
 /**
  * Estado semanal de las RVTools por cliente, listo para el semáforo.
@@ -1261,6 +1264,9 @@ function webapp_obtenerEstadoRVTools(forzar) {
       resultado.clientes[fila.cliente] = { estado: 'sin_dato', carpeta: null, detalle: 'Sin link de carpeta en la columna J del Índice' };
       return;
     }
+    // Link a la carpeta raíz de RVTools del cliente (columna J del Índice). Va siempre, aunque
+    // la carpeta de la semana no exista: cuando falta es justamente cuando hay que ir a mirar.
+    const urlRaiz = _WEBAPP_DRIVE_CARPETA_URL + fila.folderId;
     try {
       const hallazgo = _rvtoolsBuscarCarpetaObjeto(DriveApp.getFolderById(fila.folderId), esperados, fila.cliente);
       const carpeta = hallazgo ? hallazgo.nombre : null;
@@ -1269,6 +1275,12 @@ function webapp_obtenerEstadoRVTools(forzar) {
         // el semáforo daba verde mientras otra área abría un archivo ilegible.
         resultado.clientes[fila.cliente] = _webappEstadoDeCarpetaRVTools(
           fila.cliente, hallazgo, forzar, contextoVerif);
+        // Si se encontró la carpeta de la semana, el botón lleva directo ahí y no a la raíz.
+        try {
+          resultado.clientes[fila.cliente].url = _WEBAPP_DRIVE_CARPETA_URL + hallazgo.carpeta.getId();
+        } catch (eUrl) {
+          resultado.clientes[fila.cliente].url = urlRaiz;
+        }
       } else if (enVentana) {
         resultado.clientes[fila.cliente] = { estado: 'pendiente', carpeta: null, detalle: 'Todavía no hay carpeta nueva desde el ' + desdeTxt + ' (la ventana es de miércoles a viernes)' };
       } else {
@@ -1277,6 +1289,8 @@ function webapp_obtenerEstadoRVTools(forzar) {
     } catch (e) {
       resultado.clientes[fila.cliente] = { estado: 'sin_dato', carpeta: null, detalle: 'No se pudo abrir la carpeta: ' + e.message };
     }
+    resultado.clientes[fila.cliente].urlRaiz = urlRaiz;
+    if (!resultado.clientes[fila.cliente].url) resultado.clientes[fila.cliente].url = urlRaiz;
   });
 
   // Se guarda lo verificado recién al final: una sola escritura por vuelta.
@@ -1434,6 +1448,17 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
     return undefined;
   };
 
+  // --- Correcciones a mano: lo que el equipo marcó como enviado (o como no enviado) ---
+  // Se aplican ENCIMA de lo deducido, no en lugar de: el log y el Índice quedan como están.
+  let correcciones = {};
+  try {
+    correcciones = _webappLeerCorrecciones(
+      SpreadsheetApp.openById(overrideSheetId || WEBAPP_LOGS_PROD_ID),
+      Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd'));
+  } catch (e) {
+    Logger.log('[WebApp] No se pudieron leer las correcciones a mano: ' + e.message);
+  }
+
   // --- Armado del semáforo ---
   const clientes = (indice.clientes || []).map(function (cli) {
     const clavesCli = [normalizar(cli.empresa), normalizar(cli.nombre)].filter(function (k) { return !!k; });
@@ -1457,6 +1482,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
       let detalle = null;
       let archivosVerificados = false;
       let alertaArchivos = false;
+      let carpetaUrl = null;
       if (tech === 'RVTools') {
         // Sin dato (no hay carpeta en el Índice, o Drive falló) se deja en null y el front lo
         // pinta distinto de rojo: "no pude fijarme" no es "no se subió".
@@ -1472,6 +1498,8 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
           alertaArchivos = rv.estado === 'archivos_alerta';
         }
         detalle = rv ? rv.detalle : 'El cliente no figura con carpeta de RVTools en el Índice';
+        // Link a la carpeta de la semana si se encontró; si no, a la raíz del cliente.
+        carpetaUrl = rv ? (rv.url || rv.urlRaiz || null) : null;
         fuente = 'drive';
       } else {
         // Salió si lo marca el Índice o si hay un envío de hoy en el log (automático o a
@@ -1493,11 +1521,25 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
         archivosVerificados: archivosVerificados,
         // Solo RVTools: hay archivo pero no se pudo leer (o está viejo). Se pinta como
         // advertencia, no como falta.
-        alertaArchivos: alertaArchivos
+        alertaArchivos: alertaArchivos,
+        // Solo RVTools: link a la carpeta de Drive del cliente, para el botón 📁.
+        carpetaUrl: carpetaUrl
       };
 
-      if (enviado === true) enviados++;
-      else if (enviado === false) pendientes++;
+      // Corrección a mano: pisa lo deducido y deja el rastro de quién y por qué. Se busca con
+      // las dos claves del cliente por el mismo motivo que la hora (AGENTS.md §6).
+      const corr = buscarPorNombre(correcciones, clavesCli, '|' + tech);
+      if (corr) {
+        tecs[tech].enviado = corr.estado === 'enviado';
+        tecs[tech].pendienteEnVentana = false;
+        tecs[tech].alertaArchivos = false;
+        tecs[tech].correccion = {
+          estado: corr.estado, motivo: corr.motivo, autor: corr.autor, actualizado: corr.actualizado
+        };
+      }
+
+      if (tecs[tech].enviado === true) enviados++;
+      else if (tecs[tech].enviado === false) pendientes++;
     });
 
     const operadores = [];

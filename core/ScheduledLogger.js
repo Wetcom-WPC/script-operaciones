@@ -141,18 +141,81 @@ function inicializarPestanaReportesFaltantes() {
   SpreadsheetApp.flush();
   Logger.log("✅ Pestaña '" + LOG_FALTANTES_TAB_NAME + "' creada.");
 }
-const _FALTANTES_TECH_MAP = [
-  { palabras: ["veeam","backup","replica","job","repositorio","proxy","agente"], tech: "Veeam" },
-  { palabras: ["vsphere","cluster","drs","datastore","snapshot","vm","host"],   tech: "vROps" },
-  { palabras: ["horizon","view","agente view"],                                  tech: "Connection Server" },
-  { palabras: ["rvtools","zombie","vmdk","connect at power"],                    tech: "RVTools" },
-  { palabras: ["affinity","preguntas","alertas de vsphere"],                     tech: "vRO" },
+/**
+ * Texto comparable: sin mayúsculas, sin tildes y sin puntuación ni espacios de más.
+ * "09:00 - Capacidad de Particiones" -> "09 00 capacidad de particiones".
+ */
+function _faltantesNormalizar(texto) {
+  return String(texto || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+// Red de contención para los identificadores de la planilla "Reportes Faltantes" que NO son
+// el nombre de una operación (ahí el nombre lo escribe una persona, no el código). El orden
+// importa: gana la primera regla que matchea, así que van de lo más específico a lo más
+// genérico. La versión anterior tenía "vm" y "job" arriba de todo y se llevaba puesto medio
+// mapa — "Zombies VMDKs" caía en vROps y "Orphaned VMs" también.
+const _FALTANTES_TECH_FALLBACK = [
+  { palabras: ["rvtools", "zombie", "vmdk", "connect at power"],        tech: "RVTools" },
+  { palabras: ["horizon", "view"],                                      tech: "Connection Server" },
+  { palabras: ["nutanix"],                                              tech: "Nutanix" },
+  { palabras: ["tanzu"],                                                tech: "Tanzu" },
+  { palabras: ["veeam one", "veeamone", "orphaned", "mas de un job",
+               "repositorio"],                                          tech: "Veeam ONE" },
+  { palabras: ["veeam", "backup", "replica", "proxy", "malware"],       tech: "Veeam" },
+  { palabras: ["vrops", "vrealize operations", "aria operations"],      tech: "vROps" },
+  { palabras: ["vro", "orchestrator", "affinity", "preguntas",
+               "snapshot"],                                             tech: "vRO" },
+  // Lo que queda del parque vSphere sin decir de dónde sale lo reporta vROps.
+  { palabras: ["cluster", "drs", "datastore", "particion", "idle",
+               "undersized", "oversized", "inaccesible", "apagada"],    tech: "vROps" },
 ];
+
+/**
+ * Tecnología de un reporte de la planilla "Reportes Faltantes".
+ *
+ * Primero busca el nombre exacto de la operación en TECNOLOGIA_POR_OPERACION
+ * (core/ExecutionLogger.js), que es la misma fuente que usa el log de Estado Final: así el
+ * dashboard no puede decir una tecnología distinta de la que dice el log para el mismo
+ * reporte (AGENTS.md §5). Como el identificador de la planilla lo carga una persona y suele
+ * traer prefijos ("09-00 Alertas de vSphere"), si no hay match exacto prueba por contención y
+ * recién al final cae en las palabras clave.
+ *
+ * @param {string} idReporte Identificador del reporte tal como figura en la planilla.
+ * @returns {string} Tecnología, o "Otro" si no se pudo deducir.
+ */
 function _deducirTecnologia(idReporte) {
-  const lower = idReporte.toLowerCase();
-  for (var i = 0; i < _FALTANTES_TECH_MAP.length; i++) {
-    if (_FALTANTES_TECH_MAP[i].palabras.some(function(p) { return lower.includes(p); }))
-      return _FALTANTES_TECH_MAP[i].tech;
+  const norm = _faltantesNormalizar(idReporte);
+  if (!norm) return "Otro";
+
+  // 1. Nombre exacto de operación.
+  const operaciones = Object.keys(TECNOLOGIA_POR_OPERACION);
+  for (var i = 0; i < operaciones.length; i++) {
+    if (_faltantesNormalizar(operaciones[i]) === norm) return TECNOLOGIA_POR_OPERACION[operaciones[i]];
+  }
+
+  // 2. El identificador CONTIENE el nombre de una operación. Se queda con el nombre más largo
+  //    que matchee: "VMs en mas de un Job" tiene que ganarle a cualquier coincidencia corta.
+  var largoMejor = 0;
+  var techMejor = null;
+  for (var j = 0; j < operaciones.length; j++) {
+    const op = _faltantesNormalizar(operaciones[j]);
+    if (op.length > 3 && op.length > largoMejor && norm.indexOf(op) !== -1) {
+      largoMejor = op.length;
+      techMejor = TECNOLOGIA_POR_OPERACION[operaciones[j]];
+    }
+  }
+  if (techMejor) return techMejor;
+
+  // 3. Palabras clave.
+  for (var k = 0; k < _FALTANTES_TECH_FALLBACK.length; k++) {
+    const regla = _FALTANTES_TECH_FALLBACK[k];
+    for (var m = 0; m < regla.palabras.length; m++) {
+      if (norm.indexOf(regla.palabras[m]) !== -1) return regla.tech;
+    }
   }
   return "Otro";
 }
