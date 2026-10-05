@@ -2962,6 +2962,63 @@
     return patrones;
   }
 
+  // Orden de la tabla. Arranca por la última llegada, de la más nueva a la más vieja: mezclar
+  // fechas hacía que la tabla pareciera desordenada. Se puede cambiar clickeando el
+  // encabezado, porque según lo que se esté buscando sirve ordenar por otra cosa.
+  var ordenLlegadas = { campo: 'ultima', desc: true };
+
+  var CAMPO_ORDEN = {
+    cliente: function(g) { return g.cliente.toLowerCase(); },
+    pod: function(g) { return g.pod || ''; },
+    reporte: function(g) { return g.reporte.toLowerCase(); },
+    origen: function(g) { return g.origen; },
+    promedio: function(g) { return g.promedio; },
+    tarde: function(g) { return g.tarde; },
+    ultima: function(g) { return g.ultima; }
+  };
+
+  function ordenarGrupos(grupos) {
+    var saca = CAMPO_ORDEN[ordenLlegadas.campo] || CAMPO_ORDEN.ultima;
+    return grupos.slice().sort(function(a, b) {
+      var va = saca(a), vb = saca(b);
+      if (va < vb) return ordenLlegadas.desc ? 1 : -1;
+      if (va > vb) return ordenLlegadas.desc ? -1 : 1;
+      // Empate: lo que más tarde llegó primero, que es lo que uno quiere ver.
+      return b.tarde - a.tarde || b.promedio - a.promedio;
+    });
+  }
+
+  function prepararOrdenTabla() {
+    var tabla = document.getElementById('tablaLlegadas');
+    if (!tabla || tabla.dataset.ordenListo) return;
+    tabla.dataset.ordenListo = '1';
+    var ths = tabla.querySelectorAll('thead th');
+    var campos = ['cliente', 'pod', 'reporte', 'origen', 'promedio', 'tarde', 'ultima'];
+    for (var i = 0; i < ths.length && i < campos.length; i++) {
+      (function(th, campo) {
+        th.style.cursor = 'pointer';
+        th.title = 'Ordenar por esta columna';
+        th.addEventListener('click', function() {
+          if (ordenLlegadas.campo === campo) ordenLlegadas.desc = !ordenLlegadas.desc;
+          else { ordenLlegadas.campo = campo; ordenLlegadas.desc = true; }
+          pintarLlegadas();
+        });
+      })(ths[i], campos[i]);
+    }
+  }
+
+  function marcarEncabezadoOrdenado() {
+    var tabla = document.getElementById('tablaLlegadas');
+    if (!tabla) return;
+    var ths = tabla.querySelectorAll('thead th');
+    var campos = ['cliente', 'pod', 'reporte', 'origen', 'promedio', 'tarde', 'ultima'];
+    var textos = ['Cliente', 'POD', 'Reporte', 'Origen', 'Hora promedio', 'Días tarde', 'Última llegada'];
+    for (var i = 0; i < ths.length && i < campos.length; i++) {
+      ths[i].textContent = textos[i] +
+        (ordenLlegadas.campo === campos[i] ? (ordenLlegadas.desc ? ' ▼' : ' ▲') : '');
+    }
+  }
+
   function claveDePatron(p) {
     return [p.tipo, String(p.remitente || '').toLowerCase(), p.reporte].join('|');
   }
@@ -3266,11 +3323,13 @@
         (serie.recortado ? ' (las ' + serie.lineas.length + ' con más datos)' : '');
     }
 
+    prepararOrdenTabla();
+    marcarEncabezadoOrdenado();
     var tbody = document.getElementById('tbodyLlegadas');
     var vacio = document.getElementById('llegadasVacio');
     if (tbody) {
       tbody.innerHTML = '';
-      grupos.sort(function(a, b) { return b.tarde - a.tarde || b.promedio - a.promedio; }).forEach(function(g) {
+      ordenarGrupos(grupos).forEach(function(g) {
         var tr = crear('tr');
         var tdCli = crear('td', null, g.cliente);
         tdCli.title = g.remitente;
