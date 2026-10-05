@@ -1207,7 +1207,10 @@ function webapp_obtenerEstadoRVTools(forzar) {
   const usuario = webapp_usuarioActual();
   webapp_exigirAutorizacion(usuario);
 
-  const cacheKey = 'webapp_rvtools_semana_v2';
+  // El sufijo de versión se SUBE cada vez que cambia la forma de lo que se guarda acá. Si no,
+  // durante media hora se sigue sirviendo el objeto viejo —sin los campos nuevos— y la pantalla
+  // se ve como si el cambio no se hubiera desplegado. Pasó con el link a la carpeta (v2 -> v3).
+  const cacheKey = 'webapp_rvtools_semana_v3';
   const cache = CacheService.getScriptCache();
   if (!forzar) {
     const guardado = cache.get(cacheKey);
