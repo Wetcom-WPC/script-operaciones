@@ -50,14 +50,26 @@ function _operadorTildeHoja(spreadsheet, crearSiFalta) {
   return hoja;
 }
 
-/** Fila (1-based, en la pestaña) del tilde fila/col, o -1. */
-function _operadorTildeBuscar(hoja, fila, col) {
-  if (!hoja || hoja.getLastRow() < 2) return -1;
+/**
+ * Filas (1-based, en la pestaña) de los tildes de fila/col, de la más vieja a la más nueva.
+ *
+ * Puede haber más de una: las anotaciones se agregan al final y nunca se modifican en el
+ * lugar, así que re-tildar la misma casilla deja otra fila. Vale la ÚLTIMA.
+ */
+function _operadorTildeBuscarTodas(hoja, fila, col) {
+  if (!hoja || hoja.getLastRow() < 2) return [];
   const valores = hoja.getRange(2, 1, hoja.getLastRow() - 1, 2).getValues();
+  const filas = [];
   for (let i = 0; i < valores.length; i++) {
-    if (Number(valores[i][0]) === Number(fila) && Number(valores[i][1]) === Number(col)) return i + 2;
+    if (Number(valores[i][0]) === Number(fila) && Number(valores[i][1]) === Number(col)) filas.push(i + 2);
   }
-  return -1;
+  return filas;
+}
+
+/** La anotación vigente del tilde fila/col, o -1. Es la última, que es la más reciente. */
+function _operadorTildeBuscar(hoja, fila, col) {
+  const filas = _operadorTildeBuscarTodas(hoja, fila, col);
+  return filas.length ? filas[filas.length - 1] : -1;
 }
 
 /**
@@ -70,27 +82,38 @@ function _operadorTildeBuscar(hoja, fila, col) {
 function registrarOperadorTilde(spreadsheet, fila, col, cliente, email) {
   const mail = String(email || "").trim().toLowerCase();
   if (!mail) return false;
-  // Se tilda una casilla atrás de otra, y cada activador tarda varios segundos: sin candado,
-  // dos ejecuciones leen la misma última fila y la segunda pisa a la primera (ese tilde se
-  // pierde sin error). El candado las pone en fila.
-  const candado = LockService.getScriptLock();
+
+  // SIN CANDADO, A PROPÓSITO.
+  //
+  // Antes esto leía la pestaña y después escribía en la fila encontrada (o al final). Entre
+  // leer y escribir, dos activadores simultáneos se pisaban, así que le puse un candado. Fue
+  // peor: cuando el equipo marca varias casillas seguidas, cada ejecución tarda unos segundos
+  // y la octava ya supera los 30 de espera. El 05/10 se perdieron tildes con
+  // "No se pudo tomar el candado para la fila 7", mientras otro cliente anotaba bien dos
+  // segundos después.
+  //
+  // appendRow agrega al final en una sola operación del lado de Sheets: no hay un "leer" que
+  // pueda quedar viejo, así que dos activadores a la vez no se pisan y no hace falta
+  // serializarlos. Re-tildar deja otra fila, y vale la última (ver _operadorTildeBuscar).
+  const hoja = _operadorTildeHoja(spreadsheet, true);
+  hoja.appendRow([Number(fila), Number(col), String(cliente || "").trim(), mail, new Date()]);
+  Logger.log("[Operador] Anotado: fila " + fila + ", col " + col + " (" + String(cliente || "").trim() + ") -> " + mail);
+
+  _operadorTildePodar(hoja);
+  return true;
+}
+
+// Como ya no se pisa ninguna fila, la pestaña solo crece. En uso normal se vacía sola (cada
+// envío borra su anotación), pero si algo queda colgado conviene un techo.
+const OPERADOR_TILDE_MAX_FILAS = 500;
+
+function _operadorTildePodar(hoja) {
   try {
-    candado.waitLock(30000);
+    const sobran = hoja.getLastRow() - 1 - OPERADOR_TILDE_MAX_FILAS;
+    if (sobran > 0) hoja.deleteRows(2, sobran);
   } catch (e) {
-    Logger.log("[Operador] No se pudo tomar el candado para la fila " + fila + ": el tilde no se anota.");
-    return false;
-  }
-  try {
-    const hoja = _operadorTildeHoja(spreadsheet, true);
-    const datos = [Number(fila), Number(col), String(cliente || "").trim(), mail, new Date()];
-    const existente = _operadorTildeBuscar(hoja, fila, col);
-    if (existente > 0) hoja.getRange(existente, 1, 1, datos.length).setValues([datos]);
-    else hoja.getRange(hoja.getLastRow() + 1, 1, 1, datos.length).setValues([datos]);
-    SpreadsheetApp.flush();
-    Logger.log("[Operador] Anotado: fila " + fila + ", col " + col + " (" + datos[2] + ") -> " + mail);
-    return true;
-  } finally {
-    candado.releaseLock();
+    // Podar es prolijidad, no parte del trabajo: si falla, el tilde ya quedó anotado.
+    Logger.log("[Operador] No se pudo podar la pestaña: " + e.message);
   }
 }
 
@@ -134,6 +157,9 @@ function leerOperadorTilde(spreadsheet, fila, col, clienteActual) {
 /** Borra el tilde anotado (después de que el mail salió, o si se destildó). */
 function olvidarOperadorTilde(spreadsheet, fila, col) {
   const hoja = _operadorTildeHoja(spreadsheet, false);
-  const existente = _operadorTildeBuscar(hoja, fila, col);
-  if (existente > 0) hoja.deleteRow(existente);
+  // Todas, no solo la última: re-tildar una casilla deja varias anotaciones, y si quedara
+  // alguna, el envío de mañana tomaría al operador de hoy.
+  // De atrás para adelante, para que borrar una no corra el número de las otras.
+  const filas = _operadorTildeBuscarTodas(hoja, fila, col);
+  for (let i = filas.length - 1; i >= 0; i--) hoja.deleteRow(filas[i]);
 }

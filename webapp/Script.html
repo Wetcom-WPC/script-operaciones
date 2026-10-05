@@ -2725,10 +2725,38 @@
     return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
   }
 
+  function hoyISO() {
+    var d = new Date();
+    var m = d.getMonth() + 1, dd = d.getDate();
+    return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (dd < 10 ? '0' : '') + dd;
+  }
+
   function leerFiltrosLlegadas() {
     var v = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
+    var periodo = v('filtroDiasLlegadas');
+
+    // "dias" es cuánto se le pide al servidor; "desde/hasta" recorta del lado del navegador.
+    // Para un rango con fecha de inicio vieja hay que pedir hasta ahí, si no faltarían datos.
+    var dias = 30, desde = '', hasta = '';
+    if (periodo === 'hoy') {
+      dias = 1; desde = hoyISO(); hasta = hoyISO();
+    } else if (periodo === 'rango') {
+      desde = v('desdeLlegadas');
+      hasta = v('hastaLlegadas');
+      if (desde) {
+        var atras = Math.ceil((Date.now() - new Date(desde + 'T00:00:00').getTime()) / 86400000);
+        dias = Math.min(Math.max(atras + 1, 1), 180);
+      } else {
+        dias = 90;   // sin fecha de inicio todavía, se trae un período amplio
+      }
+    } else {
+      dias = parseInt(periodo, 10) || 30;
+    }
+
     return {
-      dias: parseInt(v('filtroDiasLlegadas'), 10) || 30,
+      dias: dias,
+      desde: desde,
+      hasta: hasta,
       cliente: v('filtroClienteLlegadas'),
       pod: v('filtroPodLlegadas'),
       reporte: v('filtroReporteLlegadas'),
@@ -2741,6 +2769,8 @@
   function filtrarLlegadas(f) {
     if (!llegadasGlobal) return [];
     return (llegadasGlobal.llegadas || []).filter(function(l) {
+      if (f.desde && l.fecha < f.desde) return false;
+      if (f.hasta && l.fecha > f.hasta) return false;
       if (f.cliente && l.cliente !== f.cliente) return false;
       if (f.pod && l.pod !== f.pod) return false;
       if (f.reporte && l.reporte !== f.reporte) return false;
@@ -2756,6 +2786,8 @@
   function filtrarFaltantes(f) {
     if (!llegadasGlobal) return [];
     return (llegadasGlobal.faltantes || []).filter(function(x) {
+      if (f.desde && x.fecha < f.desde) return false;
+      if (f.hasta && x.fecha > f.hasta) return false;
       if (f.cliente && x.cliente.indexOf(f.cliente) === -1) return false;
       if (f.reporte && x.reporte !== f.reporte) return false;
       return true;
@@ -3410,7 +3442,22 @@
     });
     // El período cambia cuántos días pide el servidor, así que hay que volver a traer.
     var selDias = document.getElementById('filtroDiasLlegadas');
-    if (selDias) selDias.addEventListener('change', function() { cargarLlegadas(false); });
+    var rango = document.getElementById('rangoLlegadas');
+    var verRango = function() {
+      if (rango) rango.style.display = (selDias && selDias.value === 'rango') ? 'inline-flex' : 'none';
+    };
+    if (selDias) {
+      selDias.addEventListener('change', function() {
+        verRango();
+        // Al elegir Rango todavia no hay fechas cargadas: se espera a que las complete.
+        if (selDias.value !== 'rango') cargarLlegadas(false);
+      });
+      verRango();
+    }
+    ['desdeLlegadas', 'hastaLlegadas'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('change', function() { cargarLlegadas(false); });
+    });
 
     document.querySelectorAll('[data-tab-llegadas]').forEach(function(b) {
       b.addEventListener('click', function() {

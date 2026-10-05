@@ -306,10 +306,17 @@
 
         <div class="filter-toolbar" style="margin-bottom: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
           <select id="filtroDiasLlegadas" class="select-control" aria-label="Período">
+            <option value="hoy">Hoy</option>
             <option value="7">Últimos 7 días</option>
             <option value="30" selected>Últimos 30 días</option>
             <option value="90">Últimos 90 días</option>
+            <option value="rango">Rango de fechas...</option>
           </select>
+          <span id="rangoLlegadas" style="display: none; gap: 8px; align-items: center;">
+            <input type="date" id="desdeLlegadas" class="select-control" aria-label="Desde">
+            <span class="ayuda">a</span>
+            <input type="date" id="hastaLlegadas" class="select-control" aria-label="Hasta">
+          </span>
           <select id="filtroClienteLlegadas" class="select-control" aria-label="Filtrar por cliente">
             <option value="">Todos los clientes</option>
           </select>
