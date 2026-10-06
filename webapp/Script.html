@@ -53,16 +53,23 @@
 
   function ocupar(boton, textoEspera) {
     boton.disabled = true;
-    boton.dataset.textoOriginal = boton.textContent;
+    // Solo se guarda el texto la PRIMERA vez. Si se llama dos veces seguidas sin liberar en el
+    // medio, la segunda guardaría el texto de espera y el botón se quedaría con "Cargando..."
+    // para siempre.
+    if (!boton.dataset.textoOriginal) boton.dataset.textoOriginal = boton.textContent;
     vaciar(boton);
     boton.appendChild(crear('span', 'hilando'));
-    boton.appendChild(document.createTextNode(textoEspera));
+    boton.appendChild(document.createTextNode(textoEspera || ''));
   }
 
   function liberar(boton) {
     boton.disabled = false;
+    // Si nunca se ocupó, no hay nada que restaurar: vaciarlo igual le borraría la etiqueta y
+    // el botón quedaría en blanco. Pasaba en "Llegada de Reportes", donde el ocupar estaba
+    // condicionado a forzar y el liberar no.
+    if (!boton.dataset.textoOriginal) return;
     vaciar(boton);
-    boton.textContent = boton.dataset.textoOriginal || boton.textContent;
+    boton.textContent = boton.dataset.textoOriginal;
   }
 
   function mostrarAviso(nodo, tipo, texto, acciones) {
@@ -3653,16 +3660,18 @@
     var btn = document.getElementById('btnActualizarLlegadas');
     var aviso = document.getElementById('avisoLlegadas');
     var f = leerFiltrosLlegadas();
+    // El ocupar y el liberar van siempre juntos y con la misma condición: si solo se libera,
+    // el botón pierde su etiqueta y queda en blanco.
     if (forzar && btn) ocupar(btn, 'Buscando correos nuevos...');
     google.script.run
       .withSuccessHandler(function(r) {
-        if (btn) liberar(btn);
+        if (forzar && btn) liberar(btn);
         llegadasGlobal = r;
         llenarFiltrosLlegadas();
         pintarLlegadas();
       })
       .withFailureHandler(function(err) {
-        if (btn) liberar(btn);
+        if (forzar && btn) liberar(btn);
         if (aviso) mostrarAviso(aviso, 'error', 'No se pudieron traer las llegadas: ' + err.message);
       })
       .webapp_obtenerLlegadasReportes(f.dias, !!forzar);
