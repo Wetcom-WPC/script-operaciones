@@ -260,7 +260,14 @@ class VMsConSnapshotsProcessor extends MailProcessor {
             // PASO 3: Evaluar OPS
             const matchedOpsRules = findAllMatchingRules(row, headers, clientConfig.exceptions);
             
-            const hasIgnorarOps = matchedOpsRules.some(r => r.criterio === 'ignorar' || r.criterio === 'exceptuar');
+            // Cualquier criterio que NO sea 'considerar' silencia la VM: 'ignorar', 'exceptuar'
+            // y también el criterio VACÍO. Lo último importa: en las planillas de excepciones
+            // de los clientes hay reglas con la celda de criterio en blanco, y la versión
+            // productiva las viene tratando como "ignorar" desde siempre. Si acá solo se
+            // contemplaran 'ignorar' y 'exceptuar', esas VMs pasarían a evaluarse con los
+            // umbrales hardcodeados y empezarían a generar tickets nuevos, que es justo lo
+            // contrario de para lo que el cliente cargó la excepción.
+            const hasIgnorarOps = matchedOpsRules.some(r => r.criterio !== 'considerar');
             const considerarOpsRules = matchedOpsRules.filter(r => r.criterio === 'considerar');
 
             if (matchedOpsRules.length > 0) {
