@@ -221,6 +221,8 @@ class VMsConSnapshotsProcessor extends MailProcessor {
          Logger.log('[DEBUG SOPORTE] VM MATCH SOP: ' + matchedSopRules.length + ' regla(s) para VM=' + vmName);
       }
 
+      let fallsToOps = false;
+
       if (!hasExceptuarSop && considerarSopRules.length > 0) {
          // → Ticket SOPORTE con umbrales personalizados
          let rowBreaksRule = false;
@@ -231,76 +233,76 @@ class VMsConSnapshotsProcessor extends MailProcessor {
                break; // Con que rompa una regla alcanza
             }
          }
-         if (rowBreaksRule) soporteAlerts.push(row);
-
-      } else {
-         // Si es 'exceptuar' de SOP o si no hay regla SOP
-         let fallsToOps = false;
-         
-         if (hasExceptuarSop) {
-            // Está exceptuada de SOP explícitamente -> pasamos directo a evaluar OPS
-            fallsToOps = true;
+         if (rowBreaksRule) {
+            soporteAlerts.push(row);
          } else {
-            // PASO 2: Evaluar umbrales SOP Hardcodeados (Safety net)
-            let sopBreaksRule = false;
-            if (age >= SOP_AGE_MAX) { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
-            // PUNTO 1: Solo alertar por tamaño en Soporte si tiene al menos 24 horas de vida (age >= 1)
-            if (space >= SOP_SIZE_MAX && age >= 1) { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB (Antigüedad >= 1 día)`); sopBreaksRule = true; }
-            if (count >= SOP_CANTIDAD_MAX) { detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`); sopBreaksRule = true; }
-            
-            if (sopBreaksRule) {
-               Logger.log('[DEBUG EVAL] -> VM asignada a SOPORTE por umbrales hardcodeados: ' + vmName);
-               soporteAlerts.push(row);
-            } else {
-               fallsToOps = true;
-            }
+            // Si la VM no superó los umbrales de Soporte, continúa a evaluar los umbrales de Operaciones
+            fallsToOps = true;
          }
 
-         if (fallsToOps) {
-            // PASO 3: Evaluar OPS
-            const matchedOpsRules = findAllMatchingRules(row, headers, clientConfig.exceptions);
-            
-            // Cualquier criterio que NO sea 'considerar' silencia la VM: 'ignorar', 'exceptuar'
-            // y también el criterio VACÍO. Lo último importa: en las planillas de excepciones
-            // de los clientes hay reglas con la celda de criterio en blanco, y la versión
-            // productiva las viene tratando como "ignorar" desde siempre. Si acá solo se
-            // contemplaran 'ignorar' y 'exceptuar', esas VMs pasarían a evaluarse con los
-            // umbrales hardcodeados y empezarían a generar tickets nuevos, que es justo lo
-            // contrario de para lo que el cliente cargó la excepción.
-            const hasIgnorarOps = matchedOpsRules.some(r => r.criterio !== 'considerar');
-            const considerarOpsRules = matchedOpsRules.filter(r => r.criterio === 'considerar');
+      } else if (hasExceptuarSop) {
+         // Está exceptuada de SOP explícitamente -> pasamos directo a evaluar OPS
+         fallsToOps = true;
+      } else {
+         // PASO 2: Evaluar umbrales SOP Hardcodeados (Safety net)
+         let sopBreaksRule = false;
+         if (age >= SOP_AGE_MAX) { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
+         // PUNTO 1: Solo alertar por tamaño en Soporte si tiene al menos 24 horas de vida (age >= 1)
+         if (space >= SOP_SIZE_MAX && age >= 1) { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB (Antigüedad >= 1 día)`); sopBreaksRule = true; }
+         if (count >= SOP_CANTIDAD_MAX) { detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`); sopBreaksRule = true; }
+         
+         if (sopBreaksRule) {
+            Logger.log('[DEBUG EVAL] -> VM asignada a SOPORTE por umbrales hardcodeados: ' + vmName);
+            soporteAlerts.push(row);
+         } else {
+            fallsToOps = true;
+         }
+      }
 
-            if (matchedOpsRules.length > 0) {
-               Logger.log('[DEBUG OPS] VM MATCH OPS: ' + matchedOpsRules.length + ' regla(s) para VM=' + vmName);
+      if (fallsToOps) {
+         // PASO 3: Evaluar OPS
+         const matchedOpsRules = findAllMatchingRules(row, headers, clientConfig.exceptions);
+         
+         // Cualquier criterio que NO sea 'considerar' silencia la VM: 'ignorar', 'exceptuar'
+         // y también el criterio VACÍO. Lo último importa: en las planillas de excepciones
+         // de los clientes hay reglas con la celda de criterio en blanco, y la versión
+         // productiva las viene tratando como "ignorar" desde siempre. Si acá solo se
+         // contemplaran 'ignorar' y 'exceptuar', esas VMs pasarían a evaluarse con los
+         // umbrales hardcodeados y empezarían a generar tickets nuevos, que es justo lo
+         // contrario de para lo que el cliente cargó la excepción.
+         const hasIgnorarOps = matchedOpsRules.some(r => r.criterio !== 'considerar');
+         const considerarOpsRules = matchedOpsRules.filter(r => r.criterio === 'considerar');
+
+         if (matchedOpsRules.length > 0) {
+            Logger.log('[DEBUG OPS] VM MATCH OPS: ' + matchedOpsRules.length + ' regla(s) para VM=' + vmName);
+         }
+
+         if (hasIgnorarOps) {
+            Logger.log('[DEBUG EVAL] -> VM IGNORADA por regla OPS explícita: ' + vmName);
+         } else if (considerarOpsRules.length > 0) {
+            // Umbrales OPS personalizados
+            let rowBreaksRule = false;
+            for (const rule of considerarOpsRules) {
+               if (_evaluaRegla(rule, age, space, count, usedPercent, detectedReasonsOps, false)) {
+                  rowBreaksRule = true;
+                  Logger.log('[DEBUG EVAL] -> VM asignada a OPS por regla personalizada (' + rule.exceptionId + '): ' + vmName);
+                  break; // Con que rompa una regla alcanza
+               }
             }
-
-            if (hasIgnorarOps) {
-               Logger.log('[DEBUG EVAL] -> VM IGNORADA por regla OPS explícita: ' + vmName);
-            } else if (considerarOpsRules.length > 0) {
-               // Umbrales OPS personalizados
-               let rowBreaksRule = false;
-               for (const rule of considerarOpsRules) {
-                  if (_evaluaRegla(rule, age, space, count, usedPercent, detectedReasonsOps, false)) {
-                     rowBreaksRule = true;
-                     Logger.log('[DEBUG EVAL] -> VM asignada a OPS por regla personalizada (' + rule.exceptionId + '): ' + vmName);
-                     break; // Con que rompa una regla alcanza
-                  }
-               }
-               
-               if (rowBreaksRule) {
-                  opsAlerts.push(row);
-               }
-            } else {
-               // PASO 4: Evaluar umbrales OPS Hardcodeados
-               let rowBreaksRule = false;
-               if (age >= AGE_MAX) { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
-               if (space >= SIZE_MAX) { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
-               if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
-               
-               if (rowBreaksRule) {
-                  Logger.log('[DEBUG EVAL] -> VM asignada a OPS (umbrales hardcodeados): ' + vmName);
-                  opsAlerts.push(row);
-               }
+            
+            if (rowBreaksRule) {
+               opsAlerts.push(row);
+            }
+         } else {
+            // PASO 4: Evaluar umbrales OPS Hardcodeados
+            let rowBreaksRule = false;
+            if (age >= AGE_MAX) { detectedReasonsOps.add(`Antigüedad >= ${AGE_MAX} días`); rowBreaksRule = true; }
+            if (space >= SIZE_MAX) { detectedReasonsOps.add(`Tamaño >= ${SIZE_MAX} GB`); rowBreaksRule = true; }
+            if (count >= CANTIDAD_MAX) { detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`); rowBreaksRule = true; }
+            
+            if (rowBreaksRule) {
+               Logger.log('[DEBUG EVAL] -> VM asignada a OPS (umbrales hardcodeados): ' + vmName);
+               opsAlerts.push(row);
             }
          }
       }
