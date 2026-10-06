@@ -27,6 +27,36 @@
 // abrir igual pero no sirve para trabajar.
 const RVTOOLS_PESTANAS_NECESARIAS = ["vMetaData", "vHealth", "vNetwork"];
 
+// Archivos que conviven con los RVTools en la misma carpeta de Drive pero NO son RVTools, así
+// que no hay que verificarlos ni contarlos como tales.
+//
+// Nutanix Collector es el caso real: es el equivalente de RVTools para Nutanix y los clientes
+// lo suben a la misma carpeta de la semana. Imita bastante el formato —trae vNetwork, vInfo,
+// vCPU, vDisk— pero no tiene vMetaData ni vHealth (su pestaña se llama "Metadata", sin la v).
+// La verificación lo abría, no encontraba las pestañas que necesita la automatización y lo
+// marcaba como "posible archivo corrupto": el semáforo quedaba en ⚠️ por un archivo que está
+// perfecto, solo que es de otra herramienta.
+//
+// Se filtra por nombre a propósito: es lo único que se puede saber sin abrir el archivo, y
+// abrir es justamente la parte cara. Los exports del Collector salen siempre con el prefijo
+// "ntnxcollector" seguido de la fecha (ntnxcollector2026_9_30_10_6_43.xlsx).
+const RVTOOLS_ARCHIVOS_NO_RVTOOLS = [
+  { patron: /^ntnxcollector/i, herramienta: "Nutanix Collector" }
+];
+
+/**
+ * Si el archivo es de otra herramienta que vive en la misma carpeta, devuelve cuál.
+ * @param {string} nombre Nombre del archivo.
+ * @returns {string|null} Nombre de la herramienta, o null si es (o debería ser) un RVTools.
+ */
+function rvtoolsHerramientaAjena(nombre) {
+  const n = String(nombre || "").trim();
+  for (let i = 0; i < RVTOOLS_ARCHIVOS_NO_RVTOOLS.length; i++) {
+    if (RVTOOLS_ARCHIVOS_NO_RVTOOLS[i].patron.test(n)) return RVTOOLS_ARCHIVOS_NO_RVTOOLS[i].herramienta;
+  }
+  return null;
+}
+
 const RVTOOLS_TAB_VERIFICACION = "Verificación RVTools";
 const RVTOOLS_COLS_VERIFICACION = ["Huella", "Cliente", "Carpeta", "Archivo", "Estado", "Detalle", "Verificado"];
 
@@ -57,13 +87,17 @@ function rvtoolsListarPlanillas(carpeta) {
   const it = carpeta.getFiles();
   while (it.hasNext()) {
     const f = it.next();
+    const nombre = f.getName();
+    const ajena = rvtoolsHerramientaAjena(nombre);
     todos.push({
       id: f.getId(),
-      nombre: f.getName(),
+      nombre: nombre,
       bytes: f.getSize(),
       tipo: f.getMimeType(),
       actualizadoMs: f.getLastUpdated().getTime(),
-      esPlanilla: /\.(xlsx|xlsm)$/i.test(f.getName())
+      // De otra herramienta (ver RVTOOLS_ARCHIVOS_NO_RVTOOLS): no se verifica ni cuenta.
+      herramientaAjena: ajena,
+      esPlanilla: /\.(xlsx|xlsm)$/i.test(nombre) && !ajena
     });
   }
   return todos;
@@ -97,11 +131,15 @@ function rvtoolsRevisarCarpeta(carpeta, nombreCarpeta) {
 
   const planillas = archivos.filter(function (a) { return a.esPlanilla; });
   if (!planillas.length) {
-    return {
-      estado: "sin_planillas",
-      detalle: "La carpeta " + nombreCarpeta + " tiene " + archivos.length + " archivo(s) pero ninguno es .xlsx o .xlsm.",
-      planillas: []
-    };
+    // Si lo único que hay es de otra herramienta, decirlo con nombre y apellido: "ninguno es
+    // .xlsx" sería mentira y mandaría a buscar el problema donde no está.
+    const ajenos = archivos.filter(function (a) { return a.herramientaAjena; });
+    const detalle = ajenos.length === archivos.length
+      ? "La carpeta " + nombreCarpeta + " solo tiene archivos de " +
+        _rvtoolsHerramientasDe(ajenos) + ": falta el RVTools."
+      : "La carpeta " + nombreCarpeta + " tiene " + archivos.length + " archivo(s) pero ninguno es un RVTools (.xlsx o .xlsm)." +
+        (ajenos.length ? " Se ignoraron " + ajenos.length + " de " + _rvtoolsHerramientasDe(ajenos) + "." : "");
+    return { estado: "sin_planillas", detalle: detalle, planillas: [] };
   }
 
   const vacios = planillas.filter(function (a) { return !a.bytes; });
@@ -129,11 +167,23 @@ function rvtoolsRevisarCarpeta(carpeta, nombreCarpeta) {
     }
   }
 
+  const ajenos = archivos.filter(function (a) { return a.herramientaAjena; });
   return {
     estado: "ok",
-    detalle: planillas.length + " planilla(s) en " + nombreCarpeta,
+    detalle: planillas.length + " planilla(s) en " + nombreCarpeta +
+      (ajenos.length ? " (+" + ajenos.length + " de " + _rvtoolsHerramientasDe(ajenos) + ", que no se verifican)" : ""),
     planillas: planillas
   };
+}
+
+/** "Nutanix Collector", o "Nutanix Collector y X" si hubiera más de una herramienta. */
+function _rvtoolsHerramientasDe(archivos) {
+  const nombres = [];
+  archivos.forEach(function (a) {
+    if (a.herramientaAjena && nombres.indexOf(a.herramientaAjena) === -1) nombres.push(a.herramientaAjena);
+  });
+  if (nombres.length <= 1) return nombres[0] || "otra herramienta";
+  return nombres.slice(0, -1).join(", ") + " y " + nombres[nombres.length - 1];
 }
 
 // --- Nivel 2: abrir el archivo -------------------------------------------------------------
