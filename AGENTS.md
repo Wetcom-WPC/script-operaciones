@@ -147,6 +147,35 @@ venía usando el equipo (`clasp list-versions`). Nunca dejarla vacía — quedan
 Ojo: `clasp` v3 sacó `clasp version`; ahora el comando es `clasp create-version`
 (con `version` como alias).
 
+#### Un despliegue que SOLO borra archivos no llega a Apps Script
+
+`clasp push` (3.4.1) decide si hay algo para subir comparando los archivos que
+subiría. Un archivo que **existe en el remoto y ya no existe en local** no entra
+en esa comparación: clasp responde `Script is already up to date` y no llama a la
+API. `--force` tampoco ayuda — solo fuerza el manifiesto.
+
+El resultado es engañoso: `deploy.sh` termina bien, `clasp create-version` crea la
+versión igual, y el historial de Apps Script queda diciendo que se desplegó algo
+que nunca se desplegó. El archivo sigue vivo en el proyecto.
+
+Pasó el 07/10/2026 al sacar `veeam/RepositorioCodigoTotal.js` de Playground: el
+commit era solo un borrado, el despliegue informó éxito, creó la versión 126, y el
+archivo seguía ahí. Se resolvió borrándolo a mano desde el editor.
+
+Por qué el rename de carpetas del 06/10 sí funcionó: ahí había archivos nuevos
+para subir, el push se ejecutó de verdad, y la API reemplaza el contenido completo
+del proyecto — los viejos desaparecieron de paso. La trampa aparece únicamente
+cuando el commit no trae **ningún** archivo nuevo ni modificado.
+
+Si el cambio a desplegar es solo una baja de archivos, hay dos salidas:
+
+1. Borrar el archivo desde el editor de Apps Script (**Archivos → el tacho**).
+2. Juntarlo con algún cambio real de código, porque ahí el push sí se ejecuta.
+
+En los dos casos, confirmar con el `clasp pull` a una carpeta aparte que ya pide
+la sección 10: es el paso que convierte esto en algo que se detecta en el momento
+en vez de descubrirse semanas después.
+
 ### Regla 4 — Antes de pushear a Ops Operativo, respaldar el código productivo vigente
 
 El código que está corriendo en producción en Apps Script **puede no coincidir
