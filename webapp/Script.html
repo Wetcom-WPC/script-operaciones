@@ -1633,6 +1633,139 @@
       });
   }
 
+  // --- Permisos del panel --------------------------------------------------------------------
+  // Quién entra y qué ve. La pantalla es solo para admin, pero eso no es lo que protege nada:
+  // webapp_listarPermisos y webapp_guardarPermiso verifican el rol en el servidor.
+
+  var permisosGlobal = null;
+
+  function cargarPermisos(btn) {
+    var aviso = document.getElementById('avisoPermisos');
+    if (aviso) aviso.hidden = true;
+    if (btn) ocupar(btn, 'Cargando...');
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (btn) liberar(btn);
+        permisosGlobal = r;
+        pintarPermisos();
+      })
+      .withFailureHandler(function (err) {
+        if (btn) liberar(btn);
+        mostrarAviso(aviso, 'error', 'No se pudieron leer los permisos: ' + mensajeDeError(err));
+      })
+      .webapp_listarPermisos();
+  }
+
+  function pintarPermisos() {
+    var cuerpo = document.getElementById('cuerpoPermisos');
+    if (!cuerpo || !permisosGlobal) return;
+    vaciar(cuerpo);
+
+    var aviso = document.getElementById('avisoPermisos');
+    if (!permisosGlobal.configurado) {
+      mostrarAviso(aviso, 'atencion', 'Todavía no hay permisos cargados, así que entra todo el ' +
+        'dominio como admin. Cargá primero tu propio mail como admin y confirmá que seguís ' +
+        'entrando, antes de sumar a nadie más.');
+    }
+
+    (permisosGlobal.permisos || []).forEach(function (p) {
+      var tr = crear('tr');
+      var tdMail = crear('td', null, p.email);
+      if (p.email === permisosGlobal.yo) {
+        tdMail.appendChild(crear('span', 'pildora', 'vos'));
+      }
+      tr.appendChild(tdMail);
+      tr.appendChild(crear('td', null, p.rol));
+      tr.appendChild(crear('td', null, (p.pods || []).join(', ') || '—'));
+      tr.appendChild(crear('td', null, p.notas || ''));
+
+      var tdAcciones = crear('td');
+      var editar = crear('button', 'btn-chico', 'Editar');
+      editar.type = 'button';
+      editar.addEventListener('click', function () {
+        document.getElementById('permisoEmail').value = p.email;
+        document.getElementById('permisoRol').value = p.rol;
+        document.getElementById('permisoPods').value = (p.pods || []).join(',');
+        document.getElementById('permisoNotas').value = p.notas || '';
+        document.getElementById('permisoEmail').focus();
+      });
+      tdAcciones.appendChild(editar);
+
+      // A uno mismo no se puede sacar: el servidor también lo rechaza, pero no ofrecer el botón
+      // evita el intento y la explicación.
+      if (p.email !== permisosGlobal.yo) {
+        var quitar = crear('button', 'btn-chico', 'Quitar');
+        quitar.type = 'button';
+        quitar.style.marginLeft = '6px';
+        quitar.addEventListener('click', function () {
+          if (!confirm('¿Sacarle el acceso al panel a ' + p.email + '?')) return;
+          guardarPermiso({ email: p.email, rol: '' }, quitar);
+        });
+        tdAcciones.appendChild(quitar);
+      }
+      tr.appendChild(tdAcciones);
+      cuerpo.appendChild(tr);
+    });
+
+    if (!(permisosGlobal.permisos || []).length) {
+      var vacia = crear('tr');
+      var td = crear('td', null, 'Sin permisos cargados.');
+      td.colSpan = 5;
+      td.style.color = 'var(--gris)';
+      vacia.appendChild(td);
+      cuerpo.appendChild(vacia);
+    }
+  }
+
+  function guardarPermiso(datos, btn) {
+    var aviso = document.getElementById('avisoPermisos');
+    if (aviso) aviso.hidden = true;
+    ocupar(btn, 'Guardando...');
+    google.script.run
+      .withSuccessHandler(function (r) {
+        liberar(btn);
+        permisosGlobal = r;
+        pintarPermisos();
+        ['permisoEmail', 'permisoPods', 'permisoNotas'].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+      })
+      .withFailureHandler(function (err) {
+        liberar(btn);
+        mostrarAviso(aviso, 'error', mensajeDeError(err));
+      })
+      .webapp_guardarPermiso(datos);
+  }
+
+  function inicializarPermisos() {
+    var btnActualizar = document.getElementById('btnActualizarPermisos');
+    if (btnActualizar) {
+      btnActualizar.addEventListener('click', function () { cargarPermisos(btnActualizar); });
+    }
+    var btnGuardar = document.getElementById('btnGuardarPermiso');
+    if (btnGuardar) {
+      btnGuardar.addEventListener('click', function () {
+        var rol = document.getElementById('permisoRol').value;
+        guardarPermiso({
+          email: document.getElementById('permisoEmail').value,
+          rol: rol,
+          pods: rol === 'pod' ? document.getElementById('permisoPods').value : '',
+          notas: document.getElementById('permisoNotas').value
+        }, btnGuardar);
+      });
+    }
+    // El campo de PODs solo tiene sentido para el rol "pod".
+    var selRol = document.getElementById('permisoRol');
+    var inpPods = document.getElementById('permisoPods');
+    var verPods = function () {
+      if (inpPods) inpPods.parentElement.style.display = (selRol.value === 'pod') ? '' : 'none';
+    };
+    if (selRol) { selRol.addEventListener('change', verPods); verPods(); }
+
+    cargarPermisos(null);
+  }
+
   /** Clave de cliente del Histórico a partir de su nombre. */
   function claveDeCliente(nombre) {
     var cli = (horariosGlobal.clientes || []).filter(function(c) { return c.nombre === nombre; })[0];
@@ -2449,6 +2582,8 @@
       // Al entrar solo se LEE lo registrado. Buscar correos nuevos tarda minutos, así que eso
       // pasa únicamente cuando el usuario aprieta Actualizar.
       inicializarLlegadas();
+    } else if (targetId === 'seccion-permisos' && !permisosGlobal) {
+      inicializarPermisos();
     }
   }
 

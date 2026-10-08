@@ -64,7 +64,7 @@ function _webappLeerPermisos() {
           const pods = String(r[2] || '').split(',')
             .map(function (p) { return p.trim().toUpperCase(); })
             .filter(function (p) { return p; });
-          resultado.filas[email] = { email: email, rol: rol, pods: pods };
+          resultado.filas[email] = { email: email, rol: rol, pods: pods, notas: String(r[4] || '') };
           resultado.configurado = true;
         });
     }

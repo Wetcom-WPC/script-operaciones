@@ -40,6 +40,7 @@
         <button class="nav-btn" data-seccion="seccion-logs">Logs del Sistema</button>
         <button class="nav-btn" data-seccion="seccion-jira">Tickets Jira</button>
         <button class="nav-btn" data-seccion="seccion-reportes">Reportes Analíticos</button>
+        <button class="nav-btn" data-seccion="seccion-permisos">🔑 Permisos</button>
       </nav>
 
       <!-- VISTA: INICIO Y BANDEJA -->
@@ -555,6 +556,60 @@
       <!-- 6. Control de Envíos (Índice) ---------------------------------------------------- -->
       <section id="seccion-indice" class="tarjeta vista-seccion">
         <?!= webapp_include('webapp/IndiceControl') ?>
+      </section>
+
+      <!-- VISTA: PERMISOS -->
+      <section id="seccion-permisos" class="tarjeta vista-seccion">
+        <header>
+          <div>
+            <h2>Permisos del Panel</h2>
+            <p class="ayuda">
+              Quién entra y qué ve. <strong>admin</strong> ve todo el panel y puede ejecutar
+              acciones; <strong>pod</strong> es solo lectura y únicamente de los PODs que tenga
+              asignados.
+            </p>
+          </div>
+          <button id="btnActualizarPermisos" class="btn-primario">Actualizar</button>
+        </header>
+
+        <div id="avisoPermisos" class="aviso" hidden></div>
+
+        <div class="filter-toolbar" style="align-items: flex-end;">
+          <label class="etiqueta-campo" style="margin: 0;">
+            Mail
+            <input id="permisoEmail" type="email" class="select-control"
+                   placeholder="nombre.apellido@wetcom.com" style="min-width: 260px;">
+          </label>
+          <label class="etiqueta-campo" style="margin: 0;">
+            Rol
+            <select id="permisoRol" class="select-control">
+              <option value="pod">pod</option>
+              <option value="admin">admin</option>
+            </select>
+          </label>
+          <label class="etiqueta-campo" style="margin: 0;">
+            PODs
+            <input id="permisoPods" type="text" class="select-control"
+                   placeholder="POD2  o  POD2,POD3" style="min-width: 160px;">
+          </label>
+          <label class="etiqueta-campo" style="margin: 0;">
+            Notas
+            <input id="permisoNotas" type="text" class="select-control"
+                   placeholder="opcional" style="min-width: 180px;">
+          </label>
+          <button id="btnGuardarPermiso" class="btn-primario">Guardar</button>
+        </div>
+
+        <div class="matriz-container" style="overflow-x: auto;">
+          <table class="matriz-table tabla-logs" id="tablaPermisos" style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr>
+                <th>Mail</th><th>Rol</th><th>PODs</th><th>Notas</th><th></th>
+              </tr>
+            </thead>
+            <tbody id="cuerpoPermisos"></tbody>
+          </table>
+        </div>
       </section>
 
       <!-- MODAL DETALLE DE CLIENTE EN MATRIZ -->
