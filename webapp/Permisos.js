@@ -131,6 +131,16 @@ function webapp_permisoActual() {
  * @returns {Object} El permiso, para no tener que volver a calcularlo.
  */
 function webapp_exigirPermiso(usuario) {
+  // Session.getActiveUser() devuelve vacío en algunos casos (cuenta fuera del dominio, o
+  // ciertos contextos de ejecución). Sin esto, esa persona caería en el "no figura en la
+  // pestaña" y se le diría que pida permiso, cuando el problema es otro y pedir permiso no lo
+  // arregla. Distinguirlo es la diferencia entre un pedido al equipo y un ticket.
+  if (!String(usuario || '').trim()) {
+    Logger.log('[WebApp] No se pudo identificar al usuario (getActiveUser vacío).');
+    throw new Error('No se pudo identificar tu cuenta de Google. Entrá con tu cuenta @wetcom.com, ' +
+      'o avisale al equipo de Operaciones si ya estás con ella.');
+  }
+
   const permiso = webapp_permisoDe(usuario);
   if (!permiso.rol) {
     Logger.log('[WebApp] Acceso denegado a "' + usuario + '": no figura en ' + WEBAPP_TAB_PERMISOS);

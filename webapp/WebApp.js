@@ -43,10 +43,20 @@ const WEBAPP_FUNCION_CICLO = 'ejecutarCicloDeOperaciones';
  */
 function doGet(e) {
   const usuario = webapp_usuarioActual();
+  let estadoInicial;
 
-  if (!webapp_estaAutorizado(usuario)) {
-    return HtmlService.createTemplateFromFile('webapp/SinAcceso')
-      .evaluate()
+  // Los dos motivos para no entrar —la Script Property y la pestaña de permisos— terminan en
+  // la MISMA pantalla, con el motivo concreto. Sin este try, quien no figura en la pestaña se
+  // comía la pantalla de error cruda de Apps Script, que no dice qué hacer.
+  try {
+    if (!webapp_estaAutorizado(usuario)) {
+      throw new Error('Tu cuenta no está en la lista de usuarios habilitados del panel.');
+    }
+    estadoInicial = webapp_estado();
+  } catch (err) {
+    const pagina = HtmlService.createTemplateFromFile('webapp/SinAcceso');
+    pagina.motivo = String(err && err.message ? err.message : err);
+    return pagina.evaluate()
       .setTitle('Operaciones WETCOM')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
   }
@@ -55,7 +65,7 @@ function doGet(e) {
   // El JSON se incrusta dentro de un <script> de la página. Un asunto de correo que contenga
   // "</script>" cerraría el bloque antes de tiempo: escapando el "<" queda inofensivo y JSON
   // sigue siendo válido (< es el mismo carácter para el parser).
-  plantilla.estadoInicial = JSON.stringify(webapp_estado()).replace(/</g, '\\u003c');
+  plantilla.estadoInicial = JSON.stringify(estadoInicial).replace(/</g, '\\u003c');
 
   return plantilla.evaluate()
     .setTitle('Operaciones WETCOM')

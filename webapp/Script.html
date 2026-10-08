@@ -90,6 +90,38 @@
 
   // --- Encabezado y contexto ----------------------------------------------------------------
 
+  /** ¿Quien mira puede ver todo el panel? Mientras los permisos no estén configurados, sí. */
+  function esAdmin() {
+    return !estado.permiso || estado.permiso.todo === true;
+  }
+
+  /**
+   * Deja visibles solo las secciones del rol de quien mira.
+   *
+   * Esto es COMODIDAD, no seguridad: cada función del servidor verifica el rol por su cuenta,
+   * así que esconder un botón acá no es lo que protege nada. Sirve para que un POD no vea
+   * siete pestañas de las que cinco le van a dar error.
+   */
+  function aplicarPermiso() {
+    var permiso = estado.permiso;
+    if (!permiso) return;
+
+    var botones = document.querySelectorAll('.nav-btn');
+    var primeroVisible = null;
+    for (var i = 0; i < botones.length; i++) {
+      var id = botones[i].getAttribute('data-seccion') || '';
+      var corta = id.replace(/^seccion-/, '');
+      var permitida = permiso.todo || (permiso.secciones || []).indexOf(corta) !== -1;
+      botones[i].hidden = !permitida;
+      if (permitida && !primeroVisible) primeroVisible = botones[i];
+    }
+
+    // Si la sección activa quedó oculta, hay que mover al usuario a una que sí pueda ver; si
+    // no, arranca mirando un panel vacío sin entender por qué.
+    var activo = document.querySelector('.nav-btn.active');
+    if (primeroVisible && (!activo || activo.hidden)) primeroVisible.click();
+  }
+
   function pintarEncabezado() {
     el.usuario.textContent = estado.usuario || '';
     el.casilla.textContent = estado.cuenta || 'casilla del deploy';
@@ -99,6 +131,15 @@
     vaciar(el.contexto);
     pildora(el.contexto, estado.fecha);
     pildora(el.contexto, 'Ventana operativa ' + estado.ventana.inicio + '–' + estado.ventana.fin + ' hs');
+
+    // Que un POD sepa que está viendo un recorte, y no crea que faltan clientes.
+    if (estado.permiso && !estado.permiso.todo) {
+      pildora(el.contexto, 'Viendo ' + (estado.permiso.pods || []).join(' y '));
+    }
+    // Aviso para nosotros: mientras la pestaña esté vacía, entra todo el dominio como admin.
+    if (estado.permiso && estado.permiso.configurado === false) {
+      pildora(el.contexto, 'Permisos sin configurar: entra todo el dominio', 'alerta');
+    }
 
     if (estado.testing) pildora(el.contexto, 'Entorno de PRUEBAS', 'testing');
     if (estado.feriado) pildora(el.contexto, 'Hoy es feriado: el ciclo se omite', 'alerta');
@@ -2881,8 +2922,14 @@
     selectEstadoIndice.addEventListener('change', renderizarTablaIndice);
   }
 
-  // Cargar estado inicial del Índice en segundo plano
-  cargarEstadoIndice(true);
+  // Cargar estado inicial del Índice en segundo plano.
+  // Solo admin: "Control de Envíos" es una sección interna y el servidor la rechaza para un
+  // usuario de POD. Sin este guard, abrir el panel le tiraba un error apenas entraba.
+  if (esAdmin()) cargarEstadoIndice(true);
+
+  // Antes de pintar nada: si quien mira es de un POD, no tiene sentido inicializar secciones
+  // que no va a poder abrir.
+  aplicarPermiso();
 
   pintarEncabezado();
   pintarBandeja();
@@ -2911,7 +2958,7 @@
 
     // Silencioso: sin spinner ni "Consultando...", para que la pantalla no parpadee cada
     // minuto delante de quien la está leyendo.
-    cargarEstadoIndice(true);
+    if (esAdmin()) cargarEstadoIndice(true);
   }, 60000);
 
   function webapp_calcularProximoEnvioLocal() {
