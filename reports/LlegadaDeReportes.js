@@ -47,17 +47,7 @@ function llegadasOrigenDelRemitente(remitente) {
   const r = String(remitente || "").toLowerCase().split("@")[0];
 
   // Veeam primero: "veeam-onemonitor" tiene "one" y "monitor", y sin este orden caeria en vROps.
-  if (r.indexOf("veeam") !== -1 || r.indexOf("backup") !== -1) {
-    // Veeam ONE y Veeam Backup & Replication son dos productos distintos y cada uno manda sus
-    // propios reportes, asi que no pueden compartir origen. Antes todo lo que dijera "veeam"
-    // caia en "Veeam ONE", y por eso los Malware Detection Logs de Balanz —que los genera
-    // Backup & Replication desde veeam@balanz.com— figuraban como Veeam ONE.
-    //
-    // La casilla de Veeam ONE se reconoce porque dice "one" (veeam-onemonitor@, veeamone@).
-    // Si aparece alguna que no lo diga, se agrega acá: es preferible que caiga en "Veeam" y
-    // se corrija, a que todo vuelva a mezclarse en una sola bolsa.
-    return /one/.test(r) ? "Veeam ONE" : "Veeam";
-  }
+  if (r.indexOf("veeam") !== -1 || r.indexOf("backup") !== -1) return "Veeam ONE";
 
   // vROps: las casillas de vRealize/Aria Operations.
   if (r.indexOf("vrops") !== -1 || r.indexOf("operations") !== -1) return "vROps";
@@ -300,11 +290,9 @@ function llegadasLeer(desdeISO) {
   const tab = _llegadasTab(false);
   if (!tab || tab.getLastRow() < 2) return [];
   const datos = tab.getRange(2, 1, tab.getLastRow() - 1, LLEGADAS_COLS.length).getValues();
-  // El cliente, el POD y el origen se resuelven acá y no se toman de la columna guardada: así,
-  // si el Índice cambia (o si se arregla un mapeo que estaba mal), las filas viejas se muestran
-  // bien sin tener que reprocesar nada. El origen entra en la misma bolsa porque es una
-  // inferencia sobre el remitente, no un dato del correo: cuando se corrigió que veeam@ es
-  // Backup & Replication y no Veeam ONE, las filas ya registradas se arreglaron solas.
+  // El cliente y el POD se resuelven acá y no se toman de la columna guardada: así, si el
+  // Índice cambia (o si se arregla un mapeo que estaba mal), las filas viejas se muestran
+  // bien sin tener que reprocesar nada.
   const mapa = llegadasMapaClientes();
   const out = [];
   datos.forEach(function (r) {
@@ -317,7 +305,7 @@ function llegadasLeer(desdeISO) {
       fecha: fecha,
       hora: r[1] instanceof Date ? Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, "HH:mm") : String(r[1] || ""),
       minutos: Number(r[2]) || 0,
-      origen: llegadasOrigenDelRemitente(remitente),
+      origen: String(r[3] || "Otro"),
       remitente: remitente,
       // Si no se puede resolver se muestra el mail: nunca una fila sin identificar.
       cliente: quien.cliente || String(r[5] || "") || remitente,
@@ -434,7 +422,7 @@ function patronesAtendidosLeer() {
 /** Llamado desde el dashboard al tildar un patrón. */
 function webapp_marcarPatronAtendido(datos) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
   const d = datos || {};
   patronesMarcarAtendido(d.tipo, d.remitente, d.reporte, d.cliente, d.evidenciaHasta, d.nota, usuario);
   return { ok: true, atendidos: patronesAtendidosLeer() };

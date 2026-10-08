@@ -72,25 +72,6 @@
     boton.textContent = boton.dataset.textoOriginal;
   }
 
-  /**
-   * Texto legible de un error de google.script.run.
-   *
-   * No siempre llega un Error con .message: cuando la llamada se corta por tiempo, o el
-   * servidor devuelve algo que no se puede serializar, el handler recibe un objeto sin
-   * mensaje y concatenarlo a mano imprimía "undefined". Eso dejaba al usuario y a nosotros
-   * sin ninguna pista de qué pasó, que es peor que el error en sí.
-   */
-  function mensajeDeError(err) {
-    if (!err) return 'el servidor cortó la llamada sin devolver un motivo (suele ser por tiempo: probá de nuevo).';
-    if (typeof err === 'string') return err;
-    if (err.message) return err.message;
-    try {
-      var txt = JSON.stringify(err);
-      if (txt && txt !== '{}') return txt;
-    } catch (e) {}
-    return 'el servidor cortó la llamada sin devolver un motivo (suele ser por tiempo: probá de nuevo).';
-  }
-
   function mostrarAviso(nodo, tipo, texto, acciones) {
     vaciar(nodo);
     nodo.className = 'aviso ' + tipo;
@@ -975,7 +956,7 @@
       })
       .withFailureHandler(function(err) {
         if (btn) liberar(btn);
-        mostrarAviso(aviso, 'error', 'No se pudo cargar el semáforo de envíos: ' + mensajeDeError(err));
+        mostrarAviso(aviso, 'error', 'No se pudo cargar el semáforo de envíos: ' + err.message);
       })
       .webapp_obtenerMatrizEnvios(sheetId, forzar === true);
   }
@@ -1415,7 +1396,7 @@
       })
       .withFailureHandler(function(err) {
         liberar(boton);
-        mostrarAviso(m.aviso, 'error', 'No se pudo guardar: ' + mensajeDeError(err));
+        mostrarAviso(m.aviso, 'error', 'No se pudo guardar: ' + err.message);
       })
       .webapp_guardarComentarioEnvio({ sheetId: sheetIdLogsActual(), fecha: ctx.fecha, cliente: ctx.cliente,
         tecnologia: ctx.tecnologia, comentario: texto, excluir: excluir });
@@ -1603,7 +1584,7 @@
       })
       .withFailureHandler(function(err) {
         liberar(boton);
-        mostrarAviso(m.aviso, 'error', 'No se pudo guardar: ' + mensajeDeError(err));
+        mostrarAviso(m.aviso, 'error', 'No se pudo guardar: ' + err.message);
       })
       .webapp_corregirEnvio({
         sheetId: sheetIdLogsActual(), fecha: ctx.fecha, cliente: ctx.cliente,
@@ -1662,7 +1643,7 @@
       })
       .withFailureHandler(function(err) {
         if (btn && forzar) liberar(btn);
-        mostrarAviso(aviso, 'error', 'No se pudieron cargar los horarios de envío: ' + mensajeDeError(err));
+        mostrarAviso(aviso, 'error', 'No se pudieron cargar los horarios de envío: ' + err.message);
       })
       .webapp_obtenerHorariosEnvio(sheetId, !!forzar);
   }
@@ -2234,7 +2215,7 @@
         })
         .withFailureHandler(function(err) {
           liberar(btn);
-          mostrarAviso(aviso, 'error', 'No se pudo generar el PDF: ' + mensajeDeError(err));
+          mostrarAviso(aviso, 'error', 'No se pudo generar el PDF: ' + err.message);
         })
         .webapp_generarPdfHorarios(datosPdf);
     });
@@ -2317,7 +2298,7 @@
           })
           .withFailureHandler(function(err) {
             liberar(btn);
-            mostrarAviso(aviso, 'error', 'No se pudo enviar a Slack: ' + mensajeDeError(err));
+            mostrarAviso(aviso, 'error', 'No se pudo enviar a Slack: ' + err.message);
           })
           .webapp_enviarResumenHorariosSlack(datosSlack);
       } },
@@ -2804,7 +2785,7 @@
             })
             .withFailureHandler(function (err) {
               btnToggle.disabled = false;
-              if (aviso) mostrarAviso(aviso, 'error', 'Error actualizando ' + c.nombre + ': ' + mensajeDeError(err));
+              if (aviso) mostrarAviso(aviso, 'error', 'Error actualizando ' + c.nombre + ': ' + err.message);
             })
             .webapp_marcarCheckboxIndice(c.fila, tecInfo.col, nuevoEstado);
         });
@@ -2854,7 +2835,7 @@
             })
             .withFailureHandler(function (err) {
               liberar(btnRV);
-              if (aviso) mostrarAviso(aviso, 'error', 'Error al procesar RVTools para ' + c.nombre + ': ' + mensajeDeError(err));
+              if (aviso) mostrarAviso(aviso, 'error', 'Error al procesar RVTools para ' + c.nombre + ': ' + err.message);
             })
             .webapp_procesarRVToolsCliente(c.fila, c.nombre);
         });
@@ -3559,7 +3540,7 @@
         .withFailureHandler(function(err) {
           liberar(guardar);
           var aviso = document.getElementById('avisoLlegadas');
-          if (aviso) mostrarAviso(aviso, 'error', 'No se pudo guardar: ' + mensajeDeError(err));
+          if (aviso) mostrarAviso(aviso, 'error', 'No se pudo guardar: ' + err.message);
         })
         .webapp_marcarPatronAtendido({
           tipo: p.tipo, remitente: p.remitente, reporte: p.reporte, cliente: p.cliente,
@@ -3691,7 +3672,7 @@
       })
       .withFailureHandler(function(err) {
         if (forzar && btn) liberar(btn);
-        if (aviso) mostrarAviso(aviso, 'error', 'No se pudieron traer las llegadas: ' + mensajeDeError(err));
+        if (aviso) mostrarAviso(aviso, 'error', 'No se pudieron traer las llegadas: ' + err.message);
       })
       .webapp_obtenerLlegadasReportes(f.dias, !!forzar);
   }

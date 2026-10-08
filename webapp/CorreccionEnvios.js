@@ -90,7 +90,7 @@ function _webappRegistrarHistorialCorreccion(ss, accion, usuario, fecha, cliente
  */
 function webapp_corregirEnvio(datos) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
   datos = datos || {};
 
   const sheetId = datos.sheetId || WEBAPP_LOGS_PROD_ID;

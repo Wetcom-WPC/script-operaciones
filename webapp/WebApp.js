@@ -120,11 +120,24 @@ function webapp_estaAutorizado(email) {
   return permitidos.indexOf(String(email || '').toLowerCase()) !== -1;
 }
 
-/** Corta la ejecución si quien llama no está en la lista. @param {string} usuario */
+/**
+ * Corta la ejecución si quien llama no puede entrar al panel.
+ *
+ * Son DOS filtros encadenados, de afuera hacia adentro:
+ *   1. WEBAPP_USUARIOS_AUTORIZADOS (Script Property), que ya existía y sigue valiendo.
+ *   2. La pestaña "Permisos del Panel", que además define el ROL (ver webapp/Permisos.js).
+ *
+ * Esta función sigue siendo el "¿podés entrar?". Para "¿podés hacer esto?" está
+ * webapp_exigirAdmin, que va en cada función que modifica algo.
+ *
+ * @param {string} usuario
+ * @returns {Object} El permiso de esa persona, para no recalcularlo.
+ */
 function webapp_exigirAutorizacion(usuario) {
   if (!webapp_estaAutorizado(usuario)) {
     throw new Error('No tenés permiso para usar este panel.');
   }
+  return webapp_exigirPermiso(usuario);
 }
 
 // --- API que consume el navegador ----------------------------------------------------------
@@ -186,7 +199,7 @@ function webapp_obtenerEquipoWPC() {
  */
 function webapp_obtenerDatosGraficosJira(projectKey, rango) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
 
   if (!projectKey || projectKey === 'ALL') {
     throw new Error("Debe seleccionar un cliente específico.");
@@ -322,7 +335,7 @@ function webapp_obtenerDatosGraficosJira(projectKey, rango) {
 
 function webapp_estado() {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  const permiso = webapp_exigirAutorizacion(usuario);
 
   const ahora = new Date();
   const diaSemana = ahora.getDay();
@@ -347,7 +360,7 @@ function webapp_estado() {
       erroresHoy = kp.errores;
       faltantesHoy = kp.faltantes;
     } else {
-      const logs = webapp_obtenerLogs(100); // 100 rows is enough for a single day usually
+      const logs = _webappLeerLogs(100); // 100 rows is enough for a single day usually
       const hoyCorto = hoyStr.substring(0, 5); // dd/MM
       procesadosHoy = logs.estadoFinal.filter(function(l) {
         return l.fecha === hoyStr && (
@@ -374,6 +387,9 @@ function webapp_estado() {
 
   return {
     usuario: usuario,
+    // Rol y PODs de quien mira, para que el navegador muestre solo sus secciones. Es comodidad
+    // de interfaz, NO el control de acceso: ese lo hace cada funcion del servidor.
+    permiso: { rol: permiso.rol, pods: permiso.pods, todo: permiso.todo, secciones: permiso.secciones, configurado: permiso.configurado },
     cuenta: webapp_cuentaEfectiva(),
     testing: esEntornoTesting(),
     fecha: hoyStr,
@@ -413,7 +429,7 @@ function webapp_estado() {
  */
 function webapp_lanzarCiclo(forzar) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
 
   const ahora = new Date();
   const diaSemana = ahora.getDay();
@@ -501,7 +517,7 @@ function webapp_lanzarCiclo(forzar) {
  */
 function webapp_actualizarBandeja() {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
 
   const datos = webapp_escanearBandeja();
   webapp_cacheGuardar(datos);
@@ -571,10 +587,18 @@ function manual_probarWebApp() {
  * @param {number} limite Cantidad máxima de logs a devolver por pestaña.
  * @returns {Object} Objeto con listas de logs para cada pestaña.
  */
+/**
+ * Entrada desde el navegador: exige ser admin. "Logs del Sistema" es una sección interna.
+ * El núcleo sin control de acceso es _webappLeerLogs(), que usan la matriz, los KPIs del
+ * inicio y las llegadas.
+ */
 function webapp_obtenerLogs(limite, overrideSheetId) {
-  const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
-  
+  webapp_exigirAdmin(webapp_usuarioActual());
+  return _webappLeerLogs(limite, overrideSheetId);
+}
+
+/** Núcleo sin control de acceso. No llamarlo desde el navegador. */
+function _webappLeerLogs(limite, overrideSheetId) {
   if (!limite) limite = 50;
   
   const resultados = {
@@ -744,7 +768,7 @@ function webapp_obtenerLogs(limite, overrideSheetId) {
  */
 function webapp_obtenerTicketsJira(rango, projectKey) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
 
   let jqlRango = `created >= "-24h"`; // default hoy
   if (rango === "7dias") {
@@ -885,10 +909,21 @@ const WEBAPP_LOGS_PROD_ID = "1O-iTAhWRonBcAp3xN7t5_y_TZTvyAtoBP0TIVAIzweQ";
  *
  * @returns {Object} Estado con lista de clientes y métricas resumidas
  */
+/**
+ * Entrada desde el navegador: exige ser admin.
+ *
+ * "Control de Envíos" es una sección interna (tiene las casillas que disparan el mail al
+ * cliente), así que un usuario de POD no la abre. El núcleo sin control de acceso es
+ * _webappEstadoIndice(), que usan la matriz y la sincronización de envíos a mano: esas sí las
+ * puede llamar un POD, pero filtran los clientes después.
+ */
 function webapp_obtenerEstadoIndice() {
-  const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(webapp_usuarioActual());
+  return _webappEstadoIndice();
+}
 
+/** Núcleo sin control de acceso. No llamarlo desde el navegador. */
+function _webappEstadoIndice() {
   const cacheKey = "webapp_estado_indice_v1";
   const cached = CacheService.getScriptCache().get(cacheKey);
   if (cached) {
@@ -1024,7 +1059,7 @@ function webapp_obtenerEstadoIndice() {
  */
 function webapp_marcarCheckboxIndice(fila, col, nuevoValor) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
 
   // Validaciones de seguridad de fila y columna
   const colsPermitidas = [18, 19, 20, 21];
@@ -1085,7 +1120,7 @@ function webapp_marcarCheckboxIndice(fila, col, nuevoValor) {
  */
 function webapp_procesarRVToolsCliente(fila, clienteNombre) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
 
   try {
     // 1. Marcar el checkbox U (21) en el Índice para trazabilidad
@@ -1374,9 +1409,9 @@ const WEBAPP_TECHS_SEMAFORO = ['vSphere', 'Veeam', 'Nutanix', 'Tanzu', 'RVTools'
  */
 function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  const permiso = webapp_exigirAutorizacion(usuario);
 
-  const indice = webapp_obtenerEstadoIndice();
+  const indice = _webappEstadoIndice();
   const hoyStr = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
 
   // --- Hora de envío, desde el log ---
@@ -1396,7 +1431,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
   const normalizar = _webappClaveCliente;
 
   try {
-    const logs = webapp_obtenerLogs(1000, overrideSheetId || WEBAPP_LOGS_PROD_ID);
+    const logs = _webappLeerLogs(1000, overrideSheetId || WEBAPP_LOGS_PROD_ID);
     (logs.envioMails || []).forEach(function (r) {
       if (r.fecha !== hoyStr) return;
       const clave = normalizar(r.cliente) + '|' + String(r.tecnologia || '').toLowerCase();
@@ -1463,7 +1498,11 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
   }
 
   // --- Armado del semáforo ---
-  const clientes = (indice.clientes || []).map(function (cli) {
+  // Un usuario de POD ve SOLO sus clientes, y el recorte va ANTES de armar la fila: ni se
+  // calcula el estado de los que no le corresponden. Se filtra en el servidor a propósito —
+  // mandar todo y esconderlo en el navegador se ve igual con F12.
+  const clientes = webapp_filtrarPorPod(indice.clientes || [], permiso, function (c) { return c.pod; })
+    .map(function (cli) {
     const clavesCli = [normalizar(cli.empresa), normalizar(cli.nombre)].filter(function (k) { return !!k; });
     const tecs = {};
     let pendientes = 0;
@@ -1750,7 +1789,7 @@ function _webappSincronizarEnviosManuales(sheetId, forzar) {
     // log automático terminan siendo el mismo cliente.
     const porEmpresa = {};
     try {
-      (webapp_obtenerEstadoIndice().clientes || []).forEach(function (c) {
+      (_webappEstadoIndice().clientes || []).forEach(function (c) {
         const clave = String(c.empresa || '').toLowerCase().trim();
         if (clave && !porEmpresa[clave]) porEmpresa[clave] = { nombre: c.empresa, pod: c.pod };
       });
@@ -1856,7 +1895,7 @@ function _webappLeerEnviosManuales(ss) {
  */
 function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
 
   const sheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID;
   const cache = CacheService.getScriptCache();
@@ -2055,7 +2094,7 @@ function _webappTextoSeguroParaCelda(texto) {
  */
 function webapp_guardarComentarioEnvio(datos) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
   datos = datos || {};
 
   const sheetId = datos.sheetId || WEBAPP_LOGS_PROD_ID;
@@ -2175,7 +2214,7 @@ function _webappHora(valor) {
  */
 function webapp_generarPdfHorarios(datos) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
   if (!datos || !datos.cliente) throw new Error('Falta el cliente.');
 
   const verde = '#109E58', rojo = '#C0392B', gris = '#5B6B63', borde = '#E3E9E6';
@@ -2277,7 +2316,7 @@ function webapp_generarPdfHorarios(datos) {
  */
 function webapp_enviarResumenHorariosSlack(datos) {
   const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  webapp_exigirAdmin(usuario);
   if (!datos || !Array.isArray(datos.pods) || datos.pods.length === 0) throw new Error('No hay datos para enviar.');
 
   const webhook = PropertiesService.getScriptProperties().getProperty(WEBAPP_PROP_WEBHOOK_HORARIOS);
@@ -2336,10 +2375,6 @@ function webapp_enviarResumenHorariosSlack(datos) {
 // =================================================================
 
 const WEBAPP_CACHE_LLEGADAS_SEGUNDOS = 900;  // 15 minutos
-// Cuánto puede tardar el registro de correos nuevos cuando lo dispara el botón "Actualizar".
-// Es el tiempo que alguien está dispuesto a esperar mirando la pantalla, no el que aguanta
-// Apps Script: lo que no entra en esta vuelta se retoma en la siguiente.
-const WEBAPP_LLEGADAS_SEGUNDOS_REGISTRO = 90;
 
 /**
  * Lo registrado en "Llegada de Reportes", para el gráfico de puntualidad.
@@ -2356,9 +2391,22 @@ const WEBAPP_LLEGADAS_SEGUNDOS_REGISTRO = 90;
  * "Logs Reportes Faltantes", que compara contra los reportes esperados del Índice.
  */
 function webapp_obtenerLlegadasReportes(dias, forzar) {
-  const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  const permiso = webapp_exigirAutorizacion(webapp_usuarioActual());
+  const completo = _webappLlegadasReportes(dias, forzar);
+  if (permiso.todo) return completo;
 
+  // El recorte por POD va DESPUÉS del caché, nunca antes: el caché es del script y lo comparten
+  // todos los usuarios, así que guardar ahí el resultado ya filtrado de un POD se lo serviría
+  // después a un admin (o al revés). En el caché vive siempre el dato completo.
+  const mio = {};
+  Object.keys(completo).forEach(function (k) { mio[k] = completo[k]; });
+  mio.llegadas  = webapp_filtrarPorPod(completo.llegadas || [],  permiso, function (l) { return l.pod; });
+  mio.faltantes = webapp_filtrarPorPod(completo.faltantes || [], permiso, function (f) { return f.pod; });
+  return mio;
+}
+
+/** Núcleo sin control de acceso ni recorte por POD. No llamarlo desde el navegador. */
+function _webappLlegadasReportes(dias, forzar) {
   const cuantos = Math.min(Math.max(Number(dias) || 30, 1), 180);
   const cacheKey = 'webapp_llegadas_v1_' + cuantos;
   const cache = CacheService.getScriptCache();
@@ -2387,18 +2435,8 @@ function webapp_obtenerLlegadasReportes(dias, forzar) {
 
   if (forzar) {
     try {
-      // Presupuesto corto A PROPÓSITO. llegadasRegistrar() por defecto se toma 240 segundos, que
-      // está bien para una corrida de fondo pero no para un botón: sumado a leer la planilla y
-      // armar la respuesta, la llamada de google.script.run se cortaba y el navegador recibía un
-      // error sin mensaje ("No se pudieron traer las llegadas: undefined").
-      //
-      // Cortar antes no pierde nada: el registro es idempotente por id de mensaje y lo que quedó
-      // sin mirar se retoma en la próxima actualización.
-      const r = llegadasRegistrar(null, WEBAPP_LLEGADAS_SEGUNDOS_REGISTRO);
-      if (r.cortado) {
-        resultado.aviso = 'Se registró una parte de los correos y el resto quedó para la próxima: ' +
-          'volvé a apretar Actualizar en un rato.';
-      } else if (r.truncadas) {
+      const r = llegadasRegistrar();
+      if (r.truncadas) {
         resultado.aviso = 'La búsqueda de correos llegó al tope: puede faltar registrar algún día viejo.';
       }
     } catch (e) {
@@ -2421,7 +2459,7 @@ function webapp_obtenerLlegadasReportes(dias, forzar) {
 
   // Los que NO llegaron salen de la auditoría diaria, que es la única que sabe qué se esperaba.
   try {
-    const logs = webapp_obtenerLogs();
+    const logs = _webappLeerLogs();
     (logs.reportesFaltantes || []).forEach(function (f) {
       const partes = String(f.fecha || '').split('/');   // dd/MM/yyyy
       if (partes.length !== 3) return;
