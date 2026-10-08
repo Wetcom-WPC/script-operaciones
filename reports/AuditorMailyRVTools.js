@@ -23,7 +23,10 @@ const HOJA_INDICE = "Sheet1";
 const HOJA_ADJUNTOS = "Adjuntos";
 
 // --- LISTA DE CORREOS VÁLIDOS (En testing se permite ian.lucero@wetcom.com como destinatario oficial) ---
-const CORREOS_PODS = ["pod1@wetcom.com", "pod2@wetcom.com", "pod3@wetcom.com", "pod4@wetcom.com", "pod5@wetcom.com", "ian.lucero@wetcom.com"];
+// wpc@ y cloud_practice@ son las listas oficiales de Wetcom: los mails que se mandan a mano
+// (Tanzu, GIRE) van al cliente y llevan esas listas en copia, sin el casillero del POD. Sin
+// ellas el auditor los descartaba como si fueran pruebas y los contaba como faltantes.
+const CORREOS_PODS = ["pod1@wetcom.com", "pod2@wetcom.com", "pod3@wetcom.com", "pod4@wetcom.com", "pod5@wetcom.com", "ian.lucero@wetcom.com", "wpc@wetcom.com", "cloud_practice@wetcom.com"];
 
 // Clientes que el auditor tiene que controlar aunque no estén en el Índice. Hoy es solo
 // Clínica Alemana: tiene únicamente Tanzu, que se manda a mano, y agregarla al Índice haría
