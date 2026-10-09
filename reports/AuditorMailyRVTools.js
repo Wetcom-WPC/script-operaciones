@@ -36,6 +36,35 @@ const AUDITOR_CLIENTES_FUERA_DEL_INDICE = [
   { cliente: "Clínica Alemana", pod: "POD4", tecnologias: ["Tanzu"] },
 ];
 
+/**
+ * ¿El asunto tiene la fecha de hoy?
+ *
+ * No se compara contra un texto fijo. El asunto lo escribe cada vRO del cliente y no todos
+ * rellenan con cero: el de Banco Macro manda "9/10/2026" y el filtro, que buscaba
+ * literalmente "09/10/2026", lo descartaba antes de mirar la tecnología. El 09/10/2026 eso
+ * hizo que el aviso de Slack informara "Falta: Tanzu" en Macro cuando el mail estaba enviado.
+ *
+ * Se aceptan el día y el mes con o sin cero adelante, "/" o "-" como separador, y el año de
+ * cuatro o de dos dígitos. Lo que NO se afloja es el día: sigue teniendo que ser el de hoy,
+ * que es lo que evita contar como enviado el reporte de ayer.
+ *
+ * @param {string} asunto
+ * @param {Date} hoy
+ * @returns {boolean}
+ */
+function _auditorAsuntoTieneFechaDeHoy(asunto, hoy) {
+  const dia  = Number(Utilities.formatDate(hoy, "GMT-3", "d"));
+  const mes  = Number(Utilities.formatDate(hoy, "GMT-3", "M"));
+  const anio = Number(Utilities.formatDate(hoy, "GMT-3", "yyyy"));
+
+  // Los bordes ([^0-9] o principio/fin) evitan que "19/10" cuente como "9/10", o que el año
+  // "26" matchee dentro de "260".
+  const patron = new RegExp(
+    "(^|[^0-9])0?" + dia + "\\s*[\\/-]\\s*0?" + mes + "\\s*[\\/-]\\s*(" + anio + "|" + (anio % 100) + ")([^0-9]|$)"
+  );
+  return patron.test(String(asunto || ""));
+}
+
 // Para comparar nombres de cliente del Índice con los del asunto: sin tildes ni mayúsculas,
 // así "Clínica Alemana" y "Clinica Alemana" son el mismo cliente.
 function _auditorNormalizar(texto) {
@@ -128,9 +157,9 @@ function auditarMailsOperaciones() {
       
       if (asunto.includes("Operaciones") && asunto.includes("- Wetcom /")) {
          
-         if (!asunto.includes(fechaAsuntoExacta)) {
-            Logger.log(`   🚫 DESCARTADO: El asunto no contiene la fecha estricta de hoy (${fechaAsuntoExacta}).`);
-            return; 
+         if (!_auditorAsuntoTieneFechaDeHoy(asunto, hoy)) {
+            Logger.log(`   🚫 DESCARTADO: El asunto no tiene la fecha de hoy (${fechaAsuntoExacta}, con o sin cero adelante).`);
+            return;
          }
 
          // Verifica si alguno de los correos válidos está incluido en el destinatario
