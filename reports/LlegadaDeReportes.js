@@ -75,23 +75,28 @@ function llegadasOrigenDelRemitente(remitente) {
 }
 
 /**
- * El origen de una llegada, mirando primero la casilla y después el reporte.
+ * El origen de una llegada: qué sistema GENERA ese reporte.
  *
- * Por qué en ese orden:
+ * Manda el TIPO DE REPORTE, no la casilla. El tipo de reporte determina qué sistema lo generó:
+ * "Alertas de vSphere", "Affinity Rules", "VMs con preguntas" y "Discos montados en proxy"
+ * solo los produce vRO, salga de la casilla que salga. La casilla es apenas el buzón por el
+ * que viajó, y su nombre no prueba nada: el Banco de Entre Ríos manda esos cuatro desde una
+ * casilla que dice "operations", y durante un tiempo figuraron como vROps por eso.
  *
- *   1. La CASILLA es lo más cercano a un dato: dice qué sistema mandó el correo. Y distingue
- *      casos que el nombre del reporte no puede distinguir — "VMs con snapshots" sale de vRO
- *      en Macro y de vROps en Cabal, así que si se decidiera solo por el reporte los dos
- *      quedarían iguales y se perdería esa diferencia.
+ * La fuente es TECNOLOGIA_POR_OPERACION (core/ExecutionLogger.js), el mismo mapa alineado con
+ * la carpeta donde vive cada procesador que usa el resto del proyecto. Así "Origen" acá
+ * significa lo mismo que "Tecnología" en Reportes Faltantes, en vez de ser dos ideas distintas
+ * con nombres parecidos. Se reusa _deducirTecnologia en lugar de escribir otro mapeo: un
+ * segundo mapa que haga lo mismo es el patrón que ya rompió cosas dos veces acá (AGENTS.md §5).
  *
- *   2. Si la casilla no dice nada (monitoreocloud@, senderwetcom@), antes esto caía en "Otro"
- *      y la columna no servía para nada: a Banco Santa Fe le quedaban casi todos los reportes
- *      sin clasificar. Ahí se usa el NOMBRE DEL REPORTE contra el mismo mapa que usa el resto
- *      del proyecto (TECNOLOGIA_POR_OPERACION, alineado con la carpeta donde vive cada
- *      procesador). Es una inferencia, pero una inferencia útil es mejor que "Otro".
+ * La casilla queda como RED DE CONTENCIÓN, solo para los reportes que no están en el mapa.
  *
- * Se reusa _deducirTecnologia a propósito y no se escribe otro mapeo: un segundo mapa que haga
- * lo mismo es el patrón que ya rompió cosas dos veces en este proyecto (AGENTS.md §5).
+ * Qué se pierde: un reporte que exista en el mapa va a mostrar siempre la misma tecnología,
+ * aunque algún cliente lo mande desde otro sistema. Si aparece un caso así, se arregla en el
+ * mapa (o moviendo el procesador de carpeta), que es donde vive la verdad — no acá.
+ *
+ * Esto NO afecta la detección de patrones, que se sigue calculando por casilla remitente: un
+ * sitio caído se detecta igual.
  *
  * @param {string} remitente
  * @param {string} reporte Asunto/tipo de reporte, tal como se registró.
@@ -99,7 +104,10 @@ function llegadasOrigenDelRemitente(remitente) {
  */
 function llegadasOrigen(remitente, reporte) {
   const porCasilla = llegadasOrigenDelRemitente(remitente);
-  if (porCasilla !== "Otro") return porCasilla;
+
+  // Para los reportes que SÍ pueden venir de más de un sistema, la casilla es el único dato
+  // que los distingue y por eso gana.
+  if (porCasilla !== "Otro" && _llegadasReporteAmbiguo(reporte)) return porCasilla;
 
   try {
     const porReporte = _deducirTecnologia(reporte);
@@ -107,7 +115,28 @@ function llegadasOrigen(remitente, reporte) {
   } catch (e) {
     Logger.log("[Llegadas] No se pudo deducir el origen por el nombre del reporte: " + e.message);
   }
-  return "Otro";
+  return porCasilla;
+}
+
+// Reportes que un cliente manda desde vRO y otro desde vROps. Son la excepción: para el resto
+// el tipo de reporte determina el sistema, y la carpeta del procesador es la fuente.
+//
+// Hoy está "VMs con snapshots": Macro lo manda desde vRO y Cabal, YPF, Falabella y Comafi
+// desde vROps. Si se tratara como los demás, los cinco dirían lo mismo y se perdería
+// justamente la diferencia que importa.
+//
+// Antes de sumar uno acá, confirmar que de verdad sale de dos sistemas distintos. Si solo
+// cambia el NOMBRE de la casilla, no es ambiguo: es una casilla mal bautizada, y ahí tiene que
+// ganar el mapa (fue el caso del Banco de Entre Ríos, que manda reportes de vRO desde una
+// casilla que dice "operations").
+const LLEGADAS_REPORTES_AMBIGUOS = [
+  "VMs con snapshots"
+];
+
+/** ¿Este reporte puede venir de más de un sistema según el cliente? */
+function _llegadasReporteAmbiguo(reporte) {
+  const r = String(reporte || "").toLowerCase();
+  return LLEGADAS_REPORTES_AMBIGUOS.some(function (a) { return r.indexOf(a.toLowerCase()) !== -1; });
 }
 
 /** 'Nombre <mail@dominio>' -> 'mail@dominio' */

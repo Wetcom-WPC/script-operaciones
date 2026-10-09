@@ -81,6 +81,15 @@ const TECNOLOGIA_POR_OPERACION = {
   "Orphaned VMs":                                     "Veeam ONE",
   "VMs en mas de un Job":                             "Veeam ONE",
   "Espacio en Repositorios":                          "Veeam ONE",
+  // Los seis que atiende VeeamOneReporteProcessor (veeamone/VeeamOneReportes.js). No tienen
+  // una constante *_OPERATION_NAME propia: el nombre se le pasa por parámetro al registrarlos
+  // en core/Main.js, y por eso se habían quedado afuera de este mapa.
+  "VMs protegidas":                                   "Veeam ONE",
+  "Replicas protegidas":                              "Veeam ONE",
+  "Capacity Planning":                                "Veeam ONE",
+  "VM Daily Protection Status":                       "Veeam ONE",
+  "Hosts y VMs con contencion de CPU":                "Veeam ONE",
+  "Inventario de VMs":                                "Veeam ONE",
   // horizon/
   "Componentes de View":                              "Connection Server",
   "Dashboard View":                                   "Connection Server",
