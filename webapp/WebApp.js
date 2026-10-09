@@ -2386,6 +2386,10 @@ function webapp_enviarResumenHorariosSlack(datos) {
 // =================================================================
 
 const WEBAPP_CACHE_LLEGADAS_SEGUNDOS = 900;  // 15 minutos
+// Cuánto puede tardar el registro de correos nuevos cuando lo dispara el botón "Actualizar".
+// Es el tiempo que alguien está dispuesto a esperar mirando la pantalla, no el que aguanta
+// Apps Script: lo que no entra en esta vuelta se retoma en la siguiente.
+const WEBAPP_LLEGADAS_SEGUNDOS_REGISTRO = 90;
 
 /**
  * Lo registrado en "Llegada de Reportes", para el gráfico de puntualidad.
@@ -2446,8 +2450,18 @@ function _webappLlegadasReportes(dias, forzar) {
 
   if (forzar) {
     try {
-      const r = llegadasRegistrar();
-      if (r.truncadas) {
+      // Presupuesto corto A PROPÓSITO. llegadasRegistrar() por defecto se toma 240 segundos, que
+      // está bien para una corrida de fondo pero no para un botón: sumado a leer la planilla y
+      // armar la respuesta, la llamada de google.script.run se cortaba y el navegador recibía un
+      // error sin mensaje ("No se pudieron traer las llegadas: undefined").
+      //
+      // Cortar antes no pierde nada: el registro es idempotente por id de mensaje y lo que quedó
+      // sin mirar se retoma en la próxima actualización.
+      const r = llegadasRegistrar(null, WEBAPP_LLEGADAS_SEGUNDOS_REGISTRO);
+      if (r.cortado) {
+        resultado.aviso = 'Se registró una parte de los correos y el resto quedó para la próxima: ' +
+          'volvé a apretar Actualizar en un rato.';
+      } else if (r.truncadas) {
         resultado.aviso = 'La búsqueda de correos llegó al tope: puede faltar registrar algún día viejo.';
       }
     } catch (e) {

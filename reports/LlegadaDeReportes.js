@@ -47,7 +47,17 @@ function llegadasOrigenDelRemitente(remitente) {
   const r = String(remitente || "").toLowerCase().split("@")[0];
 
   // Veeam primero: "veeam-onemonitor" tiene "one" y "monitor", y sin este orden caeria en vROps.
-  if (r.indexOf("veeam") !== -1 || r.indexOf("backup") !== -1) return "Veeam ONE";
+  if (r.indexOf("veeam") !== -1 || r.indexOf("backup") !== -1) {
+    // Veeam ONE y Veeam Backup & Replication son dos productos distintos y cada uno manda sus
+    // propios reportes, asi que no pueden compartir origen. Antes todo lo que dijera "veeam"
+    // caia en "Veeam ONE", y por eso los Malware Detection Logs de Balanz —que los genera
+    // Backup & Replication desde veeam@balanz.com— figuraban como Veeam ONE.
+    //
+    // La casilla de Veeam ONE se reconoce porque dice "one" (veeam-onemonitor@, veeamone@).
+    // Si aparece alguna que no lo diga, se agrega acá: es preferible que caiga en "Veeam" y
+    // se corrija, a que todo vuelva a mezclarse en una sola bolsa.
+    return /one/.test(r) ? "Veeam ONE" : "Veeam";
+  }
 
   // vROps: las casillas de vRealize/Aria Operations.
   if (r.indexOf("vrops") !== -1 || r.indexOf("operations") !== -1) return "vROps";
@@ -59,8 +69,44 @@ function llegadasOrigenDelRemitente(remitente) {
   }
 
   // Varias casillas no dicen nada del sistema que las manda (monitoreocloud@, senderwetcom@,
-  // usrvmwareintegration@). Quedan en "Otro" y se siguen viendo igual: para eso estan los
-  // filtros por cliente y por reporte, que si son datos y no inferencias.
+  // usrvmwareintegration@). Para esas, el que decide es el nombre del reporte: ver
+  // llegadasOrigen().
+  return "Otro";
+}
+
+/**
+ * El origen de una llegada, mirando primero la casilla y después el reporte.
+ *
+ * Por qué en ese orden:
+ *
+ *   1. La CASILLA es lo más cercano a un dato: dice qué sistema mandó el correo. Y distingue
+ *      casos que el nombre del reporte no puede distinguir — "VMs con snapshots" sale de vRO
+ *      en Macro y de vROps en Cabal, así que si se decidiera solo por el reporte los dos
+ *      quedarían iguales y se perdería esa diferencia.
+ *
+ *   2. Si la casilla no dice nada (monitoreocloud@, senderwetcom@), antes esto caía en "Otro"
+ *      y la columna no servía para nada: a Banco Santa Fe le quedaban casi todos los reportes
+ *      sin clasificar. Ahí se usa el NOMBRE DEL REPORTE contra el mismo mapa que usa el resto
+ *      del proyecto (TECNOLOGIA_POR_OPERACION, alineado con la carpeta donde vive cada
+ *      procesador). Es una inferencia, pero una inferencia útil es mejor que "Otro".
+ *
+ * Se reusa _deducirTecnologia a propósito y no se escribe otro mapeo: un segundo mapa que haga
+ * lo mismo es el patrón que ya rompió cosas dos veces en este proyecto (AGENTS.md §5).
+ *
+ * @param {string} remitente
+ * @param {string} reporte Asunto/tipo de reporte, tal como se registró.
+ * @returns {string}
+ */
+function llegadasOrigen(remitente, reporte) {
+  const porCasilla = llegadasOrigenDelRemitente(remitente);
+  if (porCasilla !== "Otro") return porCasilla;
+
+  try {
+    const porReporte = _deducirTecnologia(reporte);
+    if (porReporte && porReporte !== "Otro") return porReporte;
+  } catch (e) {
+    Logger.log("[Llegadas] No se pudo deducir el origen por el nombre del reporte: " + e.message);
+  }
   return "Otro";
 }
 
@@ -253,7 +299,7 @@ function llegadasRegistrar(dias, segundosMax) {
           Utilities.formatDate(fecha, HORARIO_OPERATIVO_TZ, "yyyy-MM-dd"),
           Utilities.formatDate(fecha, HORARIO_OPERATIVO_TZ, "HH:mm"),
           minutos,
-          llegadasOrigenDelRemitente(remitente),
+          llegadasOrigen(remitente, reporte),
           remitente,
           llegadasResolverCliente(remitente, clientes).cliente,
           reporte,
@@ -305,7 +351,10 @@ function llegadasLeer(desdeISO) {
       fecha: fecha,
       hora: r[1] instanceof Date ? Utilities.formatDate(r[1], HORARIO_OPERATIVO_TZ, "HH:mm") : String(r[1] || ""),
       minutos: Number(r[2]) || 0,
-      origen: String(r[3] || "Otro"),
+      // El origen se vuelve a deducir acá y no se toma de la columna guardada, igual que el
+      // cliente y el POD: es una inferencia, no un dato del correo. Así, cuando se corrige el
+      // mapeo, las filas ya registradas se arreglan solas sin reprocesar nada.
+      origen: llegadasOrigen(remitente, String(r[6] || "")),
       remitente: remitente,
       // Si no se puede resolver se muestra el mail: nunca una fila sin identificar.
       cliente: quien.cliente || String(r[5] || "") || remitente,
