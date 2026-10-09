@@ -112,6 +112,10 @@
       var id = botones[i].getAttribute('data-seccion') || '';
       var corta = id.replace(/^seccion-/, '');
       var permitida = permiso.todo || (permiso.secciones || []).indexOf(corta) !== -1;
+      // Mientras se previsualiza un POD, "Permisos" queda visible SIEMPRE: es la única puerta
+      // de vuelta. Sin esto, activar la previsualización escondía el botón y dejaba al admin
+      // sin forma de salir desde la interfaz.
+      if (permiso.simulando && corta === 'permisos') permitida = true;
       botones[i].hidden = !permitida;
       if (permitida && !primeroVisible) primeroVisible = botones[i];
     }
@@ -135,6 +139,22 @@
     // Que un POD sepa que está viendo un recorte, y no crea que faltan clientes.
     if (estado.permiso && !estado.permiso.todo) {
       pildora(el.contexto, 'Viendo ' + (estado.permiso.pods || []).join(' y '));
+    }
+    // Un admin previsualizando tiene que verlo SIEMPRE y poder salir de un clic: si no, se
+    // olvida, y el lunes cree que el panel se rompió porque le faltan clientes.
+    if (estado.permiso && estado.permiso.simulando) {
+      pildora(el.contexto, 'Previsualizando como ' + estado.permiso.simulando, 'alerta');
+      var salir = crear('button', 'btn-chico', 'Salir');
+      salir.type = 'button';
+      salir.style.marginLeft = '8px';
+      salir.addEventListener('click', function () {
+        ocupar(salir, 'Saliendo...');
+        google.script.run
+          .withSuccessHandler(function () { location.reload(); })
+          .withFailureHandler(function (err) { liberar(salir); alert(mensajeDeError(err)); })
+          .webapp_verComoPod('');
+      });
+      el.contexto.appendChild(salir);
     }
     // Aviso para nosotros: mientras la pestaña esté vacía, entra todo el dominio como admin.
     if (estado.permiso && estado.permiso.configurado === false) {
@@ -1661,6 +1681,17 @@
     if (!cuerpo || !permisosGlobal) return;
     vaciar(cuerpo);
 
+    // Selector de "ver como", con los PODs que existen de verdad en el Índice.
+    var selVerComo = document.getElementById('verComoPod');
+    if (selVerComo && selVerComo.options.length <= 1) {
+      (permisosGlobal.podsDisponibles || []).forEach(function (p) {
+        var opt = crear('option', null, p);
+        opt.value = p;
+        selVerComo.appendChild(opt);
+      });
+      selVerComo.value = permisosGlobal.simulando || '';
+    }
+
     var aviso = document.getElementById('avisoPermisos');
     if (!permisosGlobal.configurado) {
       mostrarAviso(aviso, 'atencion', 'Todavía no hay permisos cargados, así que entra todo el ' +
@@ -1755,6 +1786,22 @@
         }, btnGuardar);
       });
     }
+    // "Ver como POD". Al cambiarlo se recarga la página entera a propósito: el recorte lo
+    // aplica el servidor en cada endpoint, así que media pantalla con datos viejos y media con
+    // datos nuevos sería peor que esperar dos segundos.
+    var selVerComo = document.getElementById('verComoPod');
+    if (selVerComo) {
+      selVerComo.addEventListener('change', function () {
+        var aviso = document.getElementById('avisoPermisos');
+        google.script.run
+          .withSuccessHandler(function () { location.reload(); })
+          .withFailureHandler(function (err) {
+            mostrarAviso(aviso, 'error', 'No se pudo cambiar la vista: ' + mensajeDeError(err));
+          })
+          .webapp_verComoPod(selVerComo.value);
+      });
+    }
+
     // El campo de PODs solo tiene sentido para el rol "pod".
     var selRol = document.getElementById('permisoRol');
     var inpPods = document.getElementById('permisoPods');

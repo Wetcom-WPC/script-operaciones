@@ -120,9 +120,68 @@ function webapp_permisoDe(email) {
   };
 }
 
-/** El permiso de quien está llamando ahora. */
+// ─── "Ver como POD": previsualizar el panel sin cambiarse el permiso propio ──────────────
+//
+// Un admin no puede bajarse a sí mismo a rol pod para probar (webapp_guardarPermiso lo impide
+// a propósito, para que nadie se deje afuera). Esto resuelve lo mismo sin tocar la pestaña:
+// mientras está activo, los datos se recortan y la interfaz muestra solo las secciones de ese
+// POD.
+//
+// Solo PUEDE ACHICAR lo que se ve, nunca agrandarlo: activarlo exige ser admin, y un admin ya
+// veía todo. Si alguien que no es admin intentara activarlo, queda rechazado.
+//
+// Vive en UserProperties, que es por persona: si dos admins miran el panel a la vez, lo que
+// simule uno no afecta al otro.
+const WEBAPP_PROP_SIMULACION = 'WEBAPP_VER_COMO_POD';
+
+/** El POD que este usuario está simulando, o '' si ninguno. */
+function _webappSimulacionActiva() {
+  try {
+    return String(PropertiesService.getUserProperties().getProperty(WEBAPP_PROP_SIMULACION) || '').trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+/**
+ * El permiso EFECTIVO de quien llama: el real, o el recortado si está simulando un POD.
+ * Para decidir si alguien puede ejecutar una acción NO se usa este, sino el real
+ * (ver webapp_exigirAdmin): así un admin que está previsualizando nunca queda encerrado.
+ */
 function webapp_permisoActual() {
-  return webapp_permisoDe(webapp_usuarioActual());
+  const real = webapp_permisoDe(webapp_usuarioActual());
+  if (!real.todo) return real;          // solo un admin puede simular
+
+  const pod = _webappSimulacionActiva();
+  if (!pod) return real;
+
+  return {
+    email: real.email,
+    rol: WEBAPP_ROL_POD,
+    pods: [pod],
+    todo: false,
+    configurado: real.configurado,
+    secciones: WEBAPP_SECCIONES_POR_ROL[WEBAPP_ROL_POD],
+    simulando: pod
+  };
+}
+
+/**
+ * Empieza o termina la previsualización. Solo admin.
+ * @param {string} pod POD a simular, o vacío para volver a la vista propia.
+ */
+function webapp_verComoPod(pod) {
+  // Contra el permiso REAL: si se validara contra el efectivo, un admin que ya está simulando
+  // se quedaría sin forma de volver.
+  webapp_exigirAdmin(webapp_usuarioActual());
+
+  const limpio = String(pod || '').trim().toUpperCase();
+  const props = PropertiesService.getUserProperties();
+  if (limpio) props.setProperty(WEBAPP_PROP_SIMULACION, limpio);
+  else props.deleteProperty(WEBAPP_PROP_SIMULACION);
+
+  Logger.log('[WebApp] ' + webapp_usuarioActual() + (limpio ? ' previsualiza como ' + limpio : ' volvió a su vista'));
+  return { simulando: limpio };
 }
 
 /**
@@ -150,7 +209,10 @@ function webapp_exigirPermiso(usuario) {
     Logger.log('[WebApp] "' + usuario + '" tiene rol pod pero ningún POD asignado.');
     throw new Error('Tu usuario no tiene ningún POD asignado. Avisale al equipo de Operaciones.');
   }
-  return permiso;
+  // Se devuelve el EFECTIVO: si un admin está previsualizando un POD, los datos que pida tienen
+  // que salir recortados. El control de acciones no pasa por acá sino por webapp_exigirAdmin,
+  // que mira el real.
+  return webapp_permisoActual();
 }
 
 /**
@@ -160,12 +222,16 @@ function webapp_exigirPermiso(usuario) {
  * @returns {Object} El permiso.
  */
 function webapp_exigirAdmin(usuario) {
-  const permiso = webapp_exigirPermiso(usuario);
-  if (!permiso.todo) {
-    Logger.log('[WebApp] "' + usuario + '" (rol ' + permiso.rol + ') intentó una acción de admin.');
+  webapp_exigirPermiso(usuario);
+  // Contra el permiso REAL, no el efectivo: un admin que está previsualizando un POD sigue
+  // siendo admin. Si se mirara el efectivo, al activar la previsualización se quedaría sin
+  // poder salir de ella ni abrir la pantalla de permisos.
+  const real = webapp_permisoDe(usuario);
+  if (!real.todo) {
+    Logger.log('[WebApp] "' + usuario + '" (rol ' + real.rol + ') intentó una acción de admin.');
     throw new Error('Esta acción es solo para el equipo de Operaciones.');
   }
-  return permiso;
+  return real;
 }
 
 /** ¿Este POD le corresponde a quien pregunta? */
@@ -220,10 +286,25 @@ function webapp_listarPermisos() {
     if (a.rol !== b.rol) return a.rol === WEBAPP_ROL_ADMIN ? -1 : 1;
     return a.email.localeCompare(b.email);
   });
+  // Los PODs que existen de verdad, sacados del Índice: así el selector no es una lista fija
+  // que haya que mantener a mano cuando se cree o se cierre un POD.
+  let pods = [];
+  try {
+    (_webappEstadoIndice().clientes || []).forEach(function (c) {
+      const p = String(c.pod || '').trim().toUpperCase();
+      if (p && p !== '-' && pods.indexOf(p) === -1) pods.push(p);
+    });
+    pods.sort();
+  } catch (e) {
+    Logger.log('[WebApp] No se pudieron listar los PODs del Índice: ' + e.message);
+  }
+
   return {
     configurado: permisos.configurado,
     yo: permiso.email,
     roles: [WEBAPP_ROL_ADMIN, WEBAPP_ROL_POD],
+    podsDisponibles: pods,
+    simulando: _webappSimulacionActiva(),
     permisos: filas
   };
 }

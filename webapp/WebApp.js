@@ -399,7 +399,8 @@ function webapp_estado() {
     usuario: usuario,
     // Rol y PODs de quien mira, para que el navegador muestre solo sus secciones. Es comodidad
     // de interfaz, NO el control de acceso: ese lo hace cada funcion del servidor.
-    permiso: { rol: permiso.rol, pods: permiso.pods, todo: permiso.todo, secciones: permiso.secciones, configurado: permiso.configurado },
+    permiso: { rol: permiso.rol, pods: permiso.pods, todo: permiso.todo, secciones: permiso.secciones,
+               configurado: permiso.configurado, simulando: permiso.simulando || '' },
     cuenta: webapp_cuentaEfectiva(),
     testing: esEntornoTesting(),
     fecha: hoyStr,
