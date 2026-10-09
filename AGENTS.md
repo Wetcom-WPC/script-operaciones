@@ -120,6 +120,41 @@ navegador. Si no se hace `clasp pull` antes de tocar código, se corre el
 riesgo de pisar un cambio hecho ahí. Esto vale para **las cuatro carpetas**,
 no solo para Operativo.
 
+#### El pull no alcanza: hay que MIRAR qué trajo
+
+Pullear y seguir trabajando sin revisar el diff convierte a `clasp pull` en lo
+contrario de lo que busca esta regla. El pull trae el estado de Apps Script
+**encima** del working tree, y si ese estado está más atrasado que lo que hay
+en local, el pull **deshace trabajo** — en silencio, porque no hay conflictos
+que resolver. Después un `git add -A` lo commitea como si fuera un cambio
+deliberado.
+
+Pasó el 09/10/2026. Un `clasp pull` antes de empezar la feature de permisos
+revirtió tres cambios desplegados el día anterior, y quedaron commiteados
+dentro del commit de la feature:
+
+- una función de la webapp y sus 10 usos. La pantalla nueva la llamaba cuatro
+  veces, así que quedó tirando `ReferenceError` en todo el camino de error —
+  invisible mientras nada fallara;
+- la distinción entre Veeam Backup & Replication y Veeam ONE;
+- el presupuesto de tiempo del botón "Actualizar" de Llegada de Reportes.
+
+Ninguno dio error al desplegar: el proyecto compilaba perfecto, solo que con
+código viejo.
+
+Por eso el pull son **dos pasos, no uno**:
+
+```bash
+clasp pull
+git status --porcelain   # ¿qué cambió? si toca archivos que no venías tocando, MIRAR el diff
+```
+
+Si el pull modificó archivos, revisar `git diff` antes de seguir. Un archivo
+que aparece modificado después de un pull es una de dos cosas: alguien editó
+desde el navegador (hay que conservarlo), o Apps Script estaba atrasado y el
+pull acaba de deshacer algo (hay que recuperarlo). Las dos piden una decisión;
+ninguna se resuelve con `git add -A`.
+
 ### Regla 3 — Todo push a Apps Script tiene que crear una versión
 
 `clasp push` escribe **solo sobre el borrador** (el *head*) y no deja ninguna

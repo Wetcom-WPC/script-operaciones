@@ -181,7 +181,20 @@ function webapp_verComoPod(pod) {
   else props.deleteProperty(WEBAPP_PROP_SIMULACION);
 
   Logger.log('[WebApp] ' + webapp_usuarioActual() + (limpio ? ' previsualiza como ' + limpio : ' volvió a su vista'));
-  return { simulando: limpio };
+
+  // Se devuelve el permiso EFECTIVO ya recalculado para que el navegador reacomode la pantalla
+  // sin recargar. Recargar no es una opción acá: el panel vive dentro de un iframe y un
+  // location.reload() recarga la URL del sandbox, no la del panel — la pantalla queda en blanco
+  // con la barra de direcciones intacta.
+  const efectivo = webapp_permisoActual();
+  return {
+    simulando: limpio,
+    permiso: {
+      rol: efectivo.rol, pods: efectivo.pods, todo: efectivo.todo,
+      secciones: efectivo.secciones, configurado: efectivo.configurado,
+      simulando: efectivo.simulando || ''
+    }
+  };
 }
 
 /**

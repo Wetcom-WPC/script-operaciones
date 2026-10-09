@@ -115,6 +115,33 @@
   }
 
   /**
+   * Reacomoda la pantalla después de entrar o salir de la previsualización de un POD.
+   *
+   * NO se recarga la página a propósito. El panel corre dentro de un iframe de HtmlService:
+   * un location.reload() recarga la URL del sandbox —no la del panel— y la pantalla queda en
+   * blanco con la barra de direcciones intacta, que es exactamente lo que pasaba.
+   *
+   * Se tiran los datos ya cargados de las secciones que dependen del POD: si no, se seguiría
+   * viendo la tabla anterior y daría la impresión de que el cambio no tuvo efecto.
+   */
+  function aplicarCambioDeVista(permisoNuevo) {
+    if (permisoNuevo) estado.permiso = permisoNuevo;
+
+    matrizGlobal = null;
+    llegadasGlobal = null;
+    horariosGlobal = null;
+    logsGlobales = null;
+    datosIndiceGlobal = null;
+
+    aplicarPermiso();
+    pintarEncabezado();
+
+    // Volver a cargar la sección que esté abierta, con el recorte nuevo.
+    var activo = document.querySelector('.nav-btn.active');
+    if (activo) activo.click();
+  }
+
+  /**
    * Deja visibles solo las secciones del rol de quien mira.
    *
    * Esto es COMODIDAD, no seguridad: cada función del servidor verifica el rol por su cuenta,
@@ -169,7 +196,10 @@
       salir.addEventListener('click', function () {
         ocupar(salir, 'Saliendo...');
         google.script.run
-          .withSuccessHandler(function () { location.reload(); })
+          .withSuccessHandler(function (r) {
+            liberar(salir);
+            aplicarCambioDeVista(r && r.permiso);
+          })
           .withFailureHandler(function (err) { liberar(salir); alert(mensajeDeError(err)); })
           .webapp_verComoPod('');
       });
@@ -1812,9 +1842,16 @@
     if (selVerComo) {
       selVerComo.addEventListener('change', function () {
         var aviso = document.getElementById('avisoPermisos');
+        // Deshabilitar, no ocupar(): ocupar() vacía el nodo y en un <select> se llevaría puestas
+        // todas las opciones.
+        selVerComo.disabled = true;
         google.script.run
-          .withSuccessHandler(function () { location.reload(); })
+          .withSuccessHandler(function (r) {
+            selVerComo.disabled = false;
+            aplicarCambioDeVista(r && r.permiso);
+          })
           .withFailureHandler(function (err) {
+            selVerComo.disabled = false;
             mostrarAviso(aviso, 'error', 'No se pudo cambiar la vista: ' + mensajeDeError(err));
           })
           .webapp_verComoPod(selVerComo.value);
