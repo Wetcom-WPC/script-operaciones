@@ -25,6 +25,12 @@ class MailProcessor {
     // en Drive (o al revés) no se da por terminado. Ver AGENTS.md.
     // Valores posibles: 'tickets' | 'drive'
     this.pasos = config.pasos || ['tickets', 'drive'];
+
+    // El paso de Drive resuelve la carpeta por el REMITENTE. Para los reportes que llegan
+    // todos desde la misma casilla y traen el cliente adentro del adjunto, eso archivaría
+    // todo junto en la carpeta de un solo cliente. Con esto en true se usa el cliente que
+    // ya resolvió resolveClientConfig().
+    this.archivaPorClienteDelReporte = config.archivaPorClienteDelReporte === true;
   }
 
   /**
@@ -374,7 +380,12 @@ class MailProcessor {
     if (!this.requierePaso('drive')) return resultadoTickets;
 
     const blobsToUpload = this.extractedBlobs || null;
-    const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName, blobsToUpload);
+    // Por defecto Drive resuelve la carpeta por el REMITENTE, que es lo correcto para casi
+    // todos. Los que declaran archivaPorClienteDelReporte usan el cliente ya resuelto: son
+    // los reportes que llegan todos desde la misma casilla y traen el cliente adentro, donde
+    // mirar el remitente archivaría todo junto en la carpeta equivocada.
+    const clienteForzado = this.archivaPorClienteDelReporte ? clientName : null;
+    const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName, blobsToUpload, clienteForzado);
 
     if (resultadoDrive.ok) {
       if (!summaryReport.drive) summaryReport.drive = [];
