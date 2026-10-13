@@ -340,7 +340,7 @@ function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareas
     return [{
       cliente:             clienteRVTools,
       pod:                 _getPod(clienteRVTools),
-      ticketsCreados:      _contarPorPalabra(exitos, "cread"),
+      ticketsCreados:      _contarPorPalabra(exitos, ["creo", "cread"]),
       ticketsActualizados: _contarPorPalabra(exitos, ["actualiz", "update"]),
       tareasCerradas,
       ultimoError:         _primerError(errores),
@@ -378,8 +378,11 @@ function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareas
       registro.exitos.push(msg);
       const keys = msg.match(/[A-Z]+-\d+/g) || [];
       registro.keys.push.apply(registro.keys, keys);
-      const msgL = msg.toLowerCase();
-      if (msgL.includes("cread")) { registro.ticketsCreados++; }
+      // Sin tildes antes de comparar: el mensaje real dice "Se creó el ticket", que no
+      // contiene "cread" — los tickets creados se contaban siempre como 0 y nadie lo notó,
+      // porque la columna nunca se miró hasta que la empezó a leer el dashboard.
+      const msgL = msg.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      if (msgL.includes("creo") || msgL.includes("cread")) { registro.ticketsCreados++; }
       else if (msgL.includes("actualiz") || msgL.includes("update")) { registro.ticketsActualizados++; }
     }
   });
@@ -477,10 +480,13 @@ function _extraerCliente(msg) {
   const m = msg.match(/(?:reporte de|para|de)\s+([A-ZÁÉÍÓÚÑ][^.,()\n<|]{2,50}?)(?:\s+(?:procesado|recibido|sin|creado|actualiz|\(success\)|con)|$)/i);
   return m ? m[1].trim() : null;
 }
+// Las palabras se comparan contra el mensaje SIN TILDES: "Se creó el ticket" no contiene
+// "cread" ni "creó" si la palabra buscada se escribe sin tilde, y la cuenta daba 0 siempre.
 function _contarPorPalabra(exitos, palabras) {
   const lista = Array.isArray(palabras) ? palabras : [palabras];
   return exitos.filter(function(e) {
-    const m = (typeof e === "string" ? e : (e.mensaje || "")).toLowerCase();
+    const m = (typeof e === "string" ? e : (e.mensaje || ""))
+      .toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
     return lista.some(function(p) { return m.includes(p); });
   }).length;
 }
