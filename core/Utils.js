@@ -166,6 +166,56 @@ const HORARIO_OPERATIVO_FIN = 15;     // exclusive (hasta las 14:59)
 const HORARIO_OPERATIVO_TZ = "America/Argentina/Buenos_Aires";
 
 /**
+ * El argumento de fecha, como Date usable. Sin argumento, hoy.
+ *
+ * NO usa `instanceof Date` a propósito. Este proyecto se consume como librería desde el
+ * Índice, y un Date que viene del otro lado NO pasa esa prueba: es de otro realm. Ya pasó
+ * con el tilde del operador (ver _operadorTildeFechaMs en core/OperadorTilde.js), donde la
+ * fecha se descartaba en silencio y los envíos salían sin operador. Se pregunta si el valor
+ * sabe responder getTime(), que es lo que realmente importa.
+ *
+ * @param {Date|string|number} [valor]
+ * @returns {Date}
+ */
+function _aFechaOHoy(valor) {
+  if (!valor) return new Date();
+  if (typeof valor.getTime === "function") {
+    return isNaN(valor.getTime()) ? new Date() : valor;
+  }
+  const d = new Date(valor);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
+
+/**
+ * ¿Es sábado o domingo?
+ * @param {Date} [fecha] Fecha a evaluar. Por defecto, hoy.
+ * @returns {boolean}
+ */
+function esFinDeSemana(fecha) {
+  const d = _aFechaOHoy(fecha).getDay();
+  return d === 0 || d === 6;   // 0 domingo, 6 sábado
+}
+
+/**
+ * ¿Hoy NO se trabaja? Fin de semana o feriado.
+ *
+ * Existe porque "es feriado" y "no se trabaja" no son lo mismo, y confundirlos ya dejó
+ * avisos corriendo los fines de semana: el domingo 11/10/2026 la auditoría de reportes
+ * faltantes informó 180 reportes de 17 clientes, que obviamente nadie había mandado porque
+ * era domingo. Esa función solo miraba feriados.
+ *
+ * El orden importa: el fin de semana se resuelve mirando el día y no cuesta nada, mientras
+ * que esFeriadoHoy() sale a la API. Preguntando primero por el día, un sábado ni siquiera
+ * la consulta.
+ *
+ * @param {Date} [fecha] Fecha a evaluar. Por defecto, hoy.
+ * @returns {boolean}
+ */
+function esDiaNoLaborable(fecha) {
+  return esFinDeSemana(fecha) || esFeriadoHoy(fecha);
+}
+
+/**
  * ¿Hoy es feriado según la API pública de feriados argentinos?
  *
  * Consulta https://api.argentinadatos.com/v1/feriados/{año} con UN reintento
@@ -174,11 +224,20 @@ const HORARIO_OPERATIVO_TZ = "America/Argentina/Buenos_Aires";
  *
  * Ante cualquier problema siempre loguea el motivo (§7 de AGENTS.md).
  *
+ * Flujo de decisión:
+ * 1. Intenta la API pública https://api.argentinadatos.com/v1/feriados/{año} con UN reintento.
+ * 2. Si la API falla tras 2 intentos, consulta como respaldo a Google Calendar (HOLIDAYS_CALENDAR_ID).
+ * 3. Si Google Calendar también falla, se asume por precaución que ES feriado (true),
+ *    se loguea y se envía alerta a Slack al canal #wpc-interno-yasc (SLACK_WEBHOOK_YASC)
+ *    para que en caso de ser día hábil la operación se ejecute a mano.
+ *
  * @param {Date} [fecha] Fecha a evaluar. Por defecto, hoy.
  * @returns {boolean}
  */
 function esFeriadoHoy(fecha) {
-  const hoy = fecha instanceof Date ? fecha : new Date();
+  // Mismo motivo que en _aFechaOHoy: `instanceof Date` no sobrevive el cruce de realms
+  // cuando esto corre como librería, y la fecha que le pasan quedaba ignorada en silencio.
+  const hoy = _aFechaOHoy(fecha);
   const mes    = String(hoy.getMonth() + 1).padStart(2, '0');
   const dia    = String(hoy.getDate()).padStart(2, '0');
   const fechaBuscada = `${hoy.getFullYear()}-${mes}-${dia}`;

@@ -27,8 +27,33 @@ class MailProcessor {
     this.pasos = config.pasos || ['tickets', 'drive'];
   }
 
-  /** @returns {boolean} true si este processor debe ejecutar el paso indicado. */
+  /**
+   * @returns {boolean} true si este processor debe ejecutar el paso indicado.
+   *
+   * Los fines de semana y feriados NO se hace el paso de tickets, aunque el processor lo
+   * declare. El servicio es 9x5: un reporte que llega un sábado no debería generar un ticket
+   * que nadie va a mirar hasta el lunes, ni intentar cerrar una tarea programada que nadie
+   * creó ese día — de ahí salían las advertencias de Slack del tipo "No existe ninguna tarea
+   * programada X creada hoy", que el sábado 10/10/2026 aparecieron por este motivo.
+   *
+   * El paso de 'drive' SÍ se hace: archivar el reporte vale por sí solo y es lo que el equipo
+   * pidió conservar. O sea, un fin de semana todo processor se comporta como los que ya
+   * declaran `pasos: ['drive']`.
+   *
+   * CONSECUENCIA, a propósito: el correo del sábado queda archivado y marcado [OPS-PROCESADO],
+   * así que el lunes NO se vuelve a mirar y ese reporte no genera ticket nunca. Si un cliente
+   * solo mandara los fines de semana, lo que lo delata es la auditoría de reportes faltantes
+   * del lunes, no este paso.
+   *
+   * POR ESO el freno pide que el processor TENGA paso 'drive'. Si no lo tiene —hoy solo
+   * NutanixOpsProcessor, con `pasos: ['tickets']`— saltear los tickets lo dejaría sin
+   * archivar Y sin ticket, igual marcado como procesado: el reporte se perdería del todo.
+   * Para esos el comportamiento no cambia hasta que se decida si también deben archivar.
+   */
   requierePaso(paso) {
+    if (paso === 'tickets' && this.pasos.indexOf('drive') !== -1 && esDiaNoLaborable()) {
+      return false;
+    }
     return this.pasos.indexOf(paso) !== -1;
   }
 
@@ -144,7 +169,9 @@ class MailProcessor {
 
         let resultadoSoloDrive = this.ejecutarPasoDrive(message, clientName, summaryReport, { status: 'SUCCESS' });
 
-        if (this.scheduledTaskName && resultadoSoloDrive.status === 'SUCCESS') {
+        // requierePaso('tickets') también cubre el fin de semana y los feriados: cerrar una
+        // tarea programada es tocar Jira, y en día no laborable no se toca.
+        if (this.scheduledTaskName && this.requierePaso('tickets') && resultadoSoloDrive.status === 'SUCCESS') {
           if (configSoloDrive) {
             resultadoSoloDrive = this.cerrarTareaProgramadaSiCorresponde(configSoloDrive, summaryReport);
           } else {
@@ -227,7 +254,12 @@ class MailProcessor {
           mensaje: `📄 Reporte de ${clientName} recibido sin filas (solo encabezados): no hay anomalías que reportar.`
         });
 
-        let resultadoVacio = this.handleNoAlerts(this.findExistingTicket(clientConfig), clientConfig, summaryReport);
+        // El reporte vacío también pasa por Jira (cierra la tarea programada y resuelve el
+        // ticket abierto), así que respeta la misma condición que el camino con alertas.
+        let resultadoVacio = { status: 'SUCCESS' };
+        if (this.requierePaso('tickets')) {
+          resultadoVacio = this.handleNoAlerts(this.findExistingTicket(clientConfig), clientConfig, summaryReport);
+        }
         resultadoVacio = this.ejecutarPasoDrive(message, clientName, summaryReport, resultadoVacio);
 
         enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
