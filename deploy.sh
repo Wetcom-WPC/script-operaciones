@@ -38,15 +38,26 @@ cd "$(dirname "$0")"
 # provocó un incidente (27/07/2026: se re-subió código legacy a producción). Se muestra
 # siempre, y si es producción se pide confirmación escrita.
 SCRIPT_ID=$(grep -oE '"scriptId"[^,]*' .clasp.json | cut -d'"' -f4)
-ID_PRODUCCION="1wVCbInNTiICrLfn57O07d1ZYxHCzHcN7MxwM0B-m1GfeZmN5j4_MGErN"
+# Proyectos SIN staging: lo que se pushea acá sale a producción directo. Son una lista y no
+# un solo id porque Script Alarmas también es productivo —manda los reportes de licencias a
+# los PODs el último día hábil de cada mes— y con un único ID_PRODUCCION se desplegaba sin
+# pedir confirmación, como si fuera un entorno de pruebas.
+ID_OPS_OPERATIVO="1wVCbInNTiICrLfn57O07d1ZYxHCzHcN7MxwM0B-m1GfeZmN5j4_MGErN"
+ID_SCRIPT_ALARMAS="1wr3H1MVW9xdHMX--Nn0d1BvGjBjd3xrrWUEJwVW_lzxu5dQWpyVGGmO_"
+
+NOMBRE_PRODUCCION=""
+case "$SCRIPT_ID" in
+  "$ID_OPS_OPERATIVO")  NOMBRE_PRODUCCION="Ops Operativo" ;;
+  "$ID_SCRIPT_ALARMAS") NOMBRE_PRODUCCION="Script Alarmas" ;;
+esac
 
 echo "Proyecto : $(basename "$PWD")"
 echo "scriptId : ${SCRIPT_ID}"
 echo "Versión  : ${DESCRIPCION}"
 echo ""
 
-if [ "$SCRIPT_ID" = "$ID_PRODUCCION" ]; then
-  echo "*** ESTO ES PRODUCCIÓN (Ops Operativo) ***"
+if [ -n "$NOMBRE_PRODUCCION" ]; then
+  echo "*** ESTO ES PRODUCCIÓN (${NOMBRE_PRODUCCION}) ***"
   printf 'Escribí exactamente PRODUCCION para continuar: '
   read -r CONFIRMACION
   if [ "$CONFIRMACION" != "PRODUCCION" ]; then
