@@ -24,20 +24,49 @@ const COL = {
 let CACHE_ARCHIVOS_CARPETA = {};
 
 /**
+ * Función para ejecutar la auditoría de forma segura (solo logs, sin enviar mensajes a Slack ni escribir en la hoja)
+ */
+function probarAuditoria() {
+  Logger.log("=== INICIANDO AUDITORÍA EN MODO PRUEBA ===");
+  ejecutarAuditoriaDiaria(true);
+  Logger.log("=== FIN DE MODO PRUEBA ===");
+}
+
+/**
+ * Función para probar la auditoría y enviar el mensaje resultante directamente al canal
+ * de pruebas/mock de Slack (mock-tareas-programadas-log), SIN escribir en las planillas de logs de producción.
+ */
+function probarAuditoriaEnSlack() {
+  Logger.log("=== INICIANDO AUDITORÍA CON ENVÍO A CANAL DE MOCK (Slack) ===");
+  const props = PropertiesService.getScriptProperties();
+  const webhookMock = props.getProperty("SLACK_WEBHOOK_GENERAL") 
+                   || props.getProperty("SLACK_WEBHOOK_MOCK_TAREAS_PROGRAMADAS")
+                   || props.getProperty("SLACK_WEBHOOK_YASC");
+
+  if (!webhookMock) {
+    Logger.log("❌ Error: No se encontró webhook para mock (SLACK_WEBHOOK_GENERAL).");
+    return;
+  }
+
+  ejecutarAuditoriaDiaria(true, webhookMock);
+  Logger.log("=== FIN DE AUDITORÍA CON ENVÍO A MOCK ===");
+}
+
+/**
  * ======================================================================
  * FUNCIÓN PRINCIPAL (TRIGGER DIARIO)
  * ======================================================================
  */
-function ejecutarAuditoriaDiaria() {
+function ejecutarAuditoriaDiaria(modoPrueba = false, webhookPrueba = null) {
   // FRENO DE DÍA NO LABORABLE — fin de semana o feriado.
   //
   // Antes esto solo miraba feriados, pero el activador es diario: los sábados y domingos
   // corría igual y avisaba por Slack que faltaban TODOS los reportes, porque ningún cliente
-  // los manda esos días. El domingo 11/10/2026 informó 180 reportes de 17 clientes.
+  // los manda. El domingo 11/10/2026 informó 180 reportes de 17 clientes.
   //
   // No se arregla con el activador: Apps Script no tiene "de lunes a viernes" en uno solo y
   // habría que crear cinco, cuando el problema real es que faltaba una condición acá.
-  if (esDiaNoLaborable()) {
+  if (!modoPrueba && esDiaNoLaborable()) {
     Logger.log("EJECUCIÓN OMITIDA: hoy no es día laborable (fin de semana o feriado).");
     return;
   }
@@ -82,16 +111,19 @@ function ejecutarAuditoriaDiaria() {
     try {
       if (debeLlegarHoy(frecuencia, fechaOrigen, hoy)) {
         Logger.log(`[Fila ${numFilaExcel}] Revisando: ${cliente} - "${idReporte}"`);
-        const llego = verificarEnDrive(idCarpetaRaiz, idReporte, hoy);
+        const llego = verificarEnDrive(idCarpetaRaiz, idReporte, hoy, cliente);
 
         if (!llego) {
           if (!reportesFaltantes[cliente]) reportesFaltantes[cliente] = [];
           reportesFaltantes[cliente].push(idReporte);
           totalFaltantes++;
           Logger.log(`❌ FALTANTE: ${cliente} - ${idReporte}`);
-          // Usa la función centralizada del repo (OperationsLogger.gs)
-          // que ya tiene el nombre correcto de pestaña: LOG_FALTANTES_TAB_NAME = "Logs Reportes Faltantes"
-          logReporteFaltante(cliente, idReporte, hoy);
+          
+          if (!modoPrueba) {
+            // Usa la función centralizada del repo (OperationsLogger.gs)
+            // que ya tiene el nombre correcto de pestaña: LOG_FALTANTES_TAB_NAME = "Logs Reportes Faltantes"
+            logReporteFaltante(cliente, idReporte, hoy);
+          }
         } else {
           Logger.log(`✅ RECIBIDO: ${cliente} - ${idReporte}`);
         }
@@ -105,7 +137,15 @@ function ejecutarAuditoriaDiaria() {
   }
 
   Logger.log(`Auditoría finalizada. Faltantes: ${totalFaltantes}.`);
-  enviarNotificacionSlack(reportesFaltantes, totalFaltantes, hoy);
+  
+  if (!modoPrueba) {
+    enviarNotificacionSlack(reportesFaltantes, totalFaltantes, hoy);
+  } else if (webhookPrueba) {
+    Logger.log("MODO PRUEBA: Enviando notificación de prueba a canal de mock en Slack...");
+    enviarNotificacionSlack(reportesFaltantes, totalFaltantes, hoy, webhookPrueba);
+  } else {
+    Logger.log("MODO PRUEBA: Se omitió el envío de mensajes a Slack.");
+  }
 }
 
 /**
@@ -113,17 +153,106 @@ function ejecutarAuditoriaDiaria() {
  * LÓGICA DE NEGOCIO: VERIFICACIÓN EN DRIVE
  * ======================================================================
  */
-function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy) {
+/**
+ * Normaliza una cadena para comparación flexible de nombres de reporte:
+ * - Pasa a minúsculas y remueve tildes/acentos.
+ * - Separa números pegados a letras (ej: "09-00DRP" -> "09-00 DRP").
+ * - Convierte caracteres especiales o puntuación en espacios.
+ * - Colapsa espacios redundantes.
+ */
+function normalizarTextoReporte(str) {
+  return String(str || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/([0-9])([a-z])/gi, '$1 $2')
+    .replace(/([a-z])([0-9])/gi, '$1 $2')
+    .replace(/[^a-z0-9]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Valida si el archivo real en Drive coincide con el reporte esperado:
+ * - Tolerante a guiones, espacios y horas agregadas adelante.
+ * - Soporta palabras clave significativas y plurales/singulares.
+ * - Protege reportes normales de hacer match accidental con DRP.
+ */
+function coincideNombreReporte(nombreArchivoReal, identificadorEsperado) {
+  const normReal = normalizarTextoReporte(nombreArchivoReal);
+  const normEsperado = normalizarTextoReporte(identificadorEsperado);
+
+  if (!normReal || !normEsperado) return false;
+
+  // Si el esperado no es DRP pero el archivo real sí es DRP, no cruzar
+  if (!normEsperado.includes('drp') && normReal.includes('drp')) return false;
+
+  // 1. Match directo como subcadena normalizada
+  if (normReal.includes(normEsperado)) return true;
+
+  // 2. Match por palabras clave significativas (ignora conectores como "de", "en", "el")
+  const conectores = new Set(['de', 'en', 'el', 'la', 'los', 'las', 'del', 'con', 'y', 'por', 'para', 'un', 'una']);
+  const palabras = normEsperado.split(' ').filter(function (p) {
+    return p.length > 1 && !conectores.has(p);
+  });
+
+  if (palabras.length === 0) return false;
+
+  return palabras.every(function (palabra) {
+    if (normReal.includes(palabra)) return true;
+    if (palabra.endsWith('s') && palabra.length > 4 && normReal.includes(palabra.slice(0, -1))) return true;
+    return false;
+  });
+}
+
+function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy, cliente) {
   const diaStr  = Utilities.formatDate(fechaHoy, Session.getScriptTimeZone(), "yyyyMMdd");
-  const cacheKey = idCarpetaRaiz + "_" + diaStr;
+  const cacheKey = idCarpetaRaiz + "_" + diaStr + "_" + cliente;
 
   if (!CACHE_ARCHIVOS_CARPETA[cacheKey]) {
     try {
-      const raiz = DriveApp.getFolderById(idCarpetaRaiz);
-      const carpetasDia = raiz.getFoldersByName(diaStr);
+      let raiz = DriveApp.getFolderById(idCarpetaRaiz);
+      
+      // 1. Buscar carpeta del día directamente en la raíz
+      let carpetasDia = raiz.getFoldersByName(diaStr);
+
+      // 2. Si no está en raíz, buscar por carpeta del cliente (o alias)
+      if (!carpetasDia.hasNext()) {
+        let carpetasCliente = raiz.getFoldersByName(cliente);
+
+        // Probar quitando "Operaciones " (ej: "Dorinka", "Petersen Corp")
+        if (!carpetasCliente.hasNext() && cliente.startsWith("Operaciones ")) {
+          carpetasCliente = raiz.getFoldersByName(cliente.replace(/^Operaciones\s+/i, '').trim());
+        }
+
+        // Probar con alias frecuentes (Walmart / GDN para Dorinka, Sodimac para Falabella, etc.)
+        if (!carpetasCliente.hasNext()) {
+          const alias = {
+            "Operaciones Dorinka": ["Dorinka", "Walmart", "GDN Argentina", "GDN"],
+            "Operaciones Compañia Bernal": ["Bernal", "Compañia Bernal", "Ciaber"],
+            "Operaciones Falabella": ["Falabella", "Sodimac"]
+          };
+          const listaAlias = alias[cliente] || [];
+          for (let a = 0; a < listaAlias.length; a++) {
+            carpetasCliente = raiz.getFoldersByName(listaAlias[a]);
+            if (carpetasCliente.hasNext()) break;
+          }
+        }
+
+        if (carpetasCliente.hasNext()) {
+          raiz = carpetasCliente.next();
+          carpetasDia = raiz.getFoldersByName(diaStr);
+        }
+      }
 
       if (!carpetasDia.hasNext()) {
-        Logger.log(`❌ ERROR DRIVE: No existe carpeta del día "${diaStr}" en la raíz.`);
+        const subcarpetas = [];
+        try {
+          const iter = raiz.getFolders();
+          while (iter.hasNext() && subcarpetas.length < 15) {
+            subcarpetas.push(iter.next().getName());
+          }
+        } catch (eSub) {}
+        Logger.log(`❌ ERROR DRIVE: No existe carpeta del día "${diaStr}" para el cliente "${cliente}". Carpetas encontradas en "${raiz.getName()}": [${subcarpetas.join(', ')}]`);
         CACHE_ARCHIVOS_CARPETA[cacheKey] = [];
         return false;
       }
@@ -135,16 +264,34 @@ function verificarEnDrive(idCarpetaRaiz, identificadorReporte, fechaHoy) {
         listaNombresArchivos.push(archivos.next().getName());
       }
       CACHE_ARCHIVOS_CARPETA[cacheKey] = listaNombresArchivos;
-      Logger.log(`📂 Caché OK: ${diaStr} tiene ${listaNombresArchivos.length} archivos.`);
+      Logger.log(`✅ Caché OK: ${cliente}/${diaStr} tiene ${listaNombresArchivos.length} archivos.`);
 
     } catch (e) {
-      Logger.log(`🔥 EXCEPCIÓN DRIVE (ID Raíz: ${idCarpetaRaiz}): ${e.message}`);
+      Logger.log(`⚠️ EXCEPCIÓN DRIVE (ID Raíz: ${idCarpetaRaiz}, Cliente: ${cliente}): ${e.message}`);
       throw new Error("Error de acceso a Drive. Verifica permisos e ID.");
     }
   }
 
   const archivosEnCarpeta = CACHE_ARCHIVOS_CARPETA[cacheKey];
-  return archivosEnCarpeta.some(nombreReal => nombreReal.includes(identificadorReporte));
+  const encontrado = archivosEnCarpeta.some(function (nombreReal) {
+    return coincideNombreReporte(nombreReal, identificadorReporte);
+  });
+
+  if (!encontrado && archivosEnCarpeta.length > 0) {
+    const normId = normalizarTextoReporte(identificadorReporte);
+    const palabras = normId.split(' ').filter(function (p) {
+      return p.length > 2 && !['drp', 'para', 'con', 'del', 'las', 'los', 'por'].includes(p);
+    });
+    const parecidos = archivosEnCarpeta.filter(function (nombre) {
+      const normN = normalizarTextoReporte(nombre);
+      return palabras.some(function (p) { return normN.includes(p); });
+    });
+    if (parecidos.length > 0) {
+      Logger.log(`   🔍 [Diagnóstico] Archivos similares en la carpeta: [${parecidos.slice(0, 5).join(', ')}]`);
+    }
+  }
+
+  return encontrado;
 }
 
 /**
@@ -194,8 +341,9 @@ function debeLlegarHoy(frecuenciaRaw, fechaOrigen, fechaHoy) {
  * INTEGRACIÓN: SLACK
  * ======================================================================
  */
-function enviarNotificacionSlack(reportesFaltantes, totalFaltantes, fechaHoy) {
-  if (!SLACK_WEBHOOK_URL_YASC || SLACK_WEBHOOK_URL_YASC.includes("T00000000")) {
+function enviarNotificacionSlack(reportesFaltantes, totalFaltantes, fechaHoy, webhookOverride = null) {
+  const urlWebhook = webhookOverride || SLACK_WEBHOOK_URL_YASC;
+  if (!urlWebhook || urlWebhook.includes("T00000000")) {
     Logger.log("⚠️ ALERTA: Webhook de Slack no configurado.");
     return;
   }
@@ -227,6 +375,13 @@ function enviarNotificacionSlack(reportesFaltantes, totalFaltantes, fechaHoy) {
       { "type": "divider" }
     ];
 
+    if (webhookOverride) {
+      blocks.unshift({
+        "type": "context",
+        "elements": [{ "type": "mrkdwn", "text": "🧪 *[PRUEBA / MOCK]* Mensaje de prueba enviado a canal de testing" }]
+      });
+    }
+
     // El detalle va en varias secciones: mandarlo en una sola supera los 3000
     // caracteres que admite Slack y la API responde 400 invalid_blocks.
     const trozos = _dividirEnBloquesDeTexto(lineas, MAX_CHARS_SECCION);
@@ -243,12 +398,18 @@ function enviarNotificacionSlack(reportesFaltantes, totalFaltantes, fechaHoy) {
     blocks = [
       { "type": "section", "text": { "type": "mrkdwn", "text": `✅ *Reportes Completos - ${fechaStr}*\nConfirmado: Todos los reportes han llegado correctamente.` } }
     ];
+    if (webhookOverride) {
+      blocks.unshift({
+        "type": "context",
+        "elements": [{ "type": "mrkdwn", "text": "🧪 *[PRUEBA / MOCK]* Mensaje de prueba enviado a canal de testing" }]
+      });
+    }
   }
 
   // sendSlackMessage ya trae reintentos y muteHttpExceptions, y loguea el cuerpo
   // real de la respuesta de Slack (con UrlFetchApp directo llegaba truncada).
-  if (sendSlackMessage(SLACK_WEBHOOK_URL_YASC, { "blocks": blocks })) {
-    Logger.log("✅ Notificación Slack enviada.");
+  if (sendSlackMessage(urlWebhook, { "blocks": blocks })) {
+    Logger.log("✅ Notificación Slack enviada con éxito.");
   } else {
     Logger.log("❌ Error Slack: no se pudo enviar la notificación de reportes faltantes.");
   }

@@ -436,7 +436,7 @@ function esClienteSinTicketsDeAlerta(clientConfig) {
 function _omitirTicketPorClienteSinTickets(summary, clientConfig) {
   const nombre = (clientConfig && (clientConfig.clientName || clientConfig.clientNameSop)) || "?";
   Logger.log(`[Jira] Cliente "${nombre}" está marcado sin tickets de alerta: NO se crea ni actualiza ticket para "${summary}". El reporte igual se archiva en Drive y su Tarea Programada se cierra normalmente.`);
-  return { status: 'SUCCESS', detail: { mensaje: `Cliente "${nombre}": ticket de alerta omitido a propósito (sin tickets de alerta).` } };
+  return { status: 'SUCCESS', detail: { mensaje: `Cliente "${nombre}": ticket de alerta omitido a propósito (sin tickets de alerta).`, cliente: nombre } };
 }
 
 function createTicketAndNotify(summary, description, attachmentBlob, clientConfig, operationName) {
@@ -465,7 +465,7 @@ function createTicketAndNotify(summary, description, attachmentBlob, clientConfi
     if (accountIdInformativa) {
       ticketInformativo(existingTicketKey, accountIdInformativa);
     }
-    return { status: 'SUCCESS', detail: { mensaje: `Se actualizó el ticket ya existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>.` } };
+    return { status: 'SUCCESS', detail: { mensaje: `Se actualizó el ticket ya existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>.`, cliente: clientConfig.clientName } };
   }
   // --- FIN NUEVO ---
 
@@ -489,7 +489,7 @@ function createTicketAndNotify(summary, description, attachmentBlob, clientConfi
           ticketInformativo(issue.issueKey, accountIdInformativa);
           return {
             status: 'SUCCESS',
-            detail: { mensaje: `✅ *Informativo:* Ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}> cerrado y asignado.` }
+            detail: { mensaje: `✅ *Informativo:* Ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}> cerrado y asignado.`, cliente: clientConfig.clientName }
           };
         }
         // El adjunto todavía no está confirmado: no cerramos el ticket todavía.
@@ -506,9 +506,9 @@ function createTicketAndNotify(summary, description, attachmentBlob, clientConfi
 
     // 3. SI NO ES INFORMATIVO, SIGUE EL FLUJO NORMAL
     if (attachmentStatus) return attachmentStatus; // Retornamos el error si hubo fallo
-    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.` } };
+    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.`, cliente: clientConfig.clientName } };
   } else {
-    return { status: 'ERROR', detail: { error: "No se pudo crear el ticket en Jira.", detalle: `Resumen: "${summary}"` } };
+    return { status: 'ERROR', detail: { error: "No se pudo crear el ticket en Jira.", detalle: `Resumen: "${summary}"`, cliente: clientConfig.clientName } };
   }
 }
 
@@ -531,9 +531,9 @@ function createTicketCOMAFI(summary, description, attachmentBlob, clientConfig) 
         }
       }
     }
-    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.` } };
+    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.`, cliente: clientConfig.clientName } };
   } else {
-    return { status: 'ERROR', detail: { error: "No se pudo crear el ticket en Jira.", detalle: `Resumen: "${summary}"` } };
+    return { status: 'ERROR', detail: { error: "No se pudo crear el ticket en Jira.", detalle: `Resumen: "${summary}"`, cliente: clientConfig.clientName } };
   }
 }
 function createJiraTicketForCOM(summary, description, clientConfig) {
@@ -596,11 +596,13 @@ function createTicketAndNotifySoporte(summary, description, attachmentBlob, clie
         }
       }
     }
-    return { status: 'SUCCESS', detail: { mensaje: `Se actualizó el ticket ya existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>.` } };
+    const cli = (clientConfig && (clientConfig.clientNameSop || clientConfig.clientName)) || "";
+    return { status: 'SUCCESS', detail: { mensaje: `Se actualizó el ticket ya existente <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}>.`, cliente: cli } };
   }
   // --- FIN NUEVO ---
 
   const issue = createJiraTicketForSoporte(summary, description, clientConfig);
+  const cliSop = (clientConfig && (clientConfig.clientNameSop || clientConfig.clientName)) || "";
   if (issue && issue.issueKey) {
     if (attachmentBlob) {
       const attachmentResult = addAttachmentToJiraTicket(issue.issueKey, attachmentBlob);
@@ -611,9 +613,9 @@ function createTicketAndNotifySoporte(summary, description, attachmentBlob, clie
         }
       }
     }
-    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.` } };
+    return { status: 'SUCCESS', detail: { mensaje: `Se creó el ticket <${JIRA_DOMAIN}/browse/${issue.issueKey}|${issue.issueKey}>.`, cliente: cliSop } };
   } else {
-    return { status: 'ERROR', detail: { error: "No se pudo crear el ticket en Jira.", detalle: `Resumen: "${summary}"` } };
+    return { status: 'ERROR', detail: { error: "No se pudo crear el ticket en Jira.", detalle: `Resumen: "${summary}"`, cliente: cliSop } };
   }
 }
 
@@ -814,7 +816,7 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
 /**
  * Busca el ticket de REPORTE abierto de una operación (no una Tarea Programada).
  *
- * Estaba duplicada byte a byte en veeam/VMsEnMasDeUnJob.js y vsphere/OrphanedVMs.js
+ * Estaba duplicada byte a byte en veeamone/VMsEnMasDeUnJob.js y veeamone/OrphanedVMs.js
  * (AGENTS.md §5). Al unificarla se corrigieron dos cosas de la versión original:
  *
  * 1. Armaba el header de autorización a mano en vez de usar getJiraHeaders(), que es el

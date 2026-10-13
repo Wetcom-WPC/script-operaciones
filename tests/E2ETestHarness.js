@@ -38,7 +38,7 @@ const E2E_PROPIEDAD_RUN_ID = "E2E_ULTIMO_RUN_ID";
  * Tareas cuyo processor sobrescribe processSingleMessage() por completo y NUNCA llama a
  * ejecutarPasoDrive() — así que legítimamente no archivan nada en Drive. Descubierto corriendo
  * el harness: no es un bug de estos dos processors, es su diseño actual (ver
- * vsphere/Capacidad de Particiones.js y tanzu/Tanzu_Main.js). Si algún día empiezan a
+ * vrops/Capacidad de Particiones.js y tanzu/Tanzu_Main.js). Si algún día empiezan a
  * archivar, sacarlos de acá.
  */
 const E2E_TAREAS_SIN_PASO_DRIVE = {

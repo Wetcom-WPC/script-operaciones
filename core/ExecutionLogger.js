@@ -36,11 +36,29 @@ const _EF_COL = {
   ULTIMA_ACT:     11,  // L
 };
 // ─── MAPEO operationName → tecnología ────────────────────────────────────────
-const _LOG_TECNOLOGIA_MAP = {
+//
+// ÚNICA fuente de verdad de "qué tecnología genera este reporte" (AGENTS.md §5). La usan el
+// log de Estado Final (_registrarEnLog) y el log de Reportes Faltantes (_deducirTecnologia en
+// core/ScheduledLogger.js). Antes eran dos mapas distintos y se contradecían: el de faltantes
+// adivinaba por palabras sueltas y acertaba 17 de 31 operaciones.
+//
+// La tecnología es la MISMA que la carpeta en la que vive el procesador en Apps Script
+// (vro/, vrops/, veeam/, veeamone/, rvtools/, horizon/, nutanix/, tanzu/). Si se mueve un
+// archivo de carpeta, hay que mover también su línea acá: son el mismo dato en dos lugares y
+// Apps Script no puede leer sus propios nombres de archivo en tiempo de ejecución.
+//
+// Las claves tienen que ser EXACTAMENTE el operationName del procesador (la constante
+// *_OPERATION_NAME de su archivo). Una clave con un typo no rompe nada: simplemente la
+// operación queda registrada como "Otro" y nadie se entera — así estuvo "Jobs Veeam" (el
+// nombre real es "Jobs de Veeam").
+const TECNOLOGIA_POR_OPERACION = {
+  // vro/
   "Affinity Rules":                                   "vRO",
   "Alertas de vSphere":                               "vRO",
   "VMs con preguntas":                                "vRO",
+  "VMs con snapshots":                                "vRO",
   "Discos montados en proxy":                         "vRO",
+  // vrops/
   "Alertas de vROps":                                 "vROps",
   "Cluster DRS":                                      "vROps",
   "Storage DRS":                                      "vROps",
@@ -49,22 +67,50 @@ const _LOG_TECNOLOGIA_MAP = {
   "VMs inaccesibles":                                 "vROps",
   "VMs en datastores locales":                        "vROps",
   "VMs operativas":                                   "vROps",
-  "VMs con snapshots":                                "vROps",
   "VMs apagadas por periodo de tiempo significativo": "vROps",
   "Idle VMs":                                         "vROps",
   "Undersized VMs":                                   "vROps",
   "Oversized VMs":                                    "vROps",
+  "Reporte de Consumo vSphere":                       "vROps",
+  // veeam/
+  "Jobs de Veeam":                                    "Veeam",
+  "Proxies de Veeam":                                 "Veeam",
+  "Backup por tag":                                   "Veeam",
+  "Malware Detection":                                "Veeam",
+  // veeamone/
   "Orphaned VMs":                                     "Veeam ONE",
   "VMs en mas de un Job":                             "Veeam ONE",
-  "Espacio en Repositorios":                          "Veeam BR",
-  "Jobs Veeam":                                       "Veeam BR",
-  "Proxies de Veeam":                                 "Veeam BR",
+  "Espacio en Repositorios":                          "Veeam ONE",
+  // Los seis que atiende VeeamOneReporteProcessor (veeamone/VeeamOneReportes.js). No tienen
+  // una constante *_OPERATION_NAME propia: el nombre se le pasa por parámetro al registrarlos
+  // en core/Main.js, y por eso se habían quedado afuera de este mapa.
+  "VMs protegidas":                                   "Veeam ONE",
+  "Replicas protegidas":                              "Veeam ONE",
+  "Capacity Planning":                                "Veeam ONE",
+  "VM Daily Protection Status":                       "Veeam ONE",
+  "Hosts y VMs con contencion de CPU":                "Veeam ONE",
+  "Inventario de VMs":                                "Veeam ONE",
+  // horizon/
   "Componentes de View":                              "Connection Server",
   "Dashboard View":                                   "Connection Server",
   "Estado de Agentes View":                           "Connection Server",
+  // rvtools/
   "Zombies VMDKs":                                    "RVTools",
   "VMs sin connect at power on":                      "RVTools",
+  // nutanix/ y tanzu/
+  "Operaciones Nutanix":                              "Nutanix",
+  "Tanzu":                                            "Tanzu",
 };
+
+/**
+ * Tecnología de una operación, por nombre exacto.
+ * @param {string} operationName Nombre de la operación (constante *_OPERATION_NAME).
+ * @returns {string} Tecnología, o "Otro" si el nombre no está en el mapa.
+ */
+function tecnologiaDeOperacion(operationName) {
+  const limpio = String(operationName || "").trim();
+  return TECNOLOGIA_POR_OPERACION[limpio] || "Otro";
+}
 // --- BUFFERS EN MEMORIA PARA ESCRITURA EN BLOQUE (BATCHED WRITES) ---
 const _bufferEstadoFinal = [];
 const _bufferErrores = [];
@@ -138,7 +184,7 @@ function _registrarEnLog(operationName, summaryReport) {
     const clienteRVTools  = esRVToolsManual
       ? operationName.replace("RVTools MANUAL:", "").trim()
       : null;
-    const tecnologia      = esRVToolsManual ? "RVTools" : (_LOG_TECNOLOGIA_MAP[operationName] || "Otro");
+    const tecnologia      = esRVToolsManual ? "RVTools" : tecnologiaDeOperacion(operationName);
     const opNombre        = esRVToolsManual ? "RVTools Manual" : operationName;
     const exitos       = summaryReport.exitos       || [];
     const errores      = summaryReport.errores      || [];
@@ -161,7 +207,8 @@ function _registrarEnLog(operationName, summaryReport) {
     // Armar entradas por cliente
     const entradas = _armarEntradas(
       esRVToolsManual, clienteRVTools, exitos, errores,
-      tareasCerradas, resultado
+      tareasCerradas, resultado, advertencias, summaryReport.drive || [], summaryReport.tareasCerradasDetalle || [],
+      summaryReport.clientesProcesados || []
     );
     // Leer filas existentes para upsert
     const lastRow      = sheet.getLastRow();
@@ -288,32 +335,116 @@ function registrarEnvioMail(tecnologia, cliente, pod, totalTickets, itemsErrores
   }
 }
 // ─── HELPERS PRIVADOS ─────────────────────────────────────────────────────────
-function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareasCerradas, resultado) {
+function _armarEntradas(esRVToolsManual, clienteRVTools, exitos, errores, tareasCerradas, resultado, advertencias, drive, tareasCerradasDetalle, clientesProcesados) {
   if (esRVToolsManual) {
     return [{
       cliente:             clienteRVTools,
       pod:                 _getPod(clienteRVTools),
-      ticketsCreados:      _contarPorPalabra(exitos, "cread"),
+      ticketsCreados:      _contarPorPalabra(exitos, ["creo", "cread"]),
       ticketsActualizados: _contarPorPalabra(exitos, ["actualiz", "update"]),
       tareasCerradas,
       ultimoError:         _primerError(errores),
     }];
   }
-  const clientesTickets = _extraerClientesYKeys(exitos);
-  if (clientesTickets.length > 0) {
-    return clientesTickets.map(function(ct) {
+
+  // 1. Recolectar clientes y métricas de todas las fuentes disponibles
+  const clientesMap = {};
+
+  const registrarCliente = function(cli) {
+    if (!cli) return null;
+    const c = String(cli).trim();
+    if (!c || c === "—" || c === "-" || c === "_Desconocido_") return null;
+    if (!clientesMap[c]) {
+      clientesMap[c] = {
+        exitos: [],
+        errores: [],
+        advertencias: [],
+        ticketsCreados: 0,
+        ticketsActualizados: 0,
+        tareasCerradas: 0,
+        keys: []
+      };
+    }
+    return clientesMap[c];
+  };
+
+  // a) De exitos
+  (exitos || []).forEach(function(e) {
+    const msg = typeof e === "string" ? e : (e.mensaje || JSON.stringify(e));
+    const cliDirecto = (typeof e === 'object' && e && e.cliente) ? e.cliente : null;
+    const cli = cliDirecto || _extraerCliente(msg);
+    const registro = registrarCliente(cli);
+    if (registro) {
+      registro.exitos.push(msg);
+      const keys = msg.match(/[A-Z]+-\d+/g) || [];
+      registro.keys.push.apply(registro.keys, keys);
+      // Sin tildes antes de comparar: el mensaje real dice "Se creó el ticket", que no
+      // contiene "cread" — los tickets creados se contaban siempre como 0 y nadie lo notó,
+      // porque la columna nunca se miró hasta que la empezó a leer el dashboard.
+      const msgL = msg.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+      if (msgL.includes("creo") || msgL.includes("cread")) { registro.ticketsCreados++; }
+      else if (msgL.includes("actualiz") || msgL.includes("update")) { registro.ticketsActualizados++; }
+    }
+  });
+
+  // b) De advertencias
+  (advertencias || []).forEach(function(w) {
+    const cli = (typeof w === 'object' && w) ? w.cliente : null;
+    const registro = registrarCliente(cli);
+    if (registro) {
+      registro.advertencias.push(w);
+    }
+  });
+
+  // c) De errores
+  (errores || []).forEach(function(err) {
+    const cli = (typeof err === 'object' && err) ? err.cliente : null;
+    const registro = registrarCliente(cli);
+    if (registro) {
+      registro.errores.push(err);
+    }
+  });
+
+  // d) De drive
+  (drive || []).forEach(function(d) {
+    const cli = (typeof d === 'object' && d) ? d.cliente : null;
+    registrarCliente(cli);
+  });
+
+  // e) De tareasCerradasDetalle (ej: "Affinity Rules (Banco Santa Fe)")
+  (tareasCerradasDetalle || []).forEach(function(det) {
+    const m = typeof det === 'string' ? det.match(/\(([^)]+)\)$/) : null;
+    const cli = m ? m[1].trim() : null;
+    const registro = registrarCliente(cli);
+    if (registro) {
+      registro.tareasCerradas++;
+    }
+  });
+
+  // f) De clientesProcesados (provenientes directamente del remitente SMTP resuelto en MailProcessor)
+  (clientesProcesados || []).forEach(function(cli) {
+    const cNom = typeof cli === 'object' && cli ? (cli.cliente || cli.nombre) : cli;
+    registrarCliente(cNom);
+  });
+
+  const listaClientes = Object.keys(clientesMap);
+  if (listaClientes.length > 0) {
+    return listaClientes.map(function(cliente) {
+      const d = clientesMap[cliente];
+      const tc = d.tareasCerradas > 0 ? d.tareasCerradas : (listaClientes.length === 1 ? tareasCerradas : 0);
       return {
-        cliente:             ct.cliente,
-        pod:                 _getPod(ct.cliente),
-        ticketsCreados:      ct.ticketsCreados,
-        ticketsActualizados: ct.ticketsActualizados,
-        tareasCerradas,
-        ultimoError:         _primerError(errores),
+        cliente:             cliente,
+        pod:                 _getPod(cliente),
+        ticketsCreados:      d.ticketsCreados,
+        ticketsActualizados: d.ticketsActualizados,
+        tareasCerradas:      tc,
+        ultimoError:         d.errores.length > 0 ? _primerError(d.errores) : _primerError(errores),
       };
     });
   }
-  // Fallback: extraer cliente desde errores si no hay éxitos
-  const errorConCliente = errores.find(function(e) { return e && e.cliente; });
+
+  // Fallback si ningún cliente pudo ser identificado
+  const errorConCliente = (errores || []).find(function(e) { return e && e.cliente; });
   const clienteFallback = errorConCliente ? errorConCliente.cliente : "—";
   return [{
     cliente:             clienteFallback,
@@ -328,31 +459,6 @@ function _estadoLabel(resultado) {
   if (resultado === "ERROR")       return "⚠️ No resuelto";
   if (resultado === "ADVERTENCIA") return "🟡 Con advertencias";
   return "✅ Resuelto";
-}
-function _extraerClientesYKeys(exitos) {
-  const mapa = {};
-  exitos.forEach(function(e) {
-    const msg     = typeof e === "string" ? e : (e.mensaje || JSON.stringify(e));
-    const cliente = _extraerCliente(msg);
-    if (!cliente) return;
-    if (!mapa[cliente]) mapa[cliente] = { ticketsCreados: 0, ticketsActualizados: 0, anomalias: 0, keys: [] };
-    const keys = msg.match(/[A-Z]+-\d+/g) || [];
-    mapa[cliente].keys.push.apply(mapa[cliente].keys, keys);
-    const msgL = msg.toLowerCase();
-    if      (msgL.includes("cread"))                          { mapa[cliente].ticketsCreados++;      mapa[cliente].anomalias++; }
-    else if (msgL.includes("actualiz") || msgL.includes("update")) { mapa[cliente].ticketsActualizados++; mapa[cliente].anomalias++; }
-  });
-  return Object.keys(mapa).map(function(cliente) {
-    const d = mapa[cliente];
-    return {
-      cliente,
-      resultado:           d.ticketsCreados > 0 || d.ticketsActualizados > 0 ? "ANOMALIAS" : "OK",
-      anomalias:           d.anomalias,
-      ticketsCreados:      d.ticketsCreados,
-      ticketsActualizados: d.ticketsActualizados,
-      keys:                d.keys.filter(function(v, i, a) { return a.indexOf(v) === i; }).join(", "),
-    };
-  });
 }
 function _extraerCliente(msg) {
   if (!msg) return null;
@@ -370,13 +476,17 @@ function _extraerCliente(msg) {
       if (fila) return fila[1].toString().trim();
     } catch(e) {}
   }
-  const m = msg.match(/(?:reporte de|para|de)\s+([A-ZÁÉÍÓÚÑ][^.,()\n<|]{2,50?})\s+(?:procesado|recibido|sin|creado|actualiz)/i);
+  // Cuantificador corregido: {2,50}? (no-greedy) y tolerancia a (SUCCESS) o fin de frase
+  const m = msg.match(/(?:reporte de|para|de)\s+([A-ZÁÉÍÓÚÑ][^.,()\n<|]{2,50}?)(?:\s+(?:procesado|recibido|sin|creado|actualiz|\(success\)|con)|$)/i);
   return m ? m[1].trim() : null;
 }
+// Las palabras se comparan contra el mensaje SIN TILDES: "Se creó el ticket" no contiene
+// "cread" ni "creó" si la palabra buscada se escribe sin tilde, y la cuenta daba 0 siempre.
 function _contarPorPalabra(exitos, palabras) {
   const lista = Array.isArray(palabras) ? palabras : [palabras];
   return exitos.filter(function(e) {
-    const m = (typeof e === "string" ? e : (e.mensaje || "")).toLowerCase();
+    const m = (typeof e === "string" ? e : (e.mensaje || ""))
+      .toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
     return lista.some(function(p) { return m.includes(p); });
   }).length;
 }
@@ -385,13 +495,33 @@ function _primerError(errores) {
   const e = errores[0];
   return typeof e === "string" ? e : ((e.error || "") + (e.detalle ? " — " + e.detalle : ""));
 }
+/**
+ * POD de un cliente, según el Índice Maestro. Única implementación de esta búsqueda
+ * (AGENTS.md §5): core/ScheduledLogger.js también la usa.
+ *
+ * Busca por nombre Ops (Columna B) o por nombre Soporte (Columna L): según de dónde venga
+ * el cliente puede estar escrito de las dos formas.
+ *
+ * Lee por MasterSheetSingleton, que cachea el Índice una vez por ejecución. Con
+ * SpreadsheetApp.openById() directo era una lectura de Sheets por cada cliente de cada
+ * operación, y desde que las entradas del log se arman por cliente eso son muchas más
+ * lecturas que antes, todas contra el presupuesto de tiempo de la ejecución.
+ *
+ * @param {string} clienteNombre
+ * @returns {string} POD, o "" si el cliente no figura en el Índice.
+ */
 function _getPod(clienteNombre) {
   try {
-    const data = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID)
-                   .getSheets()[0].getDataRange().getValues();
+    if (!clienteNombre || clienteNombre === "—" || clienteNombre === "-") return "";
+    const data = MasterSheetSingleton.getMasterData();
+    const cLower = String(clienteNombre).trim().toLowerCase();
     const fila = data.find(function(r) {
-      return r[11] && r[11].toString().trim().toLowerCase() === clienteNombre.toLowerCase();
+      return (r[1] && r[1].toString().trim().toLowerCase() === cLower)
+          || (r[11] && r[11].toString().trim().toLowerCase() === cLower);
     });
+    // Solo la Columna I. Antes caía a fila[0] si el POD estaba vacío, y la Columna A del
+    // Índice es la lista de remitentes del cliente: el log terminaba con un mail en la
+    // columna POD, que además no matchea ningún POD cuando el dashboard filtra por POD.
     return fila ? (fila[8] || "") : "";
   } catch (e) { return ""; }
 }

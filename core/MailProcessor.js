@@ -25,6 +25,12 @@ class MailProcessor {
     // en Drive (o al revés) no se da por terminado. Ver AGENTS.md.
     // Valores posibles: 'tickets' | 'drive'
     this.pasos = config.pasos || ['tickets', 'drive'];
+
+    // El paso de Drive resuelve la carpeta por el REMITENTE. Para los reportes que llegan
+    // todos desde la misma casilla y traen el cliente adentro del adjunto, eso archivaría
+    // todo junto en la carpeta de un solo cliente. Con esto en true se usa el cliente que
+    // ya resolvió resolveClientConfig().
+    this.archivaPorClienteDelReporte = config.archivaPorClienteDelReporte === true;
   }
 
   /**
@@ -62,7 +68,7 @@ class MailProcessor {
    */
   processEmails() {
     const timeGuard = new TimeGuard({ operationName: this.operationName });
-    const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, tareasCerradasDetalle: [], drive: [], timeGuard: timeGuard };
+    const summaryReport = { exitos: [], advertencias: [], errores: [], tareasCerradas: 0, tareasCerradasDetalle: [], drive: [], timeGuard: timeGuard, clientesProcesados: [] };
     const threads = fetchAndFilterGlobalThreads(this.emailSubject);
     
     if (threads.length > 0) {
@@ -141,8 +147,16 @@ class MailProcessor {
    * Procesa un único mensaje de correo. Aplica el Template Method.
    */
   processSingleMessage(message, summaryReport) {
-    const errorCountBefore = summaryReport.errores.length;
+    const errorCountBefore = (summaryReport.errores || []).length;
+    const exitosCountBefore = (summaryReport.exitos || []).length;
+    const advertenciasCountBefore = (summaryReport.advertencias || []).length;
     let clientName = "_Desconocido_";
+
+    const finalizarEnrichment = () => {
+      enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+      enrichExitosWithClient(summaryReport.exitos, exitosCountBefore, clientName);
+      enrichAdvertenciasWithClient(summaryReport.advertencias, advertenciasCountBefore, clientName);
+    };
 
     // Arranca el seguimiento de fallos de ESTE correo. Las funciones de JiraService anotan
     // ahí cuando una escritura no se concreta, y al final se consulta el registro: así un
@@ -183,7 +197,7 @@ class MailProcessor {
           }
         }
 
-        enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+        finalizarEnrichment();
         return this.aplicarFallosRegistrados(resultadoSoloDrive, message, clientName, summaryReport);
       }
 
@@ -201,6 +215,7 @@ class MailProcessor {
           problema: `El correo "${message.getSubject()}" no trae ningún adjunto que coincida con "${this.attachmentMatch}". Adjuntos encontrados: ${nombresAdjuntos}.`,
           accion: `No se creó ticket ni se cerró la tarea programada${this.scheduledTaskName ? ` "${this.scheduledTaskName}"` : ""}. Revisar el nombre del archivo que genera el reporte o el valor de attachmentMatch.`
         });
+        finalizarEnrichment();
         return { status: 'NO_OP' };
       }
 
@@ -215,7 +230,7 @@ class MailProcessor {
         if (summaryReport.errores.length === errorCountBefore) {
           summaryReport.errores.push({ error: 'Error de Configuración', detalle: `No se encontró config para: ${senderEmail}` });
         }
-        enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+        finalizarEnrichment();
         // Pasa por el registro de fallos para que un fallo TERMINAL registrado durante la
         // resolución (una config mal cargada no se arregla sola al reintentar) aparte el correo
         // en el primer intento, en vez de repetir el mismo error 10 veces antes de rendirse.
@@ -224,6 +239,12 @@ class MailProcessor {
       }
 
       clientName = clientConfig.clientName;
+      if (clientName && clientName !== "_Desconocido_") {
+        if (!summaryReport.clientesProcesados) summaryReport.clientesProcesados = [];
+        if (!summaryReport.clientesProcesados.includes(clientName)) {
+          summaryReport.clientesProcesados.push(clientName);
+        }
+      }
 
       const parsedData = this.parseAttachment(attachment, summaryReport);
 
@@ -232,7 +253,7 @@ class MailProcessor {
       // con el caso vacío, así que el hilo quedaba [OPS-PROCESADO] con el reporte sin
       // procesar y sin posibilidad de reintento. Se devuelve FAILURE para que se reintente.
       if (!parsedData) {
-        enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+        finalizarEnrichment();
         return { status: 'FAILURE' };
       }
 
@@ -251,6 +272,7 @@ class MailProcessor {
       // indistinguible de uno exitoso.
       if (this.isDataEmpty(parsedData)) {
         summaryReport.exitos.push({
+          cliente: clientName,
           mensaje: `📄 Reporte de ${clientName} recibido sin filas (solo encabezados): no hay anomalías que reportar.`
         });
 
@@ -262,13 +284,13 @@ class MailProcessor {
         }
         resultadoVacio = this.ejecutarPasoDrive(message, clientName, summaryReport, resultadoVacio);
 
-        enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+        finalizarEnrichment();
         return this.aplicarFallosRegistrados(resultadoVacio, message, clientName, summaryReport);
       }
 
       const processed = this.processData(parsedData, clientConfig, summaryReport);
       if (!processed) {
-        enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+        finalizarEnrichment();
         return { status: 'FAILURE' };
       }
 
@@ -291,7 +313,7 @@ class MailProcessor {
       // salieron bien, así que el hilo se reintenta igual hasta que los dos estén OK.
       const resultadoFinal = this.ejecutarPasoDrive(message, clientName, summaryReport, result);
 
-      enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+      finalizarEnrichment();
       return this.aplicarFallosRegistrados(resultadoFinal, message, clientName, summaryReport);
 
     } catch (e) {
@@ -300,7 +322,7 @@ class MailProcessor {
         error: `Error Crítico: ${e.message}`, 
         detalle: `Fallo durante el procesamiento del correo. Stack: ${e.stack}`
       });
-      enrichErrorsWithClient(summaryReport.errores, errorCountBefore, clientName);
+      finalizarEnrichment();
       return { status: 'FAILURE' };
     }
   }
@@ -358,7 +380,12 @@ class MailProcessor {
     if (!this.requierePaso('drive')) return resultadoTickets;
 
     const blobsToUpload = this.extractedBlobs || null;
-    const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName, blobsToUpload);
+    // Por defecto Drive resuelve la carpeta por el REMITENTE, que es lo correcto para casi
+    // todos. Los que declaran archivaPorClienteDelReporte usan el cliente ya resuelto: son
+    // los reportes que llegan todos desde la misma casilla y traen el cliente adentro, donde
+    // mirar el remitente archivaría todo junto en la carpeta equivocada.
+    const clienteForzado = this.archivaPorClienteDelReporte ? clientName : null;
+    const resultadoDrive = subirAdjuntosDeMensajeADrive(message, this.operationName, blobsToUpload, clienteForzado);
 
     if (resultadoDrive.ok) {
       if (!summaryReport.drive) summaryReport.drive = [];
@@ -463,9 +490,9 @@ class MailProcessor {
   handleNoAlerts(existingTicketKey, clientConfig, summaryReport) {
     if (existingTicketKey) {
       addCommentToJiraTicket(existingTicketKey, "✅ **La anomalía no persiste.** El reporte está limpio.");
-      summaryReport.exitos.push({ mensaje: `Ticket ${existingTicketKey} resuelto.` });
+      summaryReport.exitos.push({ mensaje: `Ticket ${existingTicketKey} resuelto.`, cliente: clientConfig.clientName });
     } else {
-      summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.` });
+      summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado sin anomalías.`, cliente: clientConfig.clientName });
     }
     return this.cerrarTareaProgramadaSiCorresponde(clientConfig, summaryReport);
   }
@@ -599,7 +626,7 @@ class MailProcessor {
         const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName);
         if (accountIdAsignado) ticketInformativo(existingTicketKey, accountIdAsignado, summaryReport.timeGuard);
 
-        summaryReport.exitos.push({ mensaje: `Anomalía Persiste. Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.` });
+        summaryReport.exitos.push({ mensaje: `Anomalía Persiste. Se actualizó el ticket <${JIRA_DOMAIN}/browse/${existingTicketKey}|${existingTicketKey}> con el nuevo reporte.`, cliente: clientConfig.clientName });
       } else {
         // Antes se registraba el error pero igual se devolvía SUCCESS más abajo, así que el
         // hilo quedaba [OPS-PROCESADO] con el reporte sin adjuntar y nadie lo reintentaba.
@@ -616,9 +643,13 @@ class MailProcessor {
       const creationResult = createTicketAndNotify(this.ticketSummary, description, xlsxBlob, clientConfig, this.operationName);
 
       if (creationResult.status === 'SUCCESS') {
-        summaryReport.exitos.push(creationResult.detail);
+        const detailObj = typeof creationResult.detail === 'object' && creationResult.detail !== null ? creationResult.detail : { mensaje: creationResult.detail };
+        if (!detailObj.cliente) detailObj.cliente = clientConfig.clientName;
+        summaryReport.exitos.push(detailObj);
       } else {
-        summaryReport.errores.push(creationResult.detail);
+        const detailObj = typeof creationResult.detail === 'object' && creationResult.detail !== null ? creationResult.detail : { error: creationResult.detail };
+        if (!detailObj.cliente) detailObj.cliente = clientConfig.clientName;
+        summaryReport.errores.push(detailObj);
         Logger.log(`[${this.operationName}] No se pudo crear/actualizar el ticket de ${clientConfig.clientName} (estado ${creationResult.status}). El correo queda pendiente.`);
         return { status: creationResult.status === 'HTTP_500' ? 'HTTP_500' : 'FAILURE' };
       }
@@ -633,9 +664,34 @@ class MailProcessor {
  * que no lo tienen registrado aún en un rango de índices.
  */
 function enrichErrorsWithClient(errores, startIndex, clientName) {
+  if (!errores) return;
   for (let i = startIndex; i < errores.length; i++) {
-    if (!errores[i].cliente) {
+    if (!errores[i].cliente && clientName && clientName !== "_Desconocido_") {
       errores[i].cliente = clientName;
+    }
+  }
+}
+
+function enrichExitosWithClient(exitos, startIndex, clientName) {
+  if (!exitos) return;
+  for (let i = startIndex; i < exitos.length; i++) {
+    if (typeof exitos[i] === 'object' && exitos[i] !== null) {
+      if (!exitos[i].cliente && clientName && clientName !== "_Desconocido_") {
+        exitos[i].cliente = clientName;
+      }
+    } else if (typeof exitos[i] === 'string') {
+      exitos[i] = { mensaje: exitos[i], cliente: clientName };
+    }
+  }
+}
+
+function enrichAdvertenciasWithClient(advertencias, startIndex, clientName) {
+  if (!advertencias) return;
+  for (let i = startIndex; i < advertencias.length; i++) {
+    if (typeof advertencias[i] === 'object' && advertencias[i] !== null) {
+      if (!advertencias[i].cliente && clientName && clientName !== "_Desconocido_") {
+        advertencias[i].cliente = clientName;
+      }
     }
   }
 }

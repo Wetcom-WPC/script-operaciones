@@ -48,7 +48,11 @@ class NutanixOpsProcessor extends MailProcessor {
       operationName: NTX_OPERATION_NAME,
       emailSubject: NTX_EMAIL_SUBJECT,
       attachmentMatch: NTX_ATTACHMENT_MATCH,
-      pasos: ['tickets']
+      pasos: ['tickets', 'drive'],
+      // Todos los reportes de Nutanix llegan desde alarmas@wetcom.com y el cliente real sale
+      // del JSON (ver resolveClientConfig). Sin esto, Drive resolvería la carpeta por el
+      // remitente y archivaría los reportes de TODOS los clientes en la misma.
+      archivaPorClienteDelReporte: true
     });
     // Estado del correo en curso. El processor se reutiliza para todos los correos de una
     // corrida, así que findAttachment() y processData() lo reinician en cada uno.

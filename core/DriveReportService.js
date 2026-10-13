@@ -109,6 +109,22 @@ const DriveClientIndexSingleton = (function () {
       return indice.entradas.find(function (e) { return email.indexOf(e.remitente) !== -1; }) || null;
     },
     /**
+     * Resuelve por NOMBRE de cliente, para los reportes donde el remitente no lo identifica.
+     *
+     * Nutanix es el caso: todos sus reportes llegan desde alarmas@wetcom.com y el cliente real
+     * sale del JSON. Resolviendo por remitente, los reportes de todos los clientes terminarían
+     * archivados en la misma carpeta — la versión de ese error en Jira ya pasó el 21/09/2026.
+     *
+     * @param {string} nombreCliente Tal como figura en la Columna B del Índice Maestro.
+     * @returns {Object|null}
+     */
+    resolverPorNombreCliente: function (nombreCliente) {
+      const buscado = String(nombreCliente || '').trim();
+      if (!buscado) return null;
+      const indice = this.get();
+      return indice.entradas.find(function (e) { return e.nombreCliente === buscado; }) || null;
+    },
+    /**
      * Entrada del cliente de pruebas, usada en TESTING sin mirar el remitente.
      * @returns {Object|null} Entrada del índice, o null si el cliente de testing no está cargado.
      */
@@ -134,7 +150,12 @@ const DriveClientIndexSingleton = (function () {
  * @param {string} [nombreOperacion] Nombre de la operación, solo para enriquecer los logs.
  * @returns {{ok: boolean, subidos: Array<string>, omitidos: Array<string>, errores: Array<string>, cliente: string}}
  */
-function subirAdjuntosDeMensajeADrive(mensaje, nombreOperacion, blobsAlternativos = null) {
+/**
+ * @param {string|null} [nombreClienteForzado] Cliente ya resuelto, para los reportes cuyo
+ *   remitente no lo identifica (ver resolverPorNombreCliente). Si viene, manda sobre el
+ *   remitente. El safeguard de TESTING sigue ganándole a los dos.
+ */
+function subirAdjuntosDeMensajeADrive(mensaje, nombreOperacion, blobsAlternativos = null, nombreClienteForzado = null) {
   const etiquetaOp = nombreOperacion ? `[${nombreOperacion}] ` : '';
   const resultado = { ok: true, subidos: [], omitidos: [], errores: [], cliente: "_Desconocido_" };
 
@@ -153,14 +174,22 @@ function subirAdjuntosDeMensajeADrive(mensaje, nombreOperacion, blobsAlternativo
 
   // En TESTING el remitente no decide nada: todo va a la carpeta del cliente de pruebas.
   const enTesting = esEntornoTesting();
-  const entrada = enTesting
-    ? DriveClientIndexSingleton.resolverEntradaDeTesting()
-    : DriveClientIndexSingleton.resolverPorRemitente(mensaje.getFrom());
+  // Orden de prioridad: TESTING > cliente ya resuelto > remitente.
+  let entrada;
+  if (enTesting) {
+    entrada = DriveClientIndexSingleton.resolverEntradaDeTesting();
+  } else if (nombreClienteForzado) {
+    entrada = DriveClientIndexSingleton.resolverPorNombreCliente(nombreClienteForzado);
+  } else {
+    entrada = DriveClientIndexSingleton.resolverPorRemitente(mensaje.getFrom());
+  }
 
   if (!entrada) {
     resultado.ok = false;
     const motivo = enTesting
       ? `El entorno es TESTING pero "${TESTING_SAFETY_CLIENT_NAME}" no está cargado en el Índice Maestro, así que no hay carpeta segura donde archivar "${mensaje.getSubject()}".`
+      : nombreClienteForzado
+      ? `El cliente "${nombreClienteForzado}" que indica el reporte no figura en la Columna B del Índice Maestro, así que no se sabe en qué carpeta archivar "${mensaje.getSubject()}".`
       : `Remitente "${DriveClientIndexSingleton.emailDeFrom(mensaje.getFrom())}" no está en el Índice Maestro (ni Sheet1 ni Adjuntos), así que no se sabe en qué carpeta archivar "${mensaje.getSubject()}".`;
     resultado.errores.push(motivo);
     Logger.log(`[Drive] ${etiquetaOp}ERROR: ${motivo}`);

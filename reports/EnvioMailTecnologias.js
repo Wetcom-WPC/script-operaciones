@@ -16,7 +16,7 @@ function ejecutarReporteVsphere() {
   Logger.log("--- Iniciando Reporte vSphere (posible Horizon) ---");
   const tickets = generarReporteDiarioDeTickets(JIRA_FILTER_VSPHERE);
   // Legacy: antes se llamaba generarReporteConsumoVsphere() sin argumento. Esa función requiere
-  // un opsKey por-cliente (ver vsphere/ConsumoCPUMemoria.js) y sin él corta de inmediato y
+  // un opsKey por-cliente (ver vrops/ConsumoCPUMemoria.js) y sin él corta de inmediato y
   // devuelve [] sin procesar nada -> el bloque de "consumo" del mail diario de vSphere jamás
   // tuvo datos. Es el único punto del código que la invoca, así que se retira la llamada
   // rota. El reporte de consumo por cliente sigue disponible vía processConsumoCPUMemoriaEmails(opsKey)

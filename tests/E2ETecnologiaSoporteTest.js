@@ -22,7 +22,7 @@
  * VMsConSnapshots manda una fila a Soporte por dos vías: una regla "considerar" cargada en la
  * planilla de excepciones del cliente, o los umbrales hardcodeados de seguridad
  * (SOP_AGE_MAX=14 días, SOP_SIZE_MAX=1024 GB, SOP_CANTIDAD_MAX=7 — ver
- * vsphere/VMsConSnapshots.js). Este test usa los umbrales hardcodeados, así que NO depende de
+ * vro/VMsConSnapshots.js). Este test usa los umbrales hardcodeados, así que NO depende de
  * cómo esté cargada la planilla del cliente de pruebas.
  *
  * Flujo de uso desde el editor de Apps Script (los 3 pasos, en orden, con el botón "Run"):
