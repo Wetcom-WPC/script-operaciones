@@ -58,9 +58,16 @@ function probarAuditoriaEnSlack() {
  * ======================================================================
  */
 function ejecutarAuditoriaDiaria(modoPrueba = false, webhookPrueba = null) {
-  // FRENO DE FERIADOS — Usa la función centralizada del repo
-  if (!modoPrueba && esFeriadoHoy()) {
-    Logger.log("EJECUCIÓN OMITIDA: Hoy es feriado en el API de feriados.");
+  // FRENO DE DÍA NO LABORABLE — fin de semana o feriado.
+  //
+  // Antes esto solo miraba feriados, pero el activador es diario: los sábados y domingos
+  // corría igual y avisaba por Slack que faltaban TODOS los reportes, porque ningún cliente
+  // los manda. El domingo 11/10/2026 informó 180 reportes de 17 clientes.
+  //
+  // No se arregla con el activador: Apps Script no tiene "de lunes a viernes" en uno solo y
+  // habría que crear cinco, cuando el problema real es que faltaba una condición acá.
+  if (!modoPrueba && esDiaNoLaborable()) {
+    Logger.log("EJECUCIÓN OMITIDA: hoy no es día laborable (fin de semana o feriado).");
     return;
   }
 
