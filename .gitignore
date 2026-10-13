@@ -1,0 +1,9 @@
+# Copias de scratch / pulls temporales de clasp
+temp_prod*/
+temp_playground*/
+
+# Archivos de correo exportados
+*.eml
+
+# Carpeta de archivo local (informes, notas, herramientas sueltas)
+_archivo local/

@@ -1,0 +1,15 @@
+tmp_script.js
+
+# --- Copias del propio repo: NUNCA se suben -------------------------------------------------
+# `clasp` recorre todo lo que cuelgue de rootDir y no sabe nada de .gitignore. Cuando se trabaja
+# con Claude Code queda un worktree de git bajo `.claude/`, que es una copia entera del repo:
+# clasp pasa a ver dos `appsscript.json` y decenas de `.js` repetidos, y TODO push muere con
+#
+#   A file with this name already exists in the current project: appsscript
+#
+# El 02/09/2026 eso dejó `deploy.sh` inutilizable sin que el error dijera por qué. Cuando la vía
+# de despliegue se rompe en silencio, el equipo termina editando directo en el navegador y el
+# repo se separa del proyecto vivo — que fue exactamente lo que pasó.
+.claude/**
+.git/**
+node_modules/**

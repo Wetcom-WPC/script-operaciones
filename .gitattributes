@@ -1,0 +1,4 @@
+# Los scripts de shell TIENEN que quedar con LF. En Windows, git convierte a CRLF al
+# hacer checkout y bash falla con "$'\r': command not found" — el script se rompe para
+# quien clone el repo aunque funcione en la máquina donde se escribió.
+*.sh text eol=lf
