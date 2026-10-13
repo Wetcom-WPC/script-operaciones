@@ -777,6 +777,9 @@ function procesarInfraestructuraCliente(cliente, emailDestino, rootFolderId, pod
     console.log(`📧 Despachando reporte de ${cliente} a ${emailDestino} (${licenciasUnicas.length} licencias procesadas).`);
     enviarAlertaLicencias(cliente, emailDestino, licenciasUnicas);
     enviarAlertaSlackDetallada(cliente, licenciasUnicas);
+    // Mismo resultado que el mail, escrito para que el dashboard lo muestre.
+    guardarEstadoLicenciasDelCliente(LIC_TECNOLOGIA_VSPHERE, cliente, pod,
+      clasificarLicenciasVsphere(licenciasUnicas), summaryReport);
     
     summaryReport.exitos.push({ mensaje: `*${cliente}*: Reporte OK` });
     return { ruta: rutaLog, archivos: nombresArchivos.join("\n") };
@@ -1028,10 +1031,13 @@ function analizarPestanaLicencias(spreadsheet) {
 function enviarAlertaLicencias(cliente, destinatarioRaw, todasLasLicencias) {
   const emailsAEnviar = destinatarioRaw.toString().split(',').map(e => e.trim()).filter(e => e !== "").join(',');
   
-  const vencidas = todasLasLicencias.filter(a => a.usadas > 0 && a.diasRestantes < 0);
-  const proximas = todasLasLicencias.filter(a => a.usadas > 0 && a.diasRestantes >= 0 && a.diasRestantes <= DIAS_UMBRAL_VENCIMIENTO);
-  const sanasEnUso = todasLasLicencias.filter(a => a.usadas > 0 && a.diasRestantes > DIAS_UMBRAL_VENCIMIENTO);
-  const sinUso = todasLasLicencias.filter(a => a.usadas === 0);
+  // Clasifica services/LicenciasEstado.js, que es de donde sale tambien lo que ve el
+  // dashboard: el mail y el dashboard no pueden discrepar (AGENTS.md §5).
+  const clas = clasificarLicenciasVsphere(todasLasLicencias);
+  const vencidas = clas.vencidas;
+  const proximas = clas.proximas;
+  const sanasEnUso = clas.sanasEnUso;
+  const sinUso = clas.sinUso;
 
   const sortSitioDias = (a, b) => {
     if (a.sitio < b.sitio) return -1;
@@ -1190,8 +1196,9 @@ function enviarAlertaLicencias(cliente, destinatarioRaw, todasLasLicencias) {
 
 function enviarAlertaSlackDetallada(cliente, alertas) {
   if (typeof SLACK_WEBHOOK_URL === 'undefined') return;
-  const vencidas = alertas.filter(a => a.usadas > 0 && a.diasRestantes < 0);
-  const proximas = alertas.filter(a => a.usadas > 0 && a.diasRestantes >= 0 && a.diasRestantes <= DIAS_UMBRAL_VENCIMIENTO);
+  const clas = clasificarLicenciasVsphere(alertas);
+  const vencidas = clas.vencidas;
+  const proximas = clas.proximas;
   if (vencidas.length === 0 && proximas.length === 0) return; 
   
   let msg = `*Reporte de Licencias - ${cliente}*\n`;
@@ -1550,6 +1557,9 @@ function procesarInfraestructuraClienteVeeam(cliente, emailDestino, rootFolderId
       console.log(`📧 Despachando reporte Veeam de ${cliente} a ${emailDestino} (${licenciasUnicas.length} licencias procesadas).`);
       enviarAlertaLicenciasVeeam(cliente, emailDestino, licenciasUnicas);
       enviarAlertaSlackVeeamLic(cliente, licenciasUnicas);
+      // Mismo resultado que el mail, escrito para que el dashboard lo muestre.
+      guardarEstadoLicenciasDelCliente(LIC_TECNOLOGIA_VEEAM, cliente, pod,
+        clasificarLicenciasVeeam(licenciasUnicas), summaryReport);
     } else if (erroresCliente.length === 0) {
       console.warn(`⚠️ [${cliente}] Archivo procesado pero no se encontraron datos de licencias válidos.`);
       summaryReport.advertencias.push({ ticket: "-", problema: `[${cliente}] CSV vacío o formato inválido`, accion: "Revisar archivo en Drive" });
@@ -1714,14 +1724,15 @@ function filtrarSocketsRedundantes(licencias) {
 function enviarAlertaLicenciasVeeam(cliente, destinatarioRaw, todasLasLicencias) {
   const emailsAEnviar = destinatarioRaw.toString().split(',').map(e => e.trim()).filter(e => e !== "").join(',');
 
-  const licencias = filtrarSocketsRedundantes(todasLasLicencias);
-
-  // El vencimiento manda esté o no la licencia en uso: una licencia paga que vence sin
+  // Clasifica services/LicenciasEstado.js (AGENTS.md §5). Ahí vive la regla de Veeam: el
+  // vencimiento manda esté o no la licencia en uso, porque una licencia paga que vence sin
   // usarse le importa igual al equipo y a quien la vendió.
-  const vencidas = licencias.filter(a => a.diasRestantes < 0);
-  const proximas = licencias.filter(a => a.diasRestantes >= 0 && a.diasRestantes <= VEEAM_LIC_DIAS_UMBRAL);
-  const sanasEnUso = licencias.filter(a => a.usadas > 0 && a.diasRestantes > VEEAM_LIC_DIAS_UMBRAL);
-  const sinUso = licencias.filter(a => a.usadas === 0 && a.diasRestantes > VEEAM_LIC_DIAS_UMBRAL);
+  const clas = clasificarLicenciasVeeam(todasLasLicencias);
+  const licencias = clas.licencias;
+  const vencidas = clas.vencidas;
+  const proximas = clas.proximas;
+  const sanasEnUso = clas.sanasEnUso;
+  const sinUso = clas.sinUso;
 
   const sortServidorDias = (a, b) => {
     if (a.servidor < b.servidor) return -1;
@@ -1829,9 +1840,9 @@ function enviarAlertaLicenciasVeeam(cliente, destinatarioRaw, todasLasLicencias)
 
 function enviarAlertaSlackVeeamLic(cliente, alertas) {
   if (typeof SLACK_WEBHOOK_URL === 'undefined' || typeof sendSlackMessage !== 'function') return;
-  const licencias = filtrarSocketsRedundantes(alertas);
-  const vencidas = licencias.filter(a => a.diasRestantes < 0);
-  const proximas = licencias.filter(a => a.diasRestantes >= 0 && a.diasRestantes <= VEEAM_LIC_DIAS_UMBRAL);
+  const clas = clasificarLicenciasVeeam(alertas);
+  const vencidas = clas.vencidas;
+  const proximas = clas.proximas;
   if (vencidas.length === 0 && proximas.length === 0) return;
 
   let msg = `*Reporte de Licencias Veeam - ${cliente}*\n`;
