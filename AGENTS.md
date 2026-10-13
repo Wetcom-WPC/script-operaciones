@@ -18,7 +18,7 @@ tickets en Jira Service Management. Corre 100% dentro del ecosistema de Google
 
 ## 2. Mapa del repositorio — leer esto ANTES de tocar nada
 
-Este único repositorio de GitHub (`script-operaciones`) contiene **cuatro
+Este único repositorio de GitHub (`script-operaciones`) contiene **cinco
 proyectos de Apps Script independientes**, cada uno viviendo en su propia
 carpeta local con su propio `.clasp.json` (su propio scriptId):
 
@@ -28,8 +28,34 @@ carpeta local con su propio `.clasp.json` (su propio scriptId):
 | `Ops Playground/` | `ops-playground` | Staging |
 | `Indice Operativo/` | `indice-operativo` | 🔴 **PRODUCCIÓN** |
 | `Indice Playground/` | `indice-playground` | Staging |
+| `Script Alarmas/` | `script-alarmas` | 🔴 **PRODUCCIÓN** |
 
-**Las cuatro carpetas son, cada una, su propio checkout git**, fijo en su rama
+### Sobre `Script Alarmas/`
+
+Se incorporó al repositorio el 09/10/2026. Hasta entonces era un proyecto
+productivo que **se editaba sólo desde el navegador**: sin respaldo, sin
+historial y sin versiones — exactamente el escenario contra el que existen la
+Regla 3 y la Regla 4. Lo que hay en el primer commit de la rama es el estado
+que tenía ese día, bajado con `clasp pull`.
+
+Es **producción**, aunque no tenga un Playground propio: su trigger mensual le
+manda a cada POD el reporte de licencias de sus clientes el último día hábil
+del mes. Un push mal hecho acá no rompe un tablero, manda mails equivocados a
+los PODs. Por eso `deploy.sh` lo trata igual que a `Ops Operativo` y pide
+confirmación escrita (ver Regla 1).
+
+Está **vinculado a una planilla** (es un script "bound"), lo que tiene dos
+consecuencias prácticas:
+
+- `SpreadsheetApp.getActiveSpreadsheet()` devuelve esa planilla incluso desde
+  un trigger, así que no hace falta abrirla por ID.
+- Tiene menús propios (`onOpen`) que corren desde la planilla, no desde el
+  editor: el equipo lanza auditorías desde ahí.
+
+No tiene entorno de staging. Si hace falta probar algo riesgoso, conviene
+copiar el proyecto y la planilla antes de tocar el productivo.
+
+**Las cinco carpetas son, cada una, su propio checkout git**, fijo en su rama
 (nunca hace falta `git checkout` para cambiar de proyecto: cada carpeta ya
 está en la rama que le corresponde). El árbol de cada rama es **plano** —
 refleja 1:1 lo que ves en el editor de Apps Script, sin carpeta contenedora.
@@ -117,7 +143,7 @@ un gate.
 
 El equipo edita seguido directo desde el editor de Apps Script en el
 navegador. Si no se hace `clasp pull` antes de tocar código, se corre el
-riesgo de pisar un cambio hecho ahí. Esto vale para **las cuatro carpetas**,
+riesgo de pisar un cambio hecho ahí. Esto vale para **las cinco carpetas**,
 no solo para Operativo.
 
 #### El pull no alcanza: hay que MIRAR qué trajo
