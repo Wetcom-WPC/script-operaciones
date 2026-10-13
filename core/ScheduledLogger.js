@@ -219,15 +219,13 @@ function _deducirTecnologia(idReporte) {
   }
   return "Otro";
 }
+/**
+ * POD de un cliente. Delega en _getPod() (core/ExecutionLogger.js), que es la única
+ * implementación de esta búsqueda. Tenía su propia copia, con la misma lectura del Índice
+ * sin caché y matcheando solo la Columna B — el patrón del §5 de AGENTS.md.
+ */
 function _getPodDesdeMaestro(clienteNombre) {
-  try {
-    const data = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID)
-                   .getSheets()[0].getDataRange().getValues();
-    const fila = data.find(function(r) {
-      return r[1] && r[1].toString().trim().toLowerCase() === clienteNombre.toLowerCase();
-    });
-    return fila ? (fila[8] || "") : "";
-  } catch (e) { return ""; }
+  return _getPod(clienteNombre);
 }
 function logReporteFaltante(clienteNombre, idReporte, fechaHoy) {
   try {

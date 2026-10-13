@@ -489,16 +489,33 @@ function _primerError(errores) {
   const e = errores[0];
   return typeof e === "string" ? e : ((e.error || "") + (e.detalle ? " — " + e.detalle : ""));
 }
+/**
+ * POD de un cliente, según el Índice Maestro. Única implementación de esta búsqueda
+ * (AGENTS.md §5): core/ScheduledLogger.js también la usa.
+ *
+ * Busca por nombre Ops (Columna B) o por nombre Soporte (Columna L): según de dónde venga
+ * el cliente puede estar escrito de las dos formas.
+ *
+ * Lee por MasterSheetSingleton, que cachea el Índice una vez por ejecución. Con
+ * SpreadsheetApp.openById() directo era una lectura de Sheets por cada cliente de cada
+ * operación, y desde que las entradas del log se arman por cliente eso son muchas más
+ * lecturas que antes, todas contra el presupuesto de tiempo de la ejecución.
+ *
+ * @param {string} clienteNombre
+ * @returns {string} POD, o "" si el cliente no figura en el Índice.
+ */
 function _getPod(clienteNombre) {
   try {
     if (!clienteNombre || clienteNombre === "—" || clienteNombre === "-") return "";
-    const data = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID)
-                   .getSheets()[0].getDataRange().getValues();
+    const data = MasterSheetSingleton.getMasterData();
     const cLower = String(clienteNombre).trim().toLowerCase();
     const fila = data.find(function(r) {
       return (r[1] && r[1].toString().trim().toLowerCase() === cLower)
           || (r[11] && r[11].toString().trim().toLowerCase() === cLower);
     });
-    return fila ? (fila[8] || fila[0] || "") : "";
+    // Solo la Columna I. Antes caía a fila[0] si el POD estaba vacío, y la Columna A del
+    // Índice es la lista de remitentes del cliente: el log terminaba con un mail en la
+    // columna POD, que además no matchea ningún POD cuando el dashboard filtra por POD.
+    return fila ? (fila[8] || "") : "";
   } catch (e) { return ""; }
 }
