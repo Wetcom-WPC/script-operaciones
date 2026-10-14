@@ -199,6 +199,11 @@ button {
 }
 button:disabled { opacity: .55; cursor: not-allowed; }
 
+/* El atributo hidden tiene que ganarle a cualquier display declarado arriba. Sin esto,
+   `button { display: inline-flex }` lo pisaba y las pestañas que aplicarPermiso() oculta para
+   quien no es admin seguían a la vista. */
+[hidden] { display: none !important; }
+
 .btn-primario { background: var(--verde); color: #fff; }
 .btn-primario:not(:disabled):hover { background: var(--verde-osc); }
 
