@@ -169,7 +169,11 @@ function webapp_listaClientes() {
       const cli = data[i][1]; // Index 1 is Client Name
       const pkey = data[i][3]; // Index 3 is Project Key
       if (cli && typeof cli === 'string') {
-        lista.push({ nombre: cli.trim(), key: (pkey || '').toString().toUpperCase().trim() });
+        // Mismo criterio de normalización que _webappEstadoIndice (columna I): "pod1@wetcom.com" -> "POD1".
+        let pod = (data[i][8] || '').toString().trim();
+        if (pod.indexOf('@') !== -1) pod = pod.split('@')[0];
+        pod = pod.replace(/s+/g, '').toUpperCase();
+        lista.push({ nombre: cli.trim(), key: (pkey || '').toString().toUpperCase().trim(), pod: pod || '-' });
       }
     }
   } catch (e) {
@@ -410,8 +414,10 @@ function webapp_estado() {
     feriado: feriado,
     cicloEnCurso: webapp_hayCicloEnCurso(),
     ultimoLanzamiento: webapp_leerUltimoLanzamiento(),
-    bandeja: webapp_cacheLeer(),
-    clientes: webapp_listaClientes(),
+    // Quien no es admin no recibe la bandeja (es de todos los clientes) y solo ve los clientes de
+    // su POD: mandar todo y esconderlo en el navegador se ve igual con F12.
+    bandeja: permiso.todo ? webapp_cacheLeer() : null,
+    clientes: webapp_filtrarPorPod(webapp_listaClientes(), permiso, function (c) { return c.pod; }),
     kpis: {
       procesados: procesadosHoy,
       errores: erroresHoy,
@@ -1249,9 +1255,26 @@ const _WEBAPP_DRIVE_CARPETA_URL = 'https://drive.google.com/drive/folders/';
  *     'sin_dato'        no se pudo averiguar (nunca es lo mismo que "no se subió")
  */
 function webapp_obtenerEstadoRVTools(forzar) {
-  const usuario = webapp_usuarioActual();
-  webapp_exigirAutorizacion(usuario);
+  const permiso = webapp_exigirAutorizacion(webapp_usuarioActual());
+  const completo = _webappEstadoRVToolsCompleto(forzar);
+  if (permiso.todo) return completo;
 
+  // El recorte va DESPUÉS del caché, nunca antes: el caché es del script y lo comparten todos
+  // los usuarios, así que en él vive siempre el dato completo. La clave de cada cliente es la
+  // columna L del Índice (la "empresa"), así que se cruza contra ese campo.
+  const podPorEmpresa = {};
+  (_webappEstadoIndice().clientes || []).forEach(function (c) { podPorEmpresa[c.empresa] = c.pod; });
+  const mio = {};
+  Object.keys(completo).forEach(function (k) { mio[k] = completo[k]; });
+  mio.clientes = {};
+  Object.keys(completo.clientes || {}).forEach(function (nombre) {
+    if (webapp_puedeVerPod(permiso, podPorEmpresa[nombre])) mio.clientes[nombre] = completo.clientes[nombre];
+  });
+  return mio;
+}
+
+/** Núcleo sin control de acceso ni recorte por POD. No llamarlo desde el navegador. */
+function _webappEstadoRVToolsCompleto(forzar) {
   // El sufijo de versión se SUBE cada vez que cambia la forma de lo que se guarda acá. Si no,
   // durante media hora se sigue sirviendo el objeto viejo —sin los campos nuevos— y la pantalla
   // se ve como si el cambio no se hubiera desplegado. Pasó con el link a la carpeta (v2 -> v3).
@@ -1476,7 +1499,7 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
   }
 
   // --- RVTools: se verifica en Drive, no por mail, y es semanal (ver la función) ---
-  const rvtools = webapp_obtenerEstadoRVTools(!!forzar);
+  const rvtools = _webappEstadoRVToolsCompleto(!!forzar);
   const rvtoolsPorCliente = {};
   Object.keys(rvtools.clientes || {}).forEach(function (cli) {
     rvtoolsPorCliente[normalizar(cli)] = rvtools.clientes[cli];
