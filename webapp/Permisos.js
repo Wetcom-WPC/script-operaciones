@@ -30,12 +30,25 @@ const WEBAPP_COLS_PERMISOS = ['Email', 'Rol', 'PODs', 'Activo', 'Notas', 'Actual
 const WEBAPP_ROL_ADMIN = 'admin';
 const WEBAPP_ROL_POD   = 'pod';
 
+// Valor especial de la columna PODs: el rol 'pod' (solo lectura) ve TODOS los PODs, incluidos los
+// que se creen más adelante. Es para quien tiene que mirar todo sin poder tocar nada (gerencia).
+// No es admin: sigue sin acceso a las acciones ni a las secciones del equipo.
+const WEBAPP_POD_TODOS = '*';
+
 // Secciones que puede abrir cada rol. El navegador usa esto para mostrar solo lo que
 // corresponde, pero NO es el control de acceso: eso lo hace cada función del servidor.
 const WEBAPP_SECCIONES_POR_ROL = {
   admin: ['inicio', 'operaciones', 'indice', 'llegadas', 'logs', 'jira', 'reportes', 'permisos'],
   pod:   ['operaciones', 'llegadas']
 };
+
+/** 'a, b' -> ['A','B']. 'TODOS' (o '*') se normaliza a '*'. */
+function _webappParsearPods(texto) {
+  return String(texto || '').split(',')
+    .map(function (p) { return p.trim().toUpperCase(); })
+    .filter(function (p) { return p; })
+    .map(function (p) { return p === 'TODOS' ? WEBAPP_POD_TODOS : p; });
+}
 
 /** Caché por ejecución: la pestaña se lee una sola vez aunque la pregunten diez funciones. */
 let _webappPermisosCache = null;
@@ -61,9 +74,7 @@ function _webappLeerPermisos() {
           if (activo === 'NO') return;
           const rol = String(r[1] || '').trim().toLowerCase() === WEBAPP_ROL_ADMIN
             ? WEBAPP_ROL_ADMIN : WEBAPP_ROL_POD;
-          const pods = String(r[2] || '').split(',')
-            .map(function (p) { return p.trim().toUpperCase(); })
-            .filter(function (p) { return p; });
+          const pods = _webappParsearPods(r[2]);
           resultado.filas[email] = { email: email, rol: rol, pods: pods, notas: String(r[4] || '') };
           resultado.configurado = true;
         });
@@ -150,7 +161,19 @@ function _webappSimulacionActiva() {
  */
 function webapp_permisoActual() {
   const real = webapp_permisoDe(webapp_usuarioActual());
-  if (!real.todo) return real;          // solo un admin puede simular
+
+  if (!real.todo) {
+    // Un usuario con varios PODs puede achicar su vista a uno (selector del encabezado). Solo
+    // puede achicar: si lo guardado ya no le corresponde (le sacaron ese POD), se ignora.
+    const elegido = _webappPodElegido();
+    if (elegido && real.rol && webapp_puedeVerPod(real, elegido)) {
+      return {
+        email: real.email, rol: real.rol, pods: [elegido], todo: false,
+        configurado: real.configurado, secciones: real.secciones, elegido: elegido
+      };
+    }
+    return real;
+  }
 
   const pod = _webappSimulacionActiva();
   if (!pod) return real;
@@ -164,6 +187,79 @@ function webapp_permisoActual() {
     secciones: WEBAPP_SECCIONES_POR_ROL[WEBAPP_ROL_POD],
     simulando: pod
   };
+}
+
+// ─── Selector de POD para quien tiene más de uno ─────────────────────────────────────────
+//
+// Mismo mecanismo que "ver como", pero abierto a cualquier usuario y sin privilegios extra: solo
+// recorta. Vive en UserProperties (por persona). El servidor valida contra el permiso REAL que el
+// POD elegido le corresponda, así que desde la consola no se puede elegir uno ajeno.
+const WEBAPP_PROP_POD_ELEGIDO = 'WEBAPP_POD_ELEGIDO';
+
+function _webappPodElegido() {
+  try {
+    return String(PropertiesService.getUserProperties().getProperty(WEBAPP_PROP_POD_ELEGIDO) || '').trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+/** Los PODs que existen, sacados del Índice (que está en caché). */
+function _webappPodsDelIndice() {
+  const pods = [];
+  try {
+    (_webappEstadoIndice().clientes || []).forEach(function (c) {
+      const p = String(c.pod || '').trim().toUpperCase();
+      if (p && p !== '-' && pods.indexOf(p) === -1) pods.push(p);
+    });
+    pods.sort();
+  } catch (e) {
+    Logger.log('[WebApp] No se pudieron listar los PODs del Índice: ' + e.message);
+  }
+  return pods;
+}
+
+/** Los PODs entre los que puede elegir esta persona (vacío si no hay nada que elegir). */
+function _webappPodsElegibles(real) {
+  if (!real || real.todo || !real.rol) return [];
+  const lista = real.pods.indexOf(WEBAPP_POD_TODOS) !== -1 ? _webappPodsDelIndice() : real.pods.slice();
+  return lista.length > 1 ? lista : [];
+}
+
+/** Lo que el navegador necesita saber del permiso. Comodidad de interfaz, no control de acceso. */
+function webapp_permisoParaCliente(efectivo) {
+  const real = webapp_permisoDe(efectivo.email);
+  return {
+    rol: efectivo.rol, pods: efectivo.pods, todo: efectivo.todo, secciones: efectivo.secciones,
+    configurado: efectivo.configurado, simulando: efectivo.simulando || '',
+    elegido: efectivo.elegido || '',
+    podsElegibles: efectivo.simulando ? [] : _webappPodsElegibles(real),
+    verTodos: real.pods.indexOf(WEBAPP_POD_TODOS) !== -1
+  };
+}
+
+/**
+ * Elige con qué POD se ve el panel. Vacío = todos los que tiene asignados.
+ * @param {string} pod
+ */
+function webapp_elegirPod(pod) {
+  const usuario = webapp_usuarioActual();
+  webapp_exigirPermiso(usuario);
+  const real = webapp_permisoDe(usuario);
+  if (real.todo) throw new Error('Los admin usan "Ver el panel como" en la pestaña Permisos.');
+
+  const limpio = String(pod || '').trim().toUpperCase();
+  const props = PropertiesService.getUserProperties();
+  if (limpio) {
+    if (!webapp_puedeVerPod(real, limpio)) {
+      Logger.log('[WebApp] "' + usuario + '" intentó elegir el POD ' + limpio + ' sin tenerlo asignado.');
+      throw new Error('Ese POD no está entre los tuyos.');
+    }
+    props.setProperty(WEBAPP_PROP_POD_ELEGIDO, limpio);
+  } else {
+    props.deleteProperty(WEBAPP_PROP_POD_ELEGIDO);
+  }
+  return { permiso: webapp_permisoParaCliente(webapp_permisoActual()) };
 }
 
 /**
@@ -186,15 +282,7 @@ function webapp_verComoPod(pod) {
   // sin recargar. Recargar no es una opción acá: el panel vive dentro de un iframe y un
   // location.reload() recarga la URL del sandbox, no la del panel — la pantalla queda en blanco
   // con la barra de direcciones intacta.
-  const efectivo = webapp_permisoActual();
-  return {
-    simulando: limpio,
-    permiso: {
-      rol: efectivo.rol, pods: efectivo.pods, todo: efectivo.todo,
-      secciones: efectivo.secciones, configurado: efectivo.configurado,
-      simulando: efectivo.simulando || ''
-    }
-  };
+  return { simulando: limpio, permiso: webapp_permisoParaCliente(webapp_permisoActual()) };
 }
 
 /**
@@ -251,6 +339,7 @@ function webapp_exigirAdmin(usuario) {
 function webapp_puedeVerPod(permiso, pod) {
   if (!permiso) return false;
   if (permiso.todo) return true;
+  if (permiso.pods.indexOf(WEBAPP_POD_TODOS) !== -1) return true;
   return permiso.pods.indexOf(String(pod || '').trim().toUpperCase()) !== -1;
 }
 
@@ -301,16 +390,7 @@ function webapp_listarPermisos() {
   });
   // Los PODs que existen de verdad, sacados del Índice: así el selector no es una lista fija
   // que haya que mantener a mano cuando se cree o se cierre un POD.
-  let pods = [];
-  try {
-    (_webappEstadoIndice().clientes || []).forEach(function (c) {
-      const p = String(c.pod || '').trim().toUpperCase();
-      if (p && p !== '-' && pods.indexOf(p) === -1) pods.push(p);
-    });
-    pods.sort();
-  } catch (e) {
-    Logger.log('[WebApp] No se pudieron listar los PODs del Índice: ' + e.message);
-  }
+  const pods = _webappPodsDelIndice();
 
   return {
     configurado: permisos.configurado,
@@ -328,7 +408,7 @@ function webapp_listarPermisos() {
  * @param {Object} datos
  * @param {string} datos.email  A quién.
  * @param {string} datos.rol    'admin' o 'pod'. Vacío = eliminar.
- * @param {string} datos.pods   PODs separados por coma. Solo aplica al rol 'pod'.
+ * @param {string} datos.pods   PODs separados por coma, o '*' para todos. Solo aplica al rol 'pod'.
  * @param {string} [datos.notas]
  */
 function webapp_guardarPermiso(datos) {
@@ -348,9 +428,7 @@ function webapp_guardarPermiso(datos) {
     throw new Error('No podés quitarte a vos mismo el permiso de admin.');
   }
 
-  const pods = String(datos.pods || '').split(',')
-    .map(function (p) { return p.trim().toUpperCase(); })
-    .filter(function (p) { return p; });
+  const pods = _webappParsearPods(datos.pods);
   if (rol === WEBAPP_ROL_POD && pods.length === 0) {
     throw new Error('Un usuario con rol "pod" necesita al menos un POD asignado.');
   }

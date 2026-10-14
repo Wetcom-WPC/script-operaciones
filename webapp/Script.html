@@ -184,7 +184,41 @@
 
     // Que un POD sepa que está viendo un recorte, y no crea que faltan clientes.
     if (estado.permiso && !estado.permiso.todo) {
-      pildora(el.contexto, 'Viendo ' + (estado.permiso.pods || []).join(' y '));
+      var verTodosSinElegir = estado.permiso.verTodos && !estado.permiso.elegido;
+      pildora(el.contexto, verTodosSinElegir ? 'Viendo todos los PODs'
+        : 'Viendo ' + (estado.permiso.pods || []).join(' y '));
+    }
+    // Selector de POD para quien tiene más de uno. Solo achica lo que se ve; el servidor valida
+    // que el POD elegido sea realmente de esa persona.
+    var elegibles = (estado.permiso && estado.permiso.podsElegibles) || [];
+    if (elegibles.length > 1) {
+      var selPod = crear('select', 'select-control');
+      selPod.title = 'Elegir qué POD mirar';
+      var optTodos = crear('option', null, estado.permiso.verTodos ? 'Todos los PODs' : 'Todos mis PODs');
+      optTodos.value = '';
+      selPod.appendChild(optTodos);
+      elegibles.forEach(function (p) {
+        var opt = crear('option', null, p);
+        opt.value = p;
+        selPod.appendChild(opt);
+      });
+      selPod.value = estado.permiso.elegido || '';
+      selPod.style.marginLeft = '8px';
+      selPod.addEventListener('change', function () {
+        // Deshabilitar, no ocupar(): ocupar() vacía el nodo y en un <select> se llevaría puestas
+        // todas las opciones.
+        selPod.disabled = true;
+        google.script.run
+          .withSuccessHandler(function (r) {
+            aplicarCambioDeVista(r && r.permiso);
+          })
+          .withFailureHandler(function (err) {
+            selPod.disabled = false;
+            alert(mensajeDeError(err));
+          })
+          .webapp_elegirPod(selPod.value);
+      });
+      el.contexto.appendChild(selPod);
     }
     // Un admin previsualizando tiene que verlo SIEMPRE y poder salir de un clic: si no, se
     // olvida, y el lunes cree que el panel se rompió porque le faltan clientes.
