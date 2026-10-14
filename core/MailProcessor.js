@@ -530,6 +530,12 @@ class MailProcessor {
     const resultado = buscarYCerrarTareaProgramada(nombreTarea, clientConfig, false);
     const estado = resultado && resultado.status ? resultado.status : 'SIN_RESPUESTA';
 
+    // Este camino informa TODOS los estados por su cuenta (mas abajo), asi que el registro de
+    // cierres no tiene que volver a informarlo. Los ~29 processors que llaman directo a
+    // buscarYCerrarTareaProgramada() y descartan el resultado no marcan nada, y por eso sus
+    // problemas si salen por el registro.
+    marcarUltimoCierreComoReportado();
+
     if (estado === 'SUCCESS') {
       summaryReport.tareasCerradas++;
       if (!summaryReport.tareasCerradasDetalle) summaryReport.tareasCerradasDetalle = [];

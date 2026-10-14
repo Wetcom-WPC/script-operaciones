@@ -185,6 +185,11 @@ function ejecutarCicloDeOperaciones() {
       const entrada = registro[indiceActual];
       try {
         Logger.log(`==> Ejecutando [${indiceActual + 1}/${registro.length}]: ${entrada.tarea}`);
+        // Cada tarea arranca con el registro de cierres vacio. No todos los processors pasan
+        // por enviarResumenSlack() (Tanzu y EnvioMailTecnologias cierran tareas y no lo
+        // llaman), y sin esto sus cierres los contaria la operacion siguiente, atribuidos al
+        // reporte equivocado en la planilla de log.
+        if (typeof consumirCierresDeTareas === "function") consumirCierresDeTareas();
         entrada.crear().processEmails();
         Logger.log(`<== Finalizado: ${entrada.tarea}`);
       } catch (e) {

@@ -3,6 +3,13 @@
  * VERSIÓN CORREGIDA: Maneja correctamente los objetos de advertencia.
  */
 function enviarResumenSlack(operationName, summaryReport) {
+  // Va ANTES del corte por webhook y ANTES de leer el summaryReport, por dos motivos:
+  //  - Si el unico evento de la operacion fue una tarea que no se encontro, sin esto el
+  //    resumen cortaria por "no hay nada que reportar" y el problema seguiria invisible.
+  //  - El registro de cierres tiene que drenarse igual aunque no haya webhook: si no, los
+  //    cierres quedan colgados y se los cuenta la proxima operacion.
+  _normalizarCierresDeTareas(summaryReport);
+
   if (!SLACK_WEBHOOK_URL || SLACK_WEBHOOK_URL.trim() === "") return;
 
   const { exitos, advertencias, errores, tareasCerradas, tareasCerradasDetalle, drive } = summaryReport;
@@ -82,6 +89,77 @@ function enviarResumenSlack(operationName, summaryReport) {
   try {
     sendSlackMessage(SLACK_WEBHOOK_URL, fullMessage);
   } catch (e) { /* Fallo silencioso */ }
+}
+
+/**
+ * Pasa el registro de cierres de tareas programadas (core/JiraService.js) al summaryReport,
+ * para que lo informen el mensaje de Slack y la planilla de log sin tocar ningun processor.
+ *
+ * Dos reglas distintas, y la diferencia importa:
+ *
+ *   - Los cierres EXITOSOS se recuentan desde el registro, pisando lo que haya acumulado el
+ *     processor. El registro los tiene todos; el contador del processor, solo si se acordo de
+ *     mirar el resultado. Recontar en vez de sumar es lo que evita contar doble a los que si
+ *     se acordaron.
+ *   - Los PROBLEMAS solo se informan si nadie los informo ya (reportado = false). El unico
+ *     que los informa por su cuenta es MailProcessor.cerrarTareaProgramadaSiCorresponde().
+ *
+ * @param {Object} summaryReport Resumen de la operacion, se modifica in situ.
+ */
+function _normalizarCierresDeTareas(summaryReport) {
+  if (typeof consumirCierresDeTareas !== "function") return;
+
+  let cierres;
+  try {
+    cierres = consumirCierresDeTareas();
+  } catch (e) {
+    Logger.log("[Cierres] No se pudo leer el registro de cierres: " + e.message);
+    return;
+  }
+  if (!cierres || cierres.length === 0) return;
+
+  summaryReport.advertencias = summaryReport.advertencias || [];
+  summaryReport.errores      = summaryReport.errores      || [];
+
+  const exitosos = cierres.filter(function (c) { return c.estado === 'SUCCESS'; });
+  if (exitosos.length > 0) {
+    summaryReport.tareasCerradas = exitosos.length;
+    summaryReport.tareasCerradasDetalle = exitosos.map(function (c) {
+      return c.tarea + " (" + c.cliente + ")";
+    });
+  }
+
+  cierres.forEach(function (c) {
+    if (c.reportado || c.estado === 'SUCCESS') return;
+
+    if (c.estado === 'NOT_FOUND') {
+      summaryReport.advertencias.push({
+        cliente: c.cliente,
+        problema: 'No se encontro la tarea programada "' + c.tarea + '" creada hoy en el proyecto ' + c.proyecto + ', asi que no se cerro.',
+        accion: "Verificar que la tarea se haya creado hoy y que el nombre coincida EXACTO. El correo igual se dio por procesado."
+      });
+      return;
+    }
+
+    // DUPLICADO y DEFERRED a proposito NO se informan desde aca:
+    //
+    //   - DUPLICADO es lo normal, no un problema. Varios reportes llegan dos veces por diseno
+    //     (los de Veeam mandan primero el PDF y despues el mismo correo con PDF + XLSX): el
+    //     14/10/2026 hubo 5 duplicados en una sola corrida. Informarlos convertiria media
+    //     docena de resumenes diarios de "Ejecucion Exitosa" a "con Advertencias" sin que
+    //     haya nada que hacer. Igual queda el 📩 en el log de ejecucion.
+    //   - DEFERRED significa "no se cerro porque el correo ya venia con un paso fallido". Ese
+    //     fallo ya se informa por su cuenta; avisar de nuevo seria contar el mismo problema
+    //     dos veces, con dos redacciones distintas.
+    if (c.estado === 'DUPLICADO' || c.estado === 'DEFERRED') return;
+
+    // FAILURE, ERROR, SIN_RESPUESTA: el cierre se intento y no se concreto.
+    summaryReport.errores.push({
+      cliente: c.cliente,
+      error: 'No se pudo cerrar la tarea programada "' + c.tarea + '"',
+      detalle: "Proyecto " + c.proyecto + " | Estado: " + c.estado + (c.detalle ? " | " + c.detalle : "")
+    });
+  });
 }
 
 /**
