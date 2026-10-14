@@ -38,8 +38,8 @@ const WEBAPP_POD_TODOS = '*';
 // Secciones que puede abrir cada rol. El navegador usa esto para mostrar solo lo que
 // corresponde, pero NO es el control de acceso: eso lo hace cada función del servidor.
 const WEBAPP_SECCIONES_POR_ROL = {
-  admin: ['inicio', 'operaciones', 'indice', 'llegadas', 'logs', 'jira', 'reportes', 'permisos'],
-  pod:   ['operaciones', 'llegadas']
+  admin: ['inicio', 'operaciones', 'indice', 'llegadas', 'licencias', 'logs', 'jira', 'reportes', 'permisos'],
+  pod:   ['operaciones', 'llegadas', 'licencias']
 };
 
 /** 'a, b' -> ['A','B']. 'TODOS' (o '*') se normaliza a '*'. */

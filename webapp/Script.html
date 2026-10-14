@@ -129,6 +129,7 @@
 
     matrizGlobal = null;
     llegadasGlobal = null;
+    licenciasGlobal = null;
     horariosGlobal = null;
     logsGlobales = null;
     datosIndiceGlobal = null;
@@ -2719,6 +2720,8 @@
       // Al entrar solo se LEE lo registrado. Buscar correos nuevos tarda minutos, así que eso
       // pasa únicamente cuando el usuario aprieta Actualizar.
       inicializarLlegadas();
+    } else if (targetId === 'seccion-licencias' && !licenciasGlobal) {
+      inicializarLicencias();
     } else if (targetId === 'seccion-permisos' && !permisosGlobal) {
       inicializarPermisos();
     }
@@ -3278,6 +3281,7 @@
   // =================================================================
 
   var llegadasGlobal = null;
+  var licenciasGlobal = null;
   var llegadasTabActiva = 'datos';
 
   var COLORES_ORIGEN = { 'vRO': '#2E86C1', 'vROps': '#7D3C98', 'Veeam ONE': '#1E8449', 'Otro': '#8A9891' };
@@ -3994,6 +3998,227 @@
         if (aviso) mostrarAviso(aviso, 'error', 'No se pudieron traer las llegadas: ' + mensajeDeError(err));
       })
       .webapp_obtenerLlegadasReportes(f.dias, !!forzar);
+  }
+
+  // --- Licencias ----------------------------------------------------------------------------
+  //
+  // Solo MUESTRA lo que dejó Script Alarmas en la solapa "Estado de Licencias". El estado de cada
+  // cliente y de cada licencia ya viene clasificado: acá se cuentan y se agrupan, no se
+  // reclasifican (las reglas de vSphere y Veeam difieren a propósito y viven en un solo lugar).
+
+  var licenciasInicializado = false;
+  var licenciasAbiertas = {};   // cliente|tecnología -> detalle desplegado
+
+  function claseLic(texto) {
+    return String(texto || '').toLowerCase().replace(/\s+/g, '-');
+  }
+
+  function etiquetaLic(texto) {
+    return crear('span', 'lic-estado ' + claseLic(texto), texto || '-');
+  }
+
+  /** Agrupa las filas (una por licencia) en una fila por cliente y tecnología. */
+  function agruparLicencias(filas) {
+    var mapa = {};
+    var orden = [];
+    filas.forEach(function (f) {
+      var k = f.cliente + '|' + f.tecnologia;
+      if (!mapa[k]) {
+        mapa[k] = { clave: k, cliente: f.cliente, pod: f.pod, tecnologia: f.tecnologia,
+                    estado: f.estadoCliente, vencidas: 0, porVencer: 0, licencias: [] };
+        orden.push(k);
+      }
+      var g = mapa[k];
+      if (f.estado === 'Vencida') g.vencidas++;
+      if (f.estado === 'Por vencer') g.porVencer++;
+      // Una fila "(no se encontraron licencias)" no es una licencia: solo deja constancia.
+      if (f.licencia && f.licencia.charAt(0) !== '(') g.licencias.push(f);
+    });
+    return orden.map(function (k) { return mapa[k]; });
+  }
+
+  function llenarFiltrosLicencias() {
+    var d = licenciasGlobal;
+    if (!d) return;
+    var selCiclo = document.getElementById('filtroCicloLicencias');
+    vaciar(selCiclo);
+    (d.ciclos || []).forEach(function (c) {
+      var o = crear('option', null, c);
+      o.value = c;
+      selCiclo.appendChild(o);
+    });
+    selCiclo.value = d.ciclo || '';
+
+    var llenar = function (id, valores) {
+      var sel = document.getElementById(id);
+      var actual = sel.value;
+      while (sel.options.length > 1) sel.remove(1);
+      valores.forEach(function (v) {
+        var o = crear('option', null, v);
+        o.value = v;
+        sel.appendChild(o);
+      });
+      sel.value = actual;
+    };
+    var unicos = function (campo) {
+      var v = [];
+      (d.filas || []).forEach(function (f) { if (f[campo] && v.indexOf(f[campo]) === -1) v.push(f[campo]); });
+      return v.sort();
+    };
+    llenar('filtroTecLicencias', unicos('tecnologia'));
+    llenar('filtroPodLicencias', unicos('pod'));
+  }
+
+  function pintarLicencias() {
+    var d = licenciasGlobal;
+    var aviso = document.getElementById('avisoLicencias');
+    var cuerpo = document.getElementById('cuerpoLicencias');
+    vaciar(cuerpo);
+    if (!d) return;
+
+    if (d.sinSolapa) {
+      mostrarAviso(aviso, 'atencion', 'Todavía no hay estado de licencias guardado. Se crea la primera vez que ' +
+        'Script Alarmas corre el ciclo mensual de licencias (último día hábil del mes).');
+      ['scLicVencida', 'scLicPorVencer', 'scLicOk', 'scLicSinDatos'].forEach(function (id) {
+        document.getElementById(id).textContent = '-';
+      });
+      document.getElementById('licenciasActualizado').textContent = '';
+      return;
+    }
+    if (!d.filas || d.filas.length === 0) {
+      mostrarAviso(aviso, 'atencion', 'No hay licencias para mostrar en este ciclo' +
+        (estado.permiso && !estado.permiso.todo ? ' con tu POD.' : '.'));
+    } else {
+      aviso.hidden = true;
+    }
+    document.getElementById('licenciasActualizado').textContent = d.actualizado
+      ? 'Ciclo ' + d.ciclo + ' · última actualización ' + d.actualizado : '';
+
+    var fTec = document.getElementById('filtroTecLicencias').value;
+    var fPod = document.getElementById('filtroPodLicencias').value;
+    var fEst = document.getElementById('filtroEstadoLicencias').value;
+    var busca = document.getElementById('buscarLicencias').value.trim().toLowerCase();
+
+    var grupos = agruparLicencias(d.filas || []).filter(function (g) {
+      return (!fTec || g.tecnologia === fTec) && (!fPod || g.pod === fPod) &&
+             (!fEst || g.estado === fEst) && (!busca || g.cliente.toLowerCase().indexOf(busca) !== -1);
+    });
+
+    // Lo más grave primero.
+    var peso = { 'Vencida': 0, 'Por vencer': 1, 'Sin datos': 2, 'OK': 3 };
+    grupos.sort(function (a, b) {
+      var pa = peso[a.estado] === undefined ? 9 : peso[a.estado];
+      var pb = peso[b.estado] === undefined ? 9 : peso[b.estado];
+      return pa - pb || a.cliente.localeCompare(b.cliente) || a.tecnologia.localeCompare(b.tecnologia);
+    });
+
+    var cuenta = { 'Vencida': 0, 'Por vencer': 0, 'OK': 0, 'Sin datos': 0 };
+    grupos.forEach(function (g) { if (cuenta[g.estado] !== undefined) cuenta[g.estado]++; });
+    document.getElementById('scLicVencida').textContent = cuenta['Vencida'];
+    document.getElementById('scLicPorVencer').textContent = cuenta['Por vencer'];
+    document.getElementById('scLicOk').textContent = cuenta['OK'];
+    document.getElementById('scLicSinDatos').textContent = cuenta['Sin datos'];
+
+    grupos.forEach(function (g) {
+      var tr = crear('tr');
+      tr.appendChild(crear('td', 'td-cliente', g.cliente));
+      tr.appendChild(crear('td', null, g.pod || '-'));
+      tr.appendChild(crear('td', null, g.tecnologia));
+      var tdEst = crear('td');
+      tdEst.appendChild(etiquetaLic(g.estado));
+      tr.appendChild(tdEst);
+      tr.appendChild(crear('td', null, String(g.vencidas)));
+      tr.appendChild(crear('td', null, String(g.porVencer)));
+      var tdDet = crear('td');
+      if (g.licencias.length) {
+        var abierto = !!licenciasAbiertas[g.clave];
+        var btn = crear('button', 'btn-chico', (abierto ? 'Ocultar' : 'Ver') + ' (' + g.licencias.length + ')');
+        btn.type = 'button';
+        btn.addEventListener('click', function () {
+          licenciasAbiertas[g.clave] = !licenciasAbiertas[g.clave];
+          pintarLicencias();
+        });
+        tdDet.appendChild(btn);
+      } else {
+        tdDet.textContent = '-';
+      }
+      tr.appendChild(tdDet);
+      cuerpo.appendChild(tr);
+
+      if (g.licencias.length && licenciasAbiertas[g.clave]) {
+        var trD = crear('tr', 'lic-detalle');
+        var td = crear('td');
+        td.colSpan = 7;
+        var t = crear('table');
+        var th = crear('tr');
+        ['Origen', 'Licencia', 'Tipo', 'Vencimiento', 'Días', 'Uso', 'Estado'].forEach(function (h) {
+          th.appendChild(crear('th', null, h));
+        });
+        t.appendChild(th);
+        g.licencias.forEach(function (l) {
+          var r = crear('tr');
+          r.appendChild(crear('td', null, l.origen || '-'));
+          r.appendChild(crear('td', null, l.licencia));
+          r.appendChild(crear('td', null, l.tipo || '-'));
+          r.appendChild(crear('td', null, l.vencimiento || '-'));
+          r.appendChild(crear('td', null, l.dias === null ? '-' : String(l.dias)));
+          var uso = (l.usadas === null ? '-' : l.usadas) + (l.total === null ? '' : ' / ' + l.total) +
+                    (l.unidad ? ' ' + l.unidad : '');
+          r.appendChild(crear('td', null, uso));
+          var tdE = crear('td');
+          tdE.appendChild(etiquetaLic(l.estado));
+          r.appendChild(tdE);
+          t.appendChild(r);
+        });
+        td.appendChild(t);
+        trD.appendChild(td);
+        cuerpo.appendChild(trD);
+      }
+    });
+
+    if (grupos.length === 0 && d.filas && d.filas.length) {
+      var vacio = crear('tr');
+      var tdv = crear('td', null, 'Ningún cliente coincide con los filtros.');
+      tdv.colSpan = 7;
+      vacio.appendChild(tdv);
+      cuerpo.appendChild(vacio);
+    }
+  }
+
+  function cargarLicencias(ciclo, forzar) {
+    var btn = document.getElementById('btnActualizarLicencias');
+    var aviso = document.getElementById('avisoLicencias');
+    if (forzar && btn) ocupar(btn, 'Actualizando...');
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (forzar && btn) liberar(btn);
+        licenciasGlobal = r;
+        llenarFiltrosLicencias();
+        pintarLicencias();
+      })
+      .withFailureHandler(function (err) {
+        if (forzar && btn) liberar(btn);
+        mostrarAviso(aviso, 'error', 'No se pudieron traer las licencias: ' + mensajeDeError(err));
+      })
+      .webapp_obtenerLicencias(ciclo || '', !!forzar);
+  }
+
+  function inicializarLicencias() {
+    if (!licenciasInicializado) {
+      licenciasInicializado = true;
+      document.getElementById('btnActualizarLicencias').addEventListener('click', function () {
+        cargarLicencias(document.getElementById('filtroCicloLicencias').value, true);
+      });
+      // El ciclo cambia qué trae el servidor; el resto se filtra en pantalla.
+      document.getElementById('filtroCicloLicencias').addEventListener('change', function () {
+        cargarLicencias(this.value, false);
+      });
+      ['filtroTecLicencias', 'filtroPodLicencias', 'filtroEstadoLicencias'].forEach(function (id) {
+        document.getElementById(id).addEventListener('change', pintarLicencias);
+      });
+      document.getElementById('buscarLicencias').addEventListener('input', pintarLicencias);
+    }
+    cargarLicencias('', false);
   }
 
   function inicializarLlegadas() {

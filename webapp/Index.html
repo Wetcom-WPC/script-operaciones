@@ -37,6 +37,7 @@
         <button class="nav-btn" data-seccion="seccion-operaciones">📊 Cumplimiento de Envíos</button>
         <button class="nav-btn" data-seccion="seccion-indice">Control de Envíos</button>
         <button class="nav-btn" data-seccion="seccion-llegadas">📥 Llegada de Reportes</button>
+        <button class="nav-btn" data-seccion="seccion-licencias">🪪 Licencias</button>
         <button class="nav-btn" data-seccion="seccion-logs">Logs del Sistema</button>
         <button class="nav-btn" data-seccion="seccion-jira">Tickets Jira</button>
         <button class="nav-btn" data-seccion="seccion-reportes">Reportes Analíticos</button>
@@ -556,6 +557,78 @@
       <!-- 6. Control de Envíos (Índice) ---------------------------------------------------- -->
       <section id="seccion-indice" class="tarjeta vista-seccion">
         <?!= webapp_include('webapp/IndiceControl') ?>
+      </section>
+
+      <!-- VISTA: LICENCIAS -->
+      <section id="seccion-licencias" class="tarjeta vista-seccion">
+        <header>
+          <div>
+            <h2>Licencias</h2>
+            <p class="ayuda">
+              Estado de las licencias de vSphere y Veeam de cada cliente, tal como lo dejó el ciclo
+              mensual de Script Alarmas. Es el mismo resultado que recibió el POD por mail:
+              acá no se recalcula nada.
+            </p>
+          </div>
+          <button id="btnActualizarLicencias" class="btn-primario">Actualizar</button>
+        </header>
+
+        <div class="filter-toolbar" style="margin-bottom: 12px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <select id="filtroCicloLicencias" class="select-control" aria-label="Ciclo"></select>
+          <select id="filtroTecLicencias" class="select-control" aria-label="Filtrar por tecnología">
+            <option value="">Todas las tecnologías</option>
+          </select>
+          <select id="filtroPodLicencias" class="select-control" aria-label="Filtrar por POD">
+            <option value="">Todos los PODs</option>
+          </select>
+          <select id="filtroEstadoLicencias" class="select-control" aria-label="Filtrar por estado">
+            <option value="">Todos los estados</option>
+            <option value="Vencida">Vencida</option>
+            <option value="Por vencer">Por vencer</option>
+            <option value="OK">OK</option>
+            <option value="Sin datos">Sin datos</option>
+          </select>
+          <input type="text" id="buscarLicencias" class="select-control" placeholder="Buscar cliente..." aria-label="Buscar cliente" style="min-width: 200px;">
+        </div>
+
+        <div class="aviso" id="avisoLicencias" hidden></div>
+        <p id="licenciasActualizado" class="ayuda" style="margin: 0 0 12px 0;"></p>
+
+        <div class="scorecard-grid" style="margin-bottom: 20px;">
+          <div class="scorecard-card card-err">
+            <span class="scorecard-label">Vencidas</span>
+            <div id="scLicVencida" class="scorecard-value">-</div>
+          </div>
+          <div class="scorecard-card card-warn">
+            <span class="scorecard-label">Por vencer</span>
+            <div id="scLicPorVencer" class="scorecard-value">-</div>
+          </div>
+          <div class="scorecard-card card-ok">
+            <span class="scorecard-label">OK</span>
+            <div id="scLicOk" class="scorecard-value">-</div>
+          </div>
+          <div class="scorecard-card">
+            <span class="scorecard-label">Sin datos</span>
+            <div id="scLicSinDatos" class="scorecard-value">-</div>
+          </div>
+        </div>
+
+        <div class="matriz-container">
+          <table class="matriz-table tabla-logs" id="tablaLicencias" style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr>
+                <th class="th-cliente">Cliente</th>
+                <th>POD</th>
+                <th>Tecnología</th>
+                <th>Estado</th>
+                <th>Vencidas</th>
+                <th>Por vencer</th>
+                <th>Licencias</th>
+              </tr>
+            </thead>
+            <tbody id="cuerpoLicencias"></tbody>
+          </table>
+        </div>
       </section>
 
       <!-- VISTA: PERMISOS -->
