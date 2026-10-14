@@ -4041,6 +4041,8 @@
     var d = licenciasGlobal;
     if (!d) return;
     var selCiclo = document.getElementById('filtroCicloLicencias');
+    // Sin ciclos guardados no hay nada que elegir: un desplegable vacío solo confunde.
+    selCiclo.style.display = (d.ciclos && d.ciclos.length) ? '' : 'none';
     vaciar(selCiclo);
     (d.ciclos || []).forEach(function (c) {
       var o = crear('option', null, c);
@@ -4065,8 +4067,23 @@
       (d.filas || []).forEach(function (f) { if (f[campo] && v.indexOf(f[campo]) === -1) v.push(f[campo]); });
       return v.sort();
     };
-    llenar('filtroTecLicencias', unicos('tecnologia'));
-    llenar('filtroPodLicencias', unicos('pod'));
+    // Estos filtros NO dependen de que haya datos: si dependieran, antes del primer ciclo
+    // quedarían vacíos. Las tecnologías son fijas, y los PODs salen del permiso de quien mira
+    // (más los que aparezcan en los datos, para el caso de quien ve todo).
+    var tecnologias = ['vSphere', 'Veeam'];
+    unicos('tecnologia').forEach(function (t) { if (tecnologias.indexOf(t) === -1) tecnologias.push(t); });
+    llenar('filtroTecLicencias', tecnologias);
+
+    var pods = unicos('pod');
+    var perm = estado.permiso || {};
+    (perm.podsElegibles || []).concat(perm.pods || []).forEach(function (p) {
+      if (p && p !== '*' && pods.indexOf(p) === -1) pods.push(p);
+    });
+    pods.sort();
+    llenar('filtroPodLicencias', pods);
+    // Quien tiene un único POD no tiene nada que filtrar por POD.
+    var unSoloPod = !perm.todo && !perm.verTodos && pods.length <= 1;
+    document.getElementById('filtroPodLicencias').style.display = unSoloPod ? 'none' : '';
   }
 
   function pintarLicencias() {
