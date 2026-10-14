@@ -213,7 +213,59 @@ function runAllTests() {
 
     // Un paso inexistente nunca se ejecuta (evita typos silenciosos en la config).
     assertFalse(porDefecto.requierePaso('inexistente'), "pasos: un paso no declarado no se ejecuta");
+
   } catch(e) { Logger.log("Error en Test pasos declarados: " + e.message); }
+
+  // --- TEST: la rama solo-Drive cierra su tarea programada (regresión 14/10/2026) ---
+  //
+  // El freno de 9x5 (v62, 13/10/2026) agregó un `&& this.requierePaso('tickets')` a la condición
+  // de cierre de la rama solo-Drive. Pero esa rama SOLO se ejecuta cuando requierePaso('tickets')
+  // ya vale false, así que la condición quedó muerta y durante dos días ningún reporte de Veeam
+  // ONE ni el catch-all cerraron su TP. No hubo un solo log que lo dijera, porque el log de
+  // cierre vive adentro del if que nunca se entraba: el síntoma lo trajo el equipo a mano.
+  //
+  // requierePaso() responde dos preguntas distintas con el mismo nombre — "¿este processor crea
+  // tickets?" y "¿hoy es día laborable?" — y esta rama necesita la segunda sola.
+  Logger.log("--- Test: solo-Drive cierra la tarea programada ---");
+  try {
+    const _getClientConfigOriginal = getClientConfig;
+    try {
+      getClientConfig = function () { return { clientName: "Cliente Test", jiraProjectKey: "TEST" }; };
+
+      class _ProcessorSoloDrive extends MailProcessor {
+        constructor() {
+          super({
+            operationName: "test-solo-drive",
+            emailSubject: "x",
+            scheduledTaskName: "VMs protegidas",
+            pasos: ['drive']
+          });
+          this.cierres = 0;
+        }
+        ejecutarPasoDrive(message, clientName, summaryReport, resultado) { return resultado; }
+        cerrarTareaProgramadaSiCorresponde() { this.cierres++; return { status: 'SUCCESS' }; }
+      }
+
+      const mensaje = {
+        getSubject: function () { return "Report VMs protegidas"; },
+        getFrom: function () { return "veeam@dominio-inexistente.test"; },
+        getAttachments: function () { return []; }
+      };
+
+      const p = new _ProcessorSoloDrive();
+      p.processSingleMessage(mensaje, { exitos: [], advertencias: [], errores: [], tareasCerradas: 0 });
+
+      // En día laborable tiene que cerrar; sábado, domingo o feriado, no. Las dos cosas salen
+      // del MISMO estado real de hoy, así que el test vale cualquier día que se corra.
+      if (esDiaNoLaborable()) {
+        assertEqual(p.cierres, 0, "solo-Drive en día no laborable: NO cierra la tarea programada");
+      } else {
+        assertEqual(p.cierres, 1, "solo-Drive en día laborable: cierra la tarea programada");
+      }
+    } finally {
+      getClientConfig = _getClientConfigOriginal;
+    }
+  } catch(e) { Logger.log("Error en Test solo-Drive cierra TP: " + e.message); }
 
   // --- TESTS: caminos silenciosos de processSingleMessage (incidente del 28/07/2026) ---
   // Un reporte que llegaba SIN filas (solo encabezados) se marcaba [OPS-PROCESADO] pero se
