@@ -686,6 +686,20 @@
           <button id="btnGuardarPermiso" class="btn-primario">Guardar</button>
         </div>
 
+        <div class="filter-toolbar" style="margin: 12px 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <input type="text" id="buscarPermisos" class="select-control" placeholder="Buscar por mail o nota..."
+                 aria-label="Buscar por mail o nota" style="min-width: 240px;">
+          <select id="filtroRolPermisos" class="select-control" aria-label="Filtrar por rol">
+            <option value="">Todos los roles</option>
+            <option value="admin">admin</option>
+            <option value="pod">pod</option>
+          </select>
+          <select id="filtroPodPermisos" class="select-control" aria-label="Filtrar por POD">
+            <option value="">Todos los PODs</option>
+          </select>
+          <span id="contadorPermisos" class="ayuda"></span>
+        </div>
+
         <div class="matriz-container" style="overflow-x: auto;">
           <table class="matriz-table tabla-logs" id="tablaPermisos" style="width: 100%; border-collapse: collapse;">
             <thead>

@@ -1783,7 +1783,31 @@
         'entrando, antes de sumar a nadie más.');
     }
 
-    (permisosGlobal.permisos || []).forEach(function (p) {
+    // Filtros de la lista. Solo recortan lo que se ve: no tocan lo guardado.
+    var selPodFiltro = document.getElementById('filtroPodPermisos');
+    if (selPodFiltro && selPodFiltro.options.length <= 1) {
+      (permisosGlobal.podsDisponibles || []).forEach(function (p) {
+        var opt = crear('option', null, p);
+        opt.value = p;
+        selPodFiltro.appendChild(opt);
+      });
+    }
+    var fBusca = (document.getElementById('buscarPermisos').value || '').trim().toLowerCase();
+    var fRol = document.getElementById('filtroRolPermisos').value;
+    var fPod = selPodFiltro ? selPodFiltro.value : '';
+    var todos = permisosGlobal.permisos || [];
+    var visibles = todos.filter(function (p) {
+      if (fBusca && (p.email + ' ' + (p.notas || '')).toLowerCase().indexOf(fBusca) === -1) return false;
+      if (fRol && p.rol !== fRol) return false;
+      // Quien tiene "*" ve todos los PODs, así que aparece en cualquier POD. Un admin no tiene
+      // PODs asignados (ve todo), por eso no entra cuando se filtra por uno.
+      if (fPod && !(p.rol === 'pod' && ((p.pods || []).indexOf(fPod) !== -1 || (p.pods || []).indexOf('*') !== -1))) return false;
+      return true;
+    });
+    document.getElementById('contadorPermisos').textContent =
+      visibles.length === todos.length ? todos.length + ' usuarios' : visibles.length + ' de ' + todos.length + ' usuarios';
+
+    visibles.forEach(function (p) {
       var tr = crear('tr');
       var tdMail = crear('td', null, p.email);
       if (p.email === permisosGlobal.yo) {
@@ -1822,9 +1846,9 @@
       cuerpo.appendChild(tr);
     });
 
-    if (!(permisosGlobal.permisos || []).length) {
+    if (!visibles.length) {
       var vacia = crear('tr');
-      var td = crear('td', null, 'Sin permisos cargados.');
+      var td = crear('td', null, todos.length ? 'Ningún usuario coincide con los filtros.' : 'Sin permisos cargados.');
       td.colSpan = 5;
       td.style.color = 'var(--gris)';
       vacia.appendChild(td);
@@ -1892,6 +1916,12 @@
           .webapp_verComoPod(selVerComo.value);
       });
     }
+
+    // Filtros de la lista: se aplican en pantalla, sin volver al servidor.
+    ['filtroRolPermisos', 'filtroPodPermisos'].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', pintarPermisos);
+    });
+    document.getElementById('buscarPermisos').addEventListener('input', pintarPermisos);
 
     // El campo de PODs solo tiene sentido para el rol "pod".
     var selRol = document.getElementById('permisoRol');
