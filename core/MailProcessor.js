@@ -183,9 +183,15 @@ class MailProcessor {
 
         let resultadoSoloDrive = this.ejecutarPasoDrive(message, clientName, summaryReport, { status: 'SUCCESS' });
 
-        // requierePaso('tickets') también cubre el fin de semana y los feriados: cerrar una
-        // tarea programada es tocar Jira, y en día no laborable no se toca.
-        if (this.scheduledTaskName && this.requierePaso('tickets') && resultadoSoloDrive.status === 'SUCCESS') {
+        // En día no laborable no se cierra la tarea programada: cerrarla es tocar Jira.
+        //
+        // Acá NO sirve requierePaso('tickets'): estamos dentro de !requierePaso('tickets'), así
+        // que esa expresión ya vale false por definición y la condición nunca se cumplía. Entre
+        // el 13/10/2026 (v62) y el 14/10/2026 ningún processor solo-Drive cerró su tarea: todos
+        // los reportes de Veeam ONE y el catch-all quedaron con la TP abierta, sin un solo log
+        // que lo dijera. requierePaso() mezcla dos preguntas distintas — "¿este processor crea
+        // tickets?" y "¿hoy es día laborable?" — y acá hace falta la segunda sola.
+        if (this.scheduledTaskName && !esDiaNoLaborable() && resultadoSoloDrive.status === 'SUCCESS') {
           if (configSoloDrive) {
             resultadoSoloDrive = this.cerrarTareaProgramadaSiCorresponde(configSoloDrive, summaryReport);
           } else {
