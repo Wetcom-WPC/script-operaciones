@@ -153,7 +153,86 @@ function buscarAdjuntoEnTicket(issueKey, fileName) {
   }
 }
 
+// ─── REGISTRO DE CIERRES DE TAREAS PROGRAMADAS ────────────────────────────────
+//
+// Casi todos los processors llaman a buscarYCerrarTareaProgramada() y TIRAN el resultado:
+// de los 42 lugares que la llaman, 29 no lo miran, y de los 13 que lo miran solo
+// MailProcessor.cerrarTareaProgramadaSiCorresponde() reporta algo cuando el cierre NO sale
+// bien. Los demas, en el mejor de los casos, cuentan el SUCCESS.
+//
+// Consecuencia: un NOT_FOUND (la tarea no existe o el nombre no coincide) o un fallo de
+// transicion no aparecen en ningun lado. El 14/10/2026 BALANZ tuvo dos reportes cuya tarea no
+// se encontro y nadie se entero; el mismo dia el resumen de Slack de "Discos montados en
+// proxy" y "VMs con preguntas" no menciono los cierres que SI habia hecho, porque esos dos
+// processors descartan el resultado.
+//
+// En vez de parchear 42 lugares (y que el proximo processor nuevo repita el olvido), cada
+// cierre se anota aca y enviarResumenSlack() lo normaliza al summaryReport. Mismo criterio
+// que el registro de fallos del mensaje: una sola fuente, en el lugar por el que pasan todos
+// (AGENTS.md §5 y §7).
+let _cierresDeTareas = [];
+
+/**
+ * Cierres anotados hasta ahora, y limpia el registro. Lo consume enviarResumenSlack(), que
+ * corre una vez por operacion.
+ * @returns {Array<{tarea: string, cliente: string, proyecto: string, estado: string, detalle: string, reportado: boolean}>}
+ */
+function consumirCierresDeTareas() {
+  const copia = _cierresDeTareas;
+  _cierresDeTareas = [];
+  return copia;
+}
+
+/**
+ * Marca el ultimo cierre anotado como YA reportado, para que enviarResumenSlack() no lo
+ * informe por segunda vez. Lo llama quien se encarga de reportarlo por su cuenta.
+ */
+function marcarUltimoCierreComoReportado() {
+  if (_cierresDeTareas.length > 0) {
+    _cierresDeTareas[_cierresDeTareas.length - 1].reportado = true;
+  }
+}
+
+/**
+ * Busca la tarea programada del dia y la cierra. Envoltorio: la logica esta en
+ * _buscarYCerrarTareaProgramada() y aca solo se anota el resultado en el registro.
+ *
+ * El envoltorio existe para no repetir la anotacion en los seis `return` de la funcion real
+ * (uno olvidado = un cierre que vuelve a ser invisible). Los tests que reemplazan
+ * buscarYCerrarTareaProgramada() siguen funcionando igual: pisan el envoltorio, la interna no
+ * corre, y no se anota nada.
+ */
 function buscarYCerrarTareaProgramada(taskNameBase, clientConfig, useClientNameInTask) {
+  const resultado = _buscarYCerrarTareaProgramada(taskNameBase, clientConfig, useClientNameInTask);
+  const estado = (resultado && resultado.status) ? resultado.status : 'SIN_RESPUESTA';
+
+  // SKIPPED es "no habia nada que cerrar" (el processor no declara tarea programada): no es un
+  // cierre ni un problema, no se anota.
+  if (estado !== 'SKIPPED') {
+    _cierresDeTareas.push({
+      tarea:    taskNameBase,
+      cliente:  (clientConfig && clientConfig.clientName) || "_Desconocido_",
+      proyecto: (clientConfig && clientConfig.jiraProjectKey) || "",
+      estado:   estado,
+      detalle:  _detalleDeCierre(resultado),
+      reportado: false
+    });
+  }
+
+  return resultado;
+}
+
+/** Texto corto del motivo, para el aviso. */
+function _detalleDeCierre(resultado) {
+  if (!resultado) return "";
+  if (typeof resultado.detail === "string") return resultado.detail;
+  if (resultado.detail && typeof resultado.detail === "object") {
+    return resultado.detail.problema || resultado.detail.error || resultado.detail.mensaje || "";
+  }
+  return "";
+}
+
+function _buscarYCerrarTareaProgramada(taskNameBase, clientConfig, useClientNameInTask) {
   if (!taskNameBase || !clientConfig || !clientConfig.clientName) {
     return { status: 'SKIPPED' };
   }

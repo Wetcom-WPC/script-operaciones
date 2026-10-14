@@ -767,7 +767,8 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
     addCommentToJiraTicket: addCommentToJiraTicket,
     createTicketAndNotify: createTicketAndNotify,
     haSidoActualizadoHoy: haSidoActualizadoHoy,
-    buscarYCerrarTareaProgramada: buscarYCerrarTareaProgramada
+    buscarYCerrarTareaProgramada: buscarYCerrarTareaProgramada,
+    subirAdjuntosDeMensajeADrive: subirAdjuntosDeMensajeADrive
   };
 
   const CLIENTE = "Cliente Nutanix Test";
@@ -837,6 +838,14 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
     };
     haSidoActualizadoHoy = function (key) { return actualizadosHoy.indexOf(key) !== -1; };
     buscarYCerrarTareaProgramada = function (nombre) { jira.cierres.push(nombre); return { status: "SUCCESS" }; };
+    // Drive también se stubea. Hace falta desde que Nutanix archiva en Drive (pasos:
+    // ['tickets','drive']): sin esto, el paso de Drive intenta una subida REAL con los blobs
+    // falsos del test, falla, y el correo termina en FAILURE aunque las tareas se hayan
+    // cerrado bien. Lo que este test verifica es el cierre de tareas, no la subida.
+    // subidos y omitidos TIENEN que ser arrays: ejecutarPasoDrive les hace forEach.
+    subirAdjuntosDeMensajeADrive = function (mensaje, operacion) {
+      return { ok: true, subidos: ["adjunto-de-prueba.json"], omitidos: [], errores: [], cliente: CLIENTE };
+    };
 
     // 1) Llegaron los 3 clusters: las 4 tareas se cierran una sola vez, no una por cluster.
     ticketsExistentes = {}; actualizadosHoy = [];
@@ -946,5 +955,6 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
     createTicketAndNotify = originales.createTicketAndNotify;
     haSidoActualizadoHoy = originales.haSidoActualizadoHoy;
     buscarYCerrarTareaProgramada = originales.buscarYCerrarTareaProgramada;
+    subirAdjuntosDeMensajeADrive = originales.subirAdjuntosDeMensajeADrive;
   }
 }
