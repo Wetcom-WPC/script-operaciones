@@ -4094,8 +4094,8 @@
     if (!d) return;
 
     if (d.sinSolapa) {
-      mostrarAviso(aviso, 'atencion', 'Todavía no hay estado de licencias guardado. Se crea la primera vez que ' +
-        'Script Alarmas corre el ciclo mensual de licencias (último día hábil del mes).');
+      mostrarAviso(aviso, 'atencion', 'Todavía no hay información de licencias para mostrar. Se carga una vez por mes, ' +
+        'el último día hábil, junto con el reporte de licencias que se envía por mail.');
       ['scLicVencida', 'scLicPorVencer', 'scLicOk', 'scLicSinDatos'].forEach(function (id) {
         document.getElementById(id).textContent = '-';
       });
