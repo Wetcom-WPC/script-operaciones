@@ -2166,3 +2166,153 @@ function manual_diagnosticarIndices() {
   mostrar("Indice Maestro (Script Property MASTER_INDEX_SHEET_ID)",
     PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID"));
 }
+
+/**
+ * =================================================================
+ * DIAGNÓSTICO: qué campos acepta la API de Jira para un tipo de solicitud
+ * =================================================================
+ *
+ * Por qué existe: el 15/10/2026 la creación del ticket de Soporte de snapshots de Falabella
+ * empezó a fallar con
+ *
+ *   The field 'customfield_12316' is not valid for this request type 'Solicitud de incidente'.
+ *
+ * y mirando Jira el campo Tecnología SÍ aparecía: está en la pantalla del issue y los tickets
+ * creados a mano lo tienen cargado. Son dos configuraciones distintas y es fácil confundirlas:
+ *
+ *   - La PANTALLA del issue: lo que se ve al crear desde la vista de agente y en el detalle.
+ *   - El FORMULARIO DEL TIPO DE SOLICITUD: lo único que valida
+ *     POST /rest/servicedeskapi/request, que es por donde el script crea los tickets.
+ *
+ * Un campo puede estar en la primera y no en la segunda, y entonces la API lo rechaza aunque
+ * a ojo parezca que está. En vez de interpretar pantallas, esto le pregunta a la propia API
+ * qué campos acepta, que es exactamente lo que valida al crear.
+ *
+ * Es de SOLO LECTURA: no crea, no modifica y no cierra nada en Jira.
+ *
+ * Para usarlo: poner en CLIENTES el que falla y al menos uno que funcione, y comparar.
+ */
+function manual_compararCamposRequestType() {
+  // El primero es el que se sospecha roto; los demás son la referencia que SÍ funciona.
+  const CLIENTES = [
+    "Operaciones Falabella",
+    "Operaciones Banco de Entre Rios"
+  ];
+
+  // El Índice de PRODUCCIÓN, explícito. En Playground la Script Property MASTER_INDEX_SHEET_ID
+  // apunta a un Índice de prueba, y getClientConfigByName() además redirige todo al cliente de
+  // testing por el safeguard: por los dos caminos el diagnóstico miraría el cliente equivocado.
+  const INDICE_PROD = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
+
+  Logger.log("=== CAMPOS QUE ACEPTA LA API DE JIRA POR TIPO DE SOLICITUD (Soporte) ===");
+  Logger.log(`Campo que estamos buscando: ${TECNOLOGIA_FIELD_ID} (Tecnología)`);
+  Logger.log("");
+
+  let datos;
+  try {
+    datos = SpreadsheetApp.openById(INDICE_PROD).getSheets()[0].getDataRange().getValues();
+  } catch (e) {
+    Logger.log(`❌ No se pudo abrir el Índice de producción: ${e.message}`);
+    return;
+  }
+
+  const resultados = {};
+
+  CLIENTES.forEach(function (nombreCliente) {
+    Logger.log(`──────── ${nombreCliente} ────────`);
+
+    const fila = datos.find(function (r) {
+      return r[1] && String(r[1]).trim().toLowerCase() === nombreCliente.trim().toLowerCase();
+    });
+    if (!fila) {
+      Logger.log(`❌ No está en la Columna B del Índice de producción.`);
+      Logger.log("");
+      return;
+    }
+
+    const proyectoSop    = fila[13]; // Columna N
+    const serviceDeskSop = fila[14]; // Columna O
+    const tipoSolicitud  = fila[16]; // Columna Q
+
+    Logger.log(`Proyecto Soporte: ${proyectoSop || "(vacío)"} | serviceDeskId: ${serviceDeskSop || "(vacío)"}`);
+    Logger.log(`Tipo de solicitud según el Índice: "${tipoSolicitud || "(vacío)"}"`);
+
+    if (!serviceDeskSop || !tipoSolicitud) {
+      Logger.log("❌ Faltan las columnas de Soporte (O y/o Q) en el Índice. No se puede consultar.");
+      Logger.log("");
+      return;
+    }
+
+    // 1. Tipos de solicitud que existen en ese Service Desk.
+    const tipos = _diagGetJson(`${JIRA_DOMAIN}/rest/servicedeskapi/servicedesk/${serviceDeskSop}/requesttype`);
+    if (!tipos) { Logger.log(""); return; }
+
+    const nombres = (tipos.values || []).map(function (t) { return t.name; });
+    Logger.log(`Tipos de solicitud en Jira: [${nombres.join(" | ")}]`);
+
+    // Se compara sin distinguir mayúsculas, igual que lo hace el código desde el 15/10/2026.
+    const buscado = String(tipoSolicitud).trim().toLowerCase();
+    const tipo = (tipos.values || []).find(function (t) {
+      return String(t.name || "").trim().toLowerCase() === buscado;
+    });
+
+    if (!tipo) {
+      Logger.log(`❌ El tipo "${tipoSolicitud}" NO existe en este Service Desk. Ese es el problema, no los campos.`);
+      Logger.log("");
+      return;
+    }
+    Logger.log(`✔ Tipo encontrado: "${tipo.name}" (id ${tipo.id})`);
+
+    // 2. Los campos que la API acepta para ESE tipo. Esto es lo que valida al crear.
+    const campos = _diagGetJson(
+      `${JIRA_DOMAIN}/rest/servicedeskapi/servicedesk/${serviceDeskSop}/requesttype/${tipo.id}/field`);
+    if (!campos) { Logger.log(""); return; }
+
+    const lista = campos.requestTypeFields || [];
+    Logger.log(`Campos que ACEPTA la API (${lista.length}):`);
+    lista.forEach(function (c) {
+      const marca = c.fieldId === TECNOLOGIA_FIELD_ID ? "  ← TECNOLOGÍA" : "";
+      Logger.log(`   - ${c.fieldId}  (${c.name})${c.required ? " [obligatorio]" : ""}${marca}`);
+    });
+
+    const tieneTecnologia = lista.some(function (c) { return c.fieldId === TECNOLOGIA_FIELD_ID; });
+    Logger.log(tieneTecnologia
+      ? `✔ ${TECNOLOGIA_FIELD_ID} ESTÁ en el formulario del tipo de solicitud.`
+      : `❌ ${TECNOLOGIA_FIELD_ID} NO está. Por eso la API rechaza el ticket.`);
+
+    resultados[nombreCliente] = lista.map(function (c) { return c.fieldId; });
+    Logger.log("");
+  });
+
+  // 3. Diferencia entre el que falla y el que funciona.
+  const clientes = Object.keys(resultados);
+  if (clientes.length >= 2) {
+    Logger.log("──────── DIFERENCIA ────────");
+    const [a, b] = clientes;
+    const soloEnA = resultados[a].filter(function (f) { return resultados[b].indexOf(f) === -1; });
+    const soloEnB = resultados[b].filter(function (f) { return resultados[a].indexOf(f) === -1; });
+    Logger.log(`Solo en ${a}: ${soloEnA.length ? soloEnA.join(", ") : "(ninguno)"}`);
+    Logger.log(`Solo en ${b}: ${soloEnB.length ? soloEnB.join(", ") : "(ninguno)"}`);
+    Logger.log("");
+    Logger.log("Si Tecnología aparece solo en el que funciona, hay que agregarlo al formulario");
+    Logger.log("del tipo de solicitud del que falla: Configuración del proyecto → Tipos de");
+    Logger.log("solicitud → (el tipo) → agregar el campo. No alcanza con que esté en la");
+    Logger.log("pantalla del issue.");
+  }
+}
+
+/** GET a Jira que devuelve el JSON, o null avisando por qué falló. Solo para los manual_. */
+function _diagGetJson(url) {
+  try {
+    const r = fetchWithRetries(url, { "method": "get", "headers": getJiraHeaders(), "muteHttpExceptions": true });
+    if (r.getResponseCode() !== 200) {
+      Logger.log(`❌ HTTP ${r.getResponseCode()} en ${url}`);
+      Logger.log(`   Respuesta: ${r.getContentText().slice(0, 300)}`);
+      return null;
+    }
+    return JSON.parse(r.getContentText());
+  } catch (e) {
+    Logger.log(`❌ Excepción consultando ${url}: ${e.message}`);
+    return null;
+  }
+}
