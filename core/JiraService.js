@@ -716,6 +716,11 @@ function createJiraTicketForVM(summary, description, clientConfig) {
   if (clientConfig.origen) {
     payload.requestFieldValues[ORIGEN_FIELD_ID] = { "value": clientConfig.origen };
   }
+
+  payload.requestFieldValues = filtrarCamposNoAceptados(
+    payload.requestFieldValues, clientConfig.serviceDeskId, clientConfig.requestTypeId,
+    `${clientConfig.clientName} (Ops)`);
+
   const options = {
     "method": "post", "contentType": "application/json",
     "headers": getJiraHeaders(),
@@ -847,6 +852,10 @@ function createJiraTicketForSoporte(summary, description, clientConfig) {
 //    payload.requestFieldValues[ORIGEN_FIELD_ID] = { "value": clientConfig.origen };
 //  }
   
+  payload.requestFieldValues = filtrarCamposNoAceptados(
+    payload.requestFieldValues, clientConfig.serviceDeskIdSop, clientConfig.requestTypeIdSop,
+    `${clientConfig.clientNameSop || clientConfig.clientName} (Soporte)`);
+
   const options = {
     "method": "post", 
     "contentType": "application/json",
@@ -1117,6 +1126,95 @@ function addAttachmentToJiraTicket(issueKey, fileBlob) {
     registrarFalloDePaso("addAttachmentToJiraTicket", `Ticket ${issueKey}: excepción al adjuntar (${e.message}).`);
     return { status: 'ERROR', detail: { error: e.message } };
   }
+}
+
+// ─── CAMPOS QUE ACEPTA UN TIPO DE SOLICITUD ──────────────────────────────────
+//
+// POST /rest/servicedeskapi/request solo acepta los campos que estan en el FORMULARIO del
+// tipo de solicitud, que es otra configuracion distinta de la pantalla del issue. Si se manda
+// uno que no esta, Jira rechaza el ticket ENTERO con
+//
+//   The field 'customfield_12316' is not valid for this request type 'Solicitud de incidente'
+//
+// y no se crea nada. El 15/10/2026 eso dejo a Falabella sin poder abrir el ticket de Soporte
+// de snapshots: su tipo "Solicitud de incidente" acepta solo summary, description y priority,
+// mientras que el de Banco de Entre Rios acepta ademas Tecnologia.
+//
+// El formulario lo configura cada cliente en SU Jira y no siempre se puede pedir el cambio, asi
+// que en vez de fallar entero se descartan los campos que ese tipo no acepta y el ticket se
+// crea igual, sin ese dato. Perder la Tecnologia es peor que tenerla, pero muchisimo mejor que
+// no abrir el ticket.
+
+/**
+ * Los fieldId que acepta un tipo de solicitud, o null si no se pudo averiguar.
+ *
+ * Devolver null es importante: significa "no se sabe", y quien llama tiene que mandar el
+ * payload COMPLETO en vez de adivinar. Descartar campos a ciegas por un error de red seria
+ * peor que el problema que esto resuelve.
+ *
+ * @returns {Object<string, boolean>|null}
+ */
+function camposAceptadosPorRequestType(serviceDeskId, requestTypeId) {
+  if (!serviceDeskId || !requestTypeId) return null;
+
+  const cacheKey = `JiraReqFields_${serviceDeskId}_${requestTypeId}`;
+  const scriptCache = CacheService.getScriptCache();
+  const cacheado = scriptCache.get(cacheKey);
+  if (cacheado) {
+    try { return JSON.parse(cacheado); } catch (e) { /* cache corrupto: se vuelve a pedir */ }
+  }
+
+  const endpoint = `${JIRA_DOMAIN}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype/${requestTypeId}/field`;
+  try {
+    const response = fetchWithRetries(endpoint, { "method": "get", "headers": getJiraHeaders(), "muteHttpExceptions": true });
+    if (response.getResponseCode() !== 200) {
+      Logger.log(`[Jira] No se pudieron leer los campos del tipo de solicitud ${requestTypeId} (HTTP ${response.getResponseCode()}). Se manda el ticket con todos los campos.`);
+      return null;
+    }
+    const data = JSON.parse(response.getContentText());
+    const lista = data.requestTypeFields || [];
+
+    // Chequeo de cordura: todo formulario tiene summary. Si no esta, la respuesta no es lo que
+    // esperamos y filtrar con ella dejaria el ticket sin resumen.
+    const aceptados = {};
+    lista.forEach(function (c) { if (c && c.fieldId) aceptados[c.fieldId] = true; });
+    if (!aceptados["summary"]) {
+      Logger.log(`[Jira] La lista de campos del tipo ${requestTypeId} no incluye "summary": no se usa para filtrar.`);
+      return null;
+    }
+
+    scriptCache.put(cacheKey, JSON.stringify(aceptados), 21600); // 6 horas, igual que los tipos
+    return aceptados;
+  } catch (e) {
+    Logger.log(`[Jira] Excepcion leyendo los campos del tipo de solicitud ${requestTypeId}: ${e.message}. Se manda el ticket con todos los campos.`);
+    return null;
+  }
+}
+
+/**
+ * Saca de requestFieldValues los campos que el tipo de solicitud no acepta.
+ *
+ * Si no se pudo averiguar que acepta, devuelve el objeto TAL CUAL: ante la duda se manda todo
+ * y que Jira decida, que es exactamente como se comportaba antes.
+ *
+ * Lo que descarta se loguea con nombre y proyecto: el ticket se crea, pero queda sin ese dato
+ * y tiene que verse en el log (AGENTS.md §7).
+ */
+function filtrarCamposNoAceptados(requestFieldValues, serviceDeskId, requestTypeId, descripcionCliente) {
+  const aceptados = camposAceptadosPorRequestType(serviceDeskId, requestTypeId);
+  if (!aceptados) return requestFieldValues;
+
+  const filtrado = {};
+  const descartados = [];
+  Object.keys(requestFieldValues).forEach(function (campo) {
+    if (aceptados[campo]) filtrado[campo] = requestFieldValues[campo];
+    else descartados.push(campo);
+  });
+
+  if (descartados.length > 0) {
+    Logger.log(`⚠️ [Jira] ${descripcionCliente}: el tipo de solicitud ${requestTypeId} NO acepta [${descartados.join(", ")}]. El ticket se crea SIN esos campos. Para que vuelvan, hay que agregarlos al formulario del tipo de solicitud en Jira (Configuracion del proyecto → Tipos de solicitud).`);
+  }
+  return filtrado;
 }
 
 function getRequestTypeIdForServiceDesk(serviceDeskId, requestTypeName) {

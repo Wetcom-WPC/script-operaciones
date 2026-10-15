@@ -267,6 +267,65 @@ function runAllTests() {
     }
   } catch(e) { Logger.log("Error en Test solo-Drive cierra TP: " + e.message); }
 
+  // --- TEST: campos que el tipo de solicitud no acepta (incidente del 15/10/2026) ---
+  //
+  // POST /rest/servicedeskapi/request rechaza el ticket ENTERO si se le manda un campo que no
+  // esta en el formulario del tipo de solicitud. Falabella quedo sin poder abrir el ticket de
+  // Soporte de snapshots porque su tipo acepta solo summary, description y priority.
+  //
+  // Lo que se verifica no es solo que descarte: es que ante la DUDA mande todo. Si alguien
+  // hace que filtre cuando no pudo leer la lista, un error de red pasaria a crear tickets
+  // mutilados en todos los clientes, que es mucho peor que el problema original.
+  Logger.log("--- Test: filtrado de campos por tipo de solicitud ---");
+  try {
+    const _fetchOriginal = fetchWithRetries;
+    try {
+      const payloadBase = function () {
+        return { summary: "x", description: "y", customfield_12316: { value: "VMware vSphere" } };
+      };
+      const respuesta = function (codigo, cuerpo) {
+        return { getResponseCode: function () { return codigo; }, getContentText: function () { return cuerpo; } };
+      };
+
+      // 1. El tipo NO acepta Tecnologia: se descarta y el resto queda.
+      fetchWithRetries = function () {
+        return respuesta(200, JSON.stringify({ requestTypeFields: [{ fieldId: "summary" }, { fieldId: "description" }] }));
+      };
+      const sinTec = filtrarCamposNoAceptados(payloadBase(), "11", "52-" + new Date().getTime(), "Test");
+      assertTrue(sinTec.customfield_12316 === undefined, "campos: se descarta el que el tipo no acepta");
+      assertEqual(sinTec.summary, "x", "campos: los aceptados se conservan");
+
+      // 2. El tipo SI lo acepta: no se toca nada.
+      fetchWithRetries = function () {
+        return respuesta(200, JSON.stringify({ requestTypeFields: [{ fieldId: "summary" }, { fieldId: "description" }, { fieldId: "customfield_12316" }] }));
+      };
+      const conTec = filtrarCamposNoAceptados(payloadBase(), "38", "219-" + new Date().getTime(), "Test");
+      assertTrue(conTec.customfield_12316 !== undefined, "campos: si el tipo lo acepta, se manda");
+
+      // 3. No se pudo averiguar: se manda TODO, como antes del cambio.
+      fetchWithRetries = function () { return respuesta(500, "boom"); };
+      const http500 = filtrarCamposNoAceptados(payloadBase(), "11", "err1-" + new Date().getTime(), "Test");
+      assertTrue(http500.customfield_12316 !== undefined, "campos: con HTTP 500 se manda el payload completo");
+
+      fetchWithRetries = function () { throw new Error("red caida"); };
+      const explota = filtrarCamposNoAceptados(payloadBase(), "11", "err2-" + new Date().getTime(), "Test");
+      assertTrue(explota.customfield_12316 !== undefined, "campos: con excepcion se manda el payload completo");
+
+      // 4. Respuesta sin "summary": no parece una lista de campos, no se filtra con ella.
+      fetchWithRetries = function () {
+        return respuesta(200, JSON.stringify({ requestTypeFields: [{ fieldId: "otracosa" }] }));
+      };
+      const rara = filtrarCamposNoAceptados(payloadBase(), "11", "err3-" + new Date().getTime(), "Test");
+      assertTrue(rara.summary !== undefined, "campos: una lista sin summary no se usa para filtrar");
+
+      // 5. Sin los ids no hay nada que consultar: se manda todo.
+      const sinIds = filtrarCamposNoAceptados(payloadBase(), null, null, "Test");
+      assertTrue(sinIds.customfield_12316 !== undefined, "campos: sin serviceDeskId/requestTypeId se manda todo");
+    } finally {
+      fetchWithRetries = _fetchOriginal;
+    }
+  } catch(e) { Logger.log("Error en Test filtrado de campos: " + e.message); }
+
   // --- TESTS: caminos silenciosos de processSingleMessage (incidente del 28/07/2026) ---
   // Un reporte que llegaba SIN filas (solo encabezados) se marcaba [OPS-PROCESADO] pero se
   // salteaba el cierre de la tarea programada y el archivado en Drive, y dejaba el resumen
