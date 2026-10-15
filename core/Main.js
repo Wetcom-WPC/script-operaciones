@@ -173,6 +173,7 @@ function ejecutarCicloDeOperaciones() {
     const esManual = scriptProperties.getProperty(PROP_EJECUCION_MANUAL) === 'true';
     borrarActivadorTemporal();
     
+    latirCiclo();
     let indiceActual = parseInt(scriptProperties.getProperty('INDICE_SIGUIENTE_TAREA') || '0');
     if (indiceActual === 0) Logger.log("--- Obtenido el candado. Iniciando cadena de tareas. ---");
 
@@ -196,6 +197,10 @@ function ejecutarCicloDeOperaciones() {
         Logger.log(`### ERROR en ${entrada.tarea}: ${e.message} | Stack: ${e.stack} ###`);
       }
       indiceActual++;
+      // Un latido por tarea, no uno por ejecucion: si el ciclo se cuelga en medio de una
+      // llamada a Jira, el vigilante tiene que notarlo en minutos y no recien cuando venza
+      // toda la ejecucion.
+      latirCiclo();
 
       // Control de tiempo para no exceder los 30 min de Google
       const tiempoTranscurrido = (new Date() - tiempoInicioLote) / 1000 / 60;
@@ -273,6 +278,111 @@ function ejecutarCicloDeOperaciones() {
     // automática la consumiría y se comportaría como manual.
     limpiarMarcaEjecucionManual();
     lock.releaseLock();
+  }
+}
+
+// ─── VIGILANTE DEL CICLO ──────────────────────────────────────────────────────
+//
+// El ciclo se reprograma a si mismo: cada ejecucion crea el activador de la siguiente. Si una
+// ejecucion muere SIN llegar a crearlo, la cadena queda cortada hasta el activador diario del
+// dia siguiente, y nadie se entera.
+//
+// Paso el 15/10/2026: una llamada a Jira para cerrar OBC-38735 nunca volvio. UrlFetchApp no
+// tiene timeout configurable, asi que la ejecucion quedo colgada, Apps Script la siguio
+// mostrando como "Running" casi dos horas, y produccion no proceso un solo correo hasta que
+// alguien lo noto a mano. Los correos del dia se acumularon de 74 a 148 hilos.
+//
+// Por que el try/catch de ejecutarCicloDeOperaciones() NO alcanza para esto: un cuelgue no
+// lanza excepcion. El catch nunca corre. Hace falta algo que mire DESDE AFUERA.
+const PROP_LATIDO_CICLO    = 'CICLO_ULTIMO_LATIDO';   // epoch ms de la ultima senal de vida
+const PROP_REANIMACIONES   = 'CICLO_REANIMACIONES';   // "yyyy-MM-dd|n" del dia en curso
+
+// Cuanto silencio se tolera antes de dar el ciclo por colgado. El presupuesto propio del ciclo
+// es de 15 minutos, asi que 20 deja margen para una tarea lenta sin confundirla con un cuelgue.
+const CICLO_MINUTOS_SIN_LATIDO = 20;
+
+// Tope de reanimaciones por dia. Si algo se cuelga siempre en el mismo punto, reanimar cada 10
+// minutos para siempre no arregla nada: solo tapa el problema y llena Jira de reintentos. Al
+// llegar al tope se avisa y se deja de insistir, que es lo que hace que alguien lo mire.
+const CICLO_MAX_REANIMACIONES = 5;
+
+/** Deja constancia de que el ciclo sigue vivo. Barato: una sola Script Property. */
+function latirCiclo() {
+  try {
+    PropertiesService.getScriptProperties().setProperty(PROP_LATIDO_CICLO, String(Date.now()));
+  } catch (e) { /* el latido nunca puede hacer fallar al ciclo */ }
+}
+
+/**
+ * Revisa si el ciclo dio senales de vida y, si no, lo reanima.
+ *
+ * Va en su PROPIO activador, independiente del ciclo: si viviera dentro del ciclo se colgaria
+ * junto con el.
+ *
+ * NO toma el candado a proposito. Si la ejecucion colgada todavia lo tiene, el activador que
+ * se crea aca va a salir con "EJECUCION OMITIDA" y el proximo pase del vigilante va a volver a
+ * intentar. Google termina matando la ejecucion colgada por limite de tiempo y ahi entra.
+ *
+ * Tampoco toca INDICE_SIGUIENTE_TAREA: el ciclo retoma donde quedo en vez de reprocesar desde
+ * la primera tarea.
+ */
+function vigilarCicloDeOperaciones() {
+  const ahora = new Date();
+  const horaActual = ahora.getHours();
+
+  // Fuera de la ventana operativa el ciclo NO tiene que estar corriendo: que no haya latido es
+  // lo normal, no un cuelgue.
+  if (horaActual < HORA_INICIO || horaActual >= HORA_FIN) return;
+  if (esDiaNoLaborable()) return;
+
+  const props = PropertiesService.getScriptProperties();
+  const latido = parseInt(props.getProperty(PROP_LATIDO_CICLO) || '0', 10);
+
+  // Sin latido nunca corrio: puede ser el primer dia con el vigilante puesto, o que el
+  // activador diario no exista. No es trabajo del vigilante arrancar el dia.
+  if (!latido) {
+    Logger.log("[Vigilante] Todavia no hay ningun latido registrado. No se hace nada.");
+    return;
+  }
+
+  const minutosSinLatido = Math.floor((Date.now() - latido) / 60000);
+  if (minutosSinLatido < CICLO_MINUTOS_SIN_LATIDO) {
+    Logger.log(`[Vigilante] El ciclo esta vivo (ultimo latido hace ${minutosSinLatido} min).`);
+    return;
+  }
+
+  // Tope diario.
+  const hoy = Utilities.formatDate(ahora, Session.getScriptTimeZone(), "yyyy-MM-dd");
+  const crudo = (props.getProperty(PROP_REANIMACIONES) || "").split("|");
+  const reanimaciones = (crudo[0] === hoy) ? (parseInt(crudo[1], 10) || 0) : 0;
+
+  if (reanimaciones >= CICLO_MAX_REANIMACIONES) {
+    Logger.log(`[Vigilante] El ciclo lleva ${minutosSinLatido} min sin latir, pero ya se reanimo ${reanimaciones} veces hoy. No se insiste mas.`);
+    return;
+  }
+
+  Logger.log(`[Vigilante] 🚨 El ciclo lleva ${minutosSinLatido} min sin dar senales de vida. Reanimando (intento ${reanimaciones + 1} de ${CICLO_MAX_REANIMACIONES}).`);
+
+  try {
+    borrarActivadorTemporal();              // limpia los activadores huerfanos del ciclo muerto
+    crearNuevoActivador('ejecutarCicloDeOperaciones', 1);
+    props.setProperty(PROP_REANIMACIONES, `${hoy}|${reanimaciones + 1}`);
+
+    // El latido se refresca aca para no reanimar otra vez antes de que el activador nuevo
+    // llegue a correr: si no, cada pase del vigilante crearia un activador mas.
+    latirCiclo();
+
+    if (typeof enviarAlertaCriticaSlack === "function") {
+      enviarAlertaCriticaSlack(
+        "El ciclo de operaciones se colgo y se reanimo solo",
+        `Estuvo ${minutosSinLatido} minutos sin dar senales de vida y se reprogramo para dentro de 1 minuto (reanimacion ${reanimaciones + 1} de ${CICLO_MAX_REANIMACIONES} de hoy). Causa tipica: una llamada a Jira o a Drive que no vuelve; UrlFetchApp no tiene timeout. Si se repite varias veces en el dia, mirar en que tarea se cuelga.`);
+    }
+  } catch (e) {
+    Logger.log(`[Vigilante] No se pudo reanimar el ciclo: ${e.message}`);
+    if (typeof enviarAlertaCriticaSlack === "function") {
+      enviarAlertaCriticaSlack("El ciclo esta colgado y el vigilante NO pudo reanimarlo",
+        `${minutosSinLatido} minutos sin latido. Error al reprogramar: ${e.message}. Hay que entrar a mano.`);
+    }
   }
 }
 

@@ -2316,3 +2316,78 @@ function _diagGetJson(url) {
     return null;
   }
 }
+
+/**
+ * Deja UN solo activador para vigilarCicloDeOperaciones(), cada 10 minutos.
+ *
+ * El vigilante mira si el ciclo dio senales de vida y, si lleva mas de
+ * CICLO_MINUTOS_SIN_LATIDO en silencio dentro de la ventana operativa, lo reanima y avisa por
+ * Slack. Existe porque el 15/10/2026 una llamada a Jira que nunca volvio dejo produccion
+ * parada casi dos horas sin que nadie se enterara: un cuelgue no lanza excepcion, asi que el
+ * try/catch del ciclo no se entera, y hace falta algo que mire desde afuera.
+ *
+ * Cada 10 minutos y no cada 1: el vigilante tolera 20 minutos de silencio, asi que dos pases
+ * alcanzan para detectarlo, y sumar 144 ejecuciones diarias por un caso excepcional no vale la
+ * pena contra la cuota de Apps Script.
+ *
+ * Es idempotente: borra los activadores previos de esta funcion antes de crear el suyo, asi
+ * correrlo dos veces no deja dos vigilantes pisandose.
+ */
+function manual_configurarVigilanteDelCiclo() {
+  const triggers = ScriptApp.getProjectTriggers();
+  let borrados = 0;
+  triggers.forEach(function (t) {
+    if (t.getHandlerFunction() === 'vigilarCicloDeOperaciones') {
+      ScriptApp.deleteTrigger(t);
+      borrados++;
+    }
+  });
+  if (borrados > 0) Logger.log(`Se eliminaron ${borrados} activador(es) previo(s) del vigilante.`);
+
+  ScriptApp.newTrigger('vigilarCicloDeOperaciones')
+    .timeBased()
+    .everyMinutes(10)
+    .create();
+
+  Logger.log("✅ Vigilante configurado: vigilarCicloDeOperaciones cada 10 minutos.");
+  Logger.log(`   Reanima el ciclo si pasa mas de ${CICLO_MINUTOS_SIN_LATIDO} min sin latir,`);
+  Logger.log(`   solo dentro de la ventana operativa (${HORA_INICIO}-${HORA_FIN}hs) y en dia laborable.`);
+  Logger.log(`   Tope de ${CICLO_MAX_REANIMACIONES} reanimaciones por dia: pasado eso avisa y deja de insistir.`);
+  Logger.log("");
+  Logger.log("Para verificar que quedo bien: manual_auditarActivadores()");
+}
+
+/**
+ * Diagnostico (solo lectura): cuanto hace que el ciclo dio senales de vida y si el vigilante
+ * actuaria ahora mismo. Util para entender por que el vigilante hizo (o no hizo) algo.
+ */
+function manual_estadoDelVigilante() {
+  const props = PropertiesService.getScriptProperties();
+  const latido = parseInt(props.getProperty(PROP_LATIDO_CICLO) || '0', 10);
+  const ahora = new Date();
+  const hora = ahora.getHours();
+
+  Logger.log("=== ESTADO DEL VIGILANTE DEL CICLO ===");
+  if (!latido) {
+    Logger.log("Ultimo latido: NUNCA. El ciclo no corrio desde que se instalo el vigilante.");
+  } else {
+    const minutos = Math.floor((Date.now() - latido) / 60000);
+    Logger.log(`Ultimo latido: hace ${minutos} min (${new Date(latido).toLocaleString()})`);
+    Logger.log(`Umbral para considerarlo colgado: ${CICLO_MINUTOS_SIN_LATIDO} min`);
+  }
+
+  Logger.log(`Hora actual: ${hora}hs | Ventana operativa: ${HORA_INICIO}-${HORA_FIN}hs`);
+  Logger.log(`Dia no laborable: ${esDiaNoLaborable()}`);
+  Logger.log(`Reanimaciones registradas: ${props.getProperty(PROP_REANIMACIONES) || "(ninguna)"}`);
+
+  const dentroDeVentana = hora >= HORA_INICIO && hora < HORA_FIN;
+  const colgado = latido && (Date.now() - latido) / 60000 >= CICLO_MINUTOS_SIN_LATIDO;
+  Logger.log("");
+  Logger.log(`¿El vigilante reanimaria el ciclo ahora? ${(dentroDeVentana && !esDiaNoLaborable() && colgado) ? "SI" : "no"}`);
+
+  const vigilantes = ScriptApp.getProjectTriggers()
+    .filter(function (t) { return t.getHandlerFunction() === 'vigilarCicloDeOperaciones'; });
+  Logger.log(`Activadores del vigilante configurados: ${vigilantes.length}` +
+    (vigilantes.length === 0 ? "  ← 🚨 no hay ninguno: correr manual_configurarVigilanteDelCiclo()" :
+     vigilantes.length > 1  ? "  ← ⚠️ hay mas de uno: correr manual_configurarVigilanteDelCiclo() para dejar uno solo" : ""));
+}
