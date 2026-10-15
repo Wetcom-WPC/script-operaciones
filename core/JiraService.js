@@ -1132,12 +1132,19 @@ function getRequestTypeIdForServiceDesk(serviceDeskId, requestTypeName) {
     
     if (response.getResponseCode() === 200) {
       const data = JSON.parse(response.getContentText());
-      const foundType = data.values.find(type => type.name === requestTypeName);
-      
+      // La comparación ignora mayúsculas y espacios de más A PROPÓSITO. Cada proyecto de Jira
+      // escribe el nombre como quiere: el 15/10/2026 Falabella (OF) lo tenía como "Solicitud
+      // de incidente" y Comafi (OBC/OBC2) como "Solicitud de Incidente", con I mayúscula.
+      // Siendo sensible a mayúsculas, corregir el Índice para que funcione uno rompía al otro,
+      // y se iba a repetir con cada cliente nuevo. El nombre del tipo de solicitud lo define
+      // cada proyecto en Jira y no hay forma de imponerle una convención desde acá.
+      const buscado = String(requestTypeName || "").trim().toLowerCase();
+      const foundType = data.values.find(type => String(type.name || "").trim().toLowerCase() === buscado);
+
       // Si no hace match, imprimimos qué estábamos buscando y qué nos devolvió Jira
       if (!foundType) {
         const nombresDisponibles = data.values.map(t => t.name).join(", ");
-        Logger.log(`🚨 ERROR DE COINCIDENCIA: Buscábamos "${requestTypeName}" pero no está. Los disponibles en Jira son: [${nombresDisponibles}]`);
+        Logger.log(`🚨 ERROR DE COINCIDENCIA: Buscábamos "${requestTypeName}" pero no está (se compara sin distinguir mayúsculas). Los disponibles en Jira son: [${nombresDisponibles}]`);
         return null;
       }
       scriptCache.put(cacheKey, foundType.id, 21600); // 6 hours
