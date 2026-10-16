@@ -1407,6 +1407,19 @@
   /** Botón de lápiz (o 💬 si ya hay comentario) para un cliente × tecnología × día. */
   function botonComentario(fecha, cliente, claves, tech) {
     var actual = comentarioDe(fecha, claves, tech);
+
+    // Comentar es del equipo (el servidor rechaza a los demás), pero LEER el comentario le
+    // sirve a cualquiera: es la explicación de por qué ese día salió tarde. Así que a quien no
+    // es admin se le muestra el 💬 con el texto encima, sin lápiz ni acción: un botón que solo
+    // puede terminar en "esta acción es solo para el equipo" no ayuda a nadie.
+    if (!esAdmin()) {
+      if (!actual) return crear('span');
+      var marca = crear('span', 'btn-comentario tiene-comentario', '💬');
+      marca.title = actual.comentario + (actual.excluir ? '  (no cuenta en el promedio)' : '') +
+        (actual.autor ? '  — ' + nombreOperador(actual.autor) : '');
+      return marca;
+    }
+
     var btn = crear('button', 'btn-comentario' + (actual ? ' tiene-comentario' : ''), actual ? '💬' : '✏️');
     btn.type = 'button';
     var quien = cliente + ' · ' + tech + ' · ' + isoACorta(fecha);
@@ -2473,13 +2486,18 @@
     // El PDF es por cliente: sin uno elegido, el botón no tiene qué armar. Si un botón está
     // en medio de un envío (tiene el spinner), no se toca: lo libera su propio callback.
     var libre = function(boton) { return boton && !(boton.querySelector && boton.querySelector('.hilando')); };
+    // El histórico lo ve todo el mundo (recortado a sus clientes), pero armar el PDF y mandar
+    // el resumen a Slack siguen siendo del equipo: el servidor los rechaza igual, así que
+    // mostrarlos sería ofrecer un botón que solo puede terminar en un error.
     var btnPdf = document.getElementById('btnPdfHorarios');
-    if (libre(btnPdf)) {
+    if (btnPdf) btnPdf.hidden = !esAdmin();
+    if (libre(btnPdf) && esAdmin()) {
       btnPdf.disabled = !f.cliente;
       btnPdf.title = f.cliente ? 'PDF de ' + f.cliente + ' — ' + f.periodoTxt : 'Elegí un cliente para armar su PDF';
     }
     var btnSlack = document.getElementById('btnSlackHorarios');
-    if (libre(btnSlack)) btnSlack.disabled = agg.n === 0;
+    if (btnSlack) btnSlack.hidden = !esAdmin();
+    if (libre(btnSlack) && esAdmin()) btnSlack.disabled = agg.n === 0;
 
     var enviosHistorial = f.cliente
       ? filtrarEnviosHorarios({ dias: f.dias, cliente: f.cliente, tech: f.tech, pod: f.pod, operador: f.operador, incluirExcluidos: true }).envios
@@ -2778,6 +2796,14 @@
     e.currentTarget.classList.add('active');
     e.currentTarget.setAttribute('aria-selected', 'true');
 
+    // Google Charts dibuja con el ancho que el div tenga EN ESE MOMENTO, y no se reacomoda
+    // solo. Si la respuesta llegó mientras la sección estaba oculta —alguien entra y se va a
+    // otra pestaña antes de que termine de cargar— el gráfico queda dibujado con ancho casi
+    // cero, y volver a entrar no lo arreglaba porque los datos ya estaban cargados. Por eso se
+    // repinta al volver.
+    if (targetId === 'seccion-llegadas' && llegadasGlobal) pintarLlegadas();
+    if (targetId === 'seccion-operaciones' && horariosGlobal) pintarHorarios();
+
     // Carga perezosa automática al ingresar por primera vez
     if (targetId === 'seccion-operaciones' && !matrizGlobal) {
       cargarMatrizSalud();
@@ -2807,6 +2833,23 @@
   // --- Reportes Analíticos ------------------------------------------------------------------
   
   google.charts.load('current', {'packages':['corechart', 'bar']});
+
+  // Mismo motivo que el repintado al cambiar de sección: un gráfico ya dibujado conserva el
+  // ancho que tenía. Al agrandar o achicar la ventana queda recortado o diminuto hasta que
+  // algo lo vuelva a dibujar. Se espera a que el usuario suelte el borde para no redibujar
+  // decenas de veces durante el arrastre.
+  var timerResize = null;
+  window.addEventListener('resize', function () {
+    if (timerResize) clearTimeout(timerResize);
+    timerResize = setTimeout(function () {
+      var visible = function (id) {
+        var s = document.getElementById(id);
+        return s && s.classList.contains('active');
+      };
+      if (visible('seccion-llegadas') && llegadasGlobal) pintarLlegadas();
+      if (visible('seccion-operaciones') && horariosGlobal) pintarHorarios();
+    }, 250);
+  });
   
   document.getElementById('btnCargarReportes').addEventListener('click', function() {
     var btn = this;
@@ -3499,8 +3542,15 @@
   function dibujarChartLlegadas(serie) {
     var div = document.getElementById('chart_llegadas_div');
     if (!div) return;
-    if (typeof google === 'undefined' || !google.visualization || !google.visualization.LineChart) {
+    if (typeof google === 'undefined' || !google.charts) {
       div.textContent = 'No se pudo cargar la librería de gráficos.';
+      return;
+    }
+    if (!google.visualization || !google.visualization.LineChart) {
+      // La librería todavía no terminó de cargar. Antes esto dejaba el mensaje de error fijo
+      // aunque un segundo después estuviera lista; ahora se redibuja cuando carga, igual que
+      // hace el gráfico del Histórico de Horarios.
+      google.charts.setOnLoadCallback(function () { dibujarChartLlegadas(serie); });
       return;
     }
     if (!serie.puntos.length) { div.innerHTML = ''; return; }

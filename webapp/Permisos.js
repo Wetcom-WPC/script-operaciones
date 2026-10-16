@@ -340,7 +340,10 @@ function webapp_puedeVerPod(permiso, pod) {
   if (!permiso) return false;
   if (permiso.todo) return true;
   if (permiso.pods.indexOf(WEBAPP_POD_TODOS) !== -1) return true;
-  return permiso.pods.indexOf(String(pod || '').trim().toUpperCase()) !== -1;
+  // Normalizado, no solo en mayúsculas: según la fuente, el POD llega como "POD1",
+  // "pod1@wetcom.com" o con espacios. Comparar el crudo hacía que la persona no coincidiera
+  // con su propio POD y se quedara sin clientes, en silencio y sin ningún error (§6).
+  return permiso.pods.indexOf(_webappNormalizarPod(pod)) !== -1;
 }
 
 /**

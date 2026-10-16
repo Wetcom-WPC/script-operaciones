@@ -2030,9 +2030,64 @@ function _webappLeerEnviosManuales(ss) {
  *   sabe), origen (0 automático, 1 a mano)] — cliente/tecnología/operador son índices.
  */
 function webapp_obtenerHorariosEnvio(overrideSheetId, forzar) {
-  const usuario = webapp_usuarioActual();
-  webapp_exigirAdmin(usuario);
+  const permiso = webapp_exigirAutorizacion(webapp_usuarioActual());
+  const completo = _webappHorariosEnvioCompleto(overrideSheetId, !!forzar);
+  if (permiso.todo) return completo;
+  return _webappHorariosRecortados(completo, permiso);
+}
 
+/**
+ * Deja del histórico solo los clientes que le corresponden a quien pregunta.
+ *
+ * Los envíos no guardan el nombre del cliente sino su ÍNDICE dentro de la lista, así que no
+ * alcanza con filtrar: hay que rearmar la lista y recalcular los índices. Lo mismo con los
+ * operadores, para que el desplegable no liste a gente que no trabajó ningún cliente suyo.
+ *
+ * Se recorta acá y no en el navegador a propósito, y DESPUÉS del caché: el caché es del script
+ * y lo comparten todos los usuarios, así que lo guardado tiene que ser siempre el dato completo.
+ */
+function _webappHorariosRecortados(completo, permiso) {
+  const nuevoIndiceCli = {};
+  const clientes = [];
+  (completo.clientes || []).forEach(function (c, i) {
+    if (webapp_puedeVerPod(permiso, c.pod)) {
+      nuevoIndiceCli[i] = clientes.length;
+      clientes.push(c);
+    }
+  });
+
+  const mios = (completo.envios || []).filter(function (e) {
+    return nuevoIndiceCli.hasOwnProperty(e[1]);
+  });
+
+  // Los operadores que quedan son los que efectivamente mandaron algo de estos clientes.
+  const nuevoIndiceOp = {};
+  const operadores = [];
+  mios.forEach(function (e) {
+    if (e[4] >= 0 && !nuevoIndiceOp.hasOwnProperty(e[4])) {
+      nuevoIndiceOp[e[4]] = operadores.length;
+      operadores.push(completo.operadores[e[4]]);
+    }
+  });
+
+  const recortado = {};
+  Object.keys(completo).forEach(function (k) { recortado[k] = completo[k]; });
+  recortado.clientes = clientes;
+  recortado.operadores = operadores;
+  recortado.envios = mios.map(function (e) {
+    return [e[0], nuevoIndiceCli[e[1]], e[2], e[3], e[4] >= 0 ? nuevoIndiceOp[e[4]] : -1, e[5]];
+  });
+
+  const clavesVisibles = {};
+  clientes.forEach(function (c) { clavesVisibles[c.clave] = true; });
+  recortado.comentarios = (completo.comentarios || []).filter(function (c) {
+    return clavesVisibles[c.clave];
+  });
+  return recortado;
+}
+
+/** Núcleo sin control de acceso ni recorte por POD. No llamarlo desde el navegador. */
+function _webappHorariosEnvioCompleto(overrideSheetId, forzar) {
   const sheetId = overrideSheetId || WEBAPP_LOGS_PROD_ID;
   const cache = CacheService.getScriptCache();
   const cacheKey = 'webapp_horarios_envio_v3_' + sheetId;
