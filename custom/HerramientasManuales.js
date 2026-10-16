@@ -2104,6 +2104,47 @@ function manual_registrarLlegadasDeReportes() {
 }
 
 /**
+ * Instala el activador que registra las llegadas cada 2 horas.
+ *
+ * POR QUE HACE FALTA
+ * Hasta ahora los correos solo se miraban cuando alguien apretaba "Actualizar" en el
+ * dashboard. El que entraba se encontraba la pestana con lo de la ultima vez que alguien
+ * se acordo de apretar, y para ver el dia de hoy tenia que esperar la busqueda de Gmail.
+ * Con el activador, la informacion ya esta cuando entra.
+ *
+ * Correrlo con la cuenta alarmas@: getProjectTriggers() solo ve los activadores del usuario
+ * que los creo, y el resto del sistema corre con esa cuenta.
+ *
+ * Es idempotente: borra los activadores previos de esta funcion antes de crear el suyo.
+ */
+function manual_configurarRegistroDeLlegadas() {
+  let borrados = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'registrarLlegadasProgramado') {
+      ScriptApp.deleteTrigger(t);
+      borrados++;
+    }
+  });
+  if (borrados > 0) Logger.log("Se eliminaron " + borrados + " activador(es) previo(s) del registro de llegadas.");
+
+  ScriptApp.newTrigger('registrarLlegadasProgramado')
+    .timeBased()
+    .everyHours(2)
+    .create();
+
+  const ultimo = llegadasUltimoRegistroMs();
+  Logger.log("OK Registro de llegadas configurado: registrarLlegadasProgramado cada 2 horas.");
+  Logger.log("   El dashboard lee la pestana, asi que la informacion ya esta cuando alguien entra.");
+  Logger.log("   El boton Actualizar sigue sirviendo para traer lo de los ultimos minutos.");
+  Logger.log("");
+  Logger.log("Ultimo registro hasta ahora: " + (ultimo
+    ? new Date(ultimo).toLocaleString()
+    : "NUNCA (el activador lo deja marcado en su primera corrida)"));
+  Logger.log("");
+  Logger.log("Para verificar que quedo bien: manual_auditarActivadores()");
+}
+
+/**
  * Donde estan los remitentes de los clientes, y en que planilla.
  *
  * Hay dos Indices distintos y es facil confundirlos:

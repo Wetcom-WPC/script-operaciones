@@ -35,6 +35,57 @@ const LLEGADAS_HILOS_POR_CONSULTA = 450;
 // Tope de días hacia atrás cuando hubo un hueco (nadie abrió el dashboard en varios días).
 const LLEGADAS_DIAS_MAX = 10;
 
+// Cuándo se miró Gmail por última vez. Es una marca DISTINTA de "cuándo se leyó la pestaña":
+// el dashboard lee la pestaña cada vez que alguien entra, pero los correos nuevos solo
+// aparecen cuando corre el registro. Sin esta marca, el panel decía "Actualizado 09:14"
+// mostrando datos de ayer, porque esa hora era la de la lectura y no la de la búsqueda.
+const LLEGADAS_PROP_ULTIMO_REGISTRO = "LLEGADAS_ULTIMO_REGISTRO";
+
+// Presupuesto del registro programado. Más largo que el del botón del dashboard (90 s) porque
+// acá nadie está esperando frente a la pantalla, y más corto que los 6 minutos de Apps Script
+// para que un corte quede logueado en vez de morir por timeout.
+const LLEGADAS_SEGUNDOS_PROGRAMADO = 300;
+
+/** Cuándo terminó el último registro, en milisegundos, o null si nunca corrió. */
+function llegadasUltimoRegistroMs() {
+  try {
+    const v = PropertiesService.getScriptProperties().getProperty(LLEGADAS_PROP_ULTIMO_REGISTRO);
+    const n = v ? Number(v) : 0;
+    return n > 0 ? n : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Deja la marca de que recién se miró Gmail. Nunca hace fallar al que la llama. */
+function _llegadasMarcarRegistro() {
+  try {
+    PropertiesService.getScriptProperties()
+      .setProperty(LLEGADAS_PROP_ULTIMO_REGISTRO, String(Date.now()));
+  } catch (e) {
+    Logger.log("[Llegadas] No se pudo guardar la marca de último registro: " + e.message);
+  }
+}
+
+/**
+ * Registro periódico, pensado para un activador cada 2 horas.
+ *
+ * POR QUÉ EXISTE
+ * Hasta ahora los correos solo se miraban cuando alguien apretaba "Actualizar" en el
+ * dashboard. Quien entraba veía la pestaña vacía —o con lo de la última vez que alguien
+ * se acordó de apretar— y tenía que esperar la búsqueda de Gmail para ver el día de hoy.
+ * Con esto, la información ya está cuando entra; el botón queda para "lo quiero más fresco".
+ *
+ * No recibe parámetros a propósito: un activador le pasa el evento, y llegadasRegistrar()
+ * interpretaría ese objeto como "cuántos días mirar".
+ */
+function registrarLlegadasProgramado() {
+  const r = llegadasRegistrar(null, LLEGADAS_SEGUNDOS_PROGRAMADO);
+  Logger.log("[Llegadas] Registro programado: " + r.nuevos + " nueva(s) en " + r.dias + " día(s)" +
+    (r.cortado ? " | ⚠️ cortado por tiempo, se retoma en la próxima corrida" : ""));
+  return r;
+}
+
 /**
  * El sistema que mandó el reporte, deducido del remitente.
  *
@@ -351,6 +402,12 @@ function llegadasRegistrar(dias, segundosMax) {
       try { candado.releaseLock(); } catch (e) {}
     }
   }
+
+  // La marca va acá y no en cada llamador: el botón del dashboard, el activador y la
+  // herramienta manual tienen que dejarla igual, y tres copias de esto es el §5 esperando.
+  // En el camino de error de guardado NO se marca: si las filas no se guardaron, decir que
+  // "se actualizó recién" sería mentirle a quien mira el panel.
+  _llegadasMarcarRegistro();
 
   Logger.log("[Llegadas] " + filas.length + " llegada(s) nueva(s) en los últimos " + dias + " día(s)" +
     (truncadas ? " | ⚠️ " + truncadas + " consulta(s) llegaron al tope: faltan los días más viejos" : ""));

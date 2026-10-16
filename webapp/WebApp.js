@@ -2456,6 +2456,12 @@ function _webappLlegadasReportes(dias, forzar) {
 
   const resultado = {
     calculadoA: Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'dd/MM HH:mm'),
+    // Cuándo se miró Gmail por última vez (no cuándo se leyó la pestaña, que es calculadoA).
+    // Va en milisegundos y el texto "hace X" lo arma el navegador: si se mandara ya escrito,
+    // quedaría congelado los 15 minutos que vive el caché y diría "hace 2 minutos" un rato largo.
+    // Se completa más abajo, DESPUÉS del registro: leerlo acá mostraría la marca anterior y
+    // quien acabara de apretar Actualizar vería "hace 2 horas" sobre datos recién traídos.
+    registradoEnMs: null,
     limiteMinutos: LLEGADAS_HORA_LIMITE_MIN,
     registroDesde: null,
     aviso: null,
@@ -2492,6 +2498,8 @@ function _webappLlegadasReportes(dias, forzar) {
       resultado.aviso = 'No se pudieron registrar las llegadas de hoy: ' + e.message;
     }
   }
+
+  resultado.registradoEnMs = llegadasUltimoRegistroMs();
 
   const desde = Utilities.formatDate(new Date(Date.now() - cuantos * 86400000), HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
   try {

@@ -48,7 +48,9 @@
     if (minutos === 1) return 'hace 1 minuto';
     if (minutos < 60) return 'hace ' + minutos + ' minutos';
     var horas = Math.floor(minutos / 60);
-    return horas === 1 ? 'hace 1 hora' : 'hace ' + horas + ' horas';
+    if (horas < 24) return horas === 1 ? 'hace 1 hora' : 'hace ' + horas + ' horas';
+    var dias = Math.floor(horas / 24);
+    return dias === 1 ? 'hace 1 día' : 'hace ' + dias + ' días';
   }
 
   function ocupar(boton, textoEspera) {
@@ -3935,9 +3937,19 @@
 
     var desde = document.getElementById('llegadasDesde');
     if (desde) {
-      desde.textContent = llegadasGlobal.registroDesde
-        ? 'Registro desde el ' + llegadasGlobal.registroDesde + '. Actualizado ' + llegadasGlobal.calculadoA + '.'
-        : 'Todavía no hay nada registrado. Apretá Actualizar para empezar.';
+      // Tres situaciones distintas que antes caían todas en "Todavía no hay nada registrado",
+      // que era engañoso: con el filtro en "Hoy" aparecía aunque hubiera meses de historial,
+      // solo porque todavía no había llegado nada hoy.
+      var buscado = llegadasGlobal.registradoEnMs
+        ? 'Última búsqueda de correos ' + antiguedad(llegadasGlobal.registradoEnMs) + '.'
+        : '';
+      if (llegadasGlobal.registroDesde) {
+        desde.textContent = 'Registro desde el ' + llegadasGlobal.registroDesde + '. ' + buscado;
+      } else if (llegadasGlobal.registradoEnMs) {
+        desde.textContent = 'No hay reportes registrados en este período. ' + buscado;
+      } else {
+        desde.textContent = 'Todavía no hay nada registrado. Apretá Actualizar para empezar.';
+      }
     }
     var aviso = document.getElementById('avisoLlegadas');
     if (aviso) {
