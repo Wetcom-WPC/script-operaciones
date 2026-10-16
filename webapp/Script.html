@@ -4049,18 +4049,22 @@
     var btn = document.getElementById('btnActualizarLlegadas');
     var aviso = document.getElementById('avisoLlegadas');
     var f = leerFiltrosLlegadas();
-    // El ocupar y el liberar van siempre juntos y con la misma condición: si solo se libera,
-    // el botón pierde su etiqueta y queda en blanco.
-    if (forzar && btn) ocupar(btn, 'Buscando correos nuevos...');
+    // El ocupar y el liberar van siempre juntos y SIN condición: si uno de los dos dependiera
+    // de forzar, el botón podría quedarse en blanco o trabado (ya pasó acá).
+    //
+    // Avisa también cuando no es forzar: entrar a la sección o cambiar el período son igual de
+    // lentos —van al servidor— y sin el aviso la pantalla se queda quieta y parece colgada.
+    // Buscar correos nuevos tarda bastante más que leer lo registrado, así que el texto lo dice.
+    if (btn) ocupar(btn, forzar ? 'Buscando correos nuevos...' : 'Cargando...');
     google.script.run
       .withSuccessHandler(function(r) {
-        if (forzar && btn) liberar(btn);
+        if (btn) liberar(btn);
         llegadasGlobal = r;
         llenarFiltrosLlegadas();
         pintarLlegadas();
       })
       .withFailureHandler(function(err) {
-        if (forzar && btn) liberar(btn);
+        if (btn) liberar(btn);
         if (aviso) mostrarAviso(aviso, 'error', 'No se pudieron traer las llegadas: ' + mensajeDeError(err));
       })
       .webapp_obtenerLlegadasReportes(f.dias, !!forzar);
@@ -4271,16 +4275,18 @@
   function cargarLicencias(ciclo, forzar) {
     var btn = document.getElementById('btnActualizarLicencias');
     var aviso = document.getElementById('avisoLicencias');
-    if (forzar && btn) ocupar(btn, 'Actualizando...');
+    // Sin condición, igual que en Llegadas: entrar a la sección o cambiar de ciclo también van
+    // al servidor, y sin aviso la pantalla parece colgada. ocupar y liberar van siempre juntos.
+    if (btn) ocupar(btn, forzar ? 'Actualizando...' : 'Cargando...');
     google.script.run
       .withSuccessHandler(function (r) {
-        if (forzar && btn) liberar(btn);
+        if (btn) liberar(btn);
         licenciasGlobal = r;
         llenarFiltrosLicencias();
         pintarLicencias();
       })
       .withFailureHandler(function (err) {
-        if (forzar && btn) liberar(btn);
+        if (btn) liberar(btn);
         mostrarAviso(aviso, 'error', 'No se pudieron traer las licencias: ' + mensajeDeError(err));
       })
       .webapp_obtenerLicencias(ciclo || '', !!forzar);
