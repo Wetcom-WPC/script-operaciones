@@ -153,33 +153,73 @@ function webapp_exigirAutorizacion(usuario) {
 // --- API que consume el navegador ----------------------------------------------------------
 
 /**
- * Estado inicial del panel. NO toca Gmail: devuelve la bandeja que haya en caché, para que
- * abrir la página sea barato. El escaneo real lo pide el botón "Actualizar".
+ * El POD de una fila del Índice, normalizado: "pod1@wetcom.com" y "POD 1" son el mismo "POD1".
  *
- * @returns {Object}
+ * Vive en una sola función a propósito. Estaba escrita dos veces —acá y en
+ * _webappEstadoIndice()— y la segunda copia había quedado con /s+/ en vez de /\s+/: en vez de
+ * sacar los espacios, sacaba las eses. Mientras los PODs se llamaron POD1..POD5 no se notó,
+ * pero un "POD 1" con espacio no coincidía con el permiso de esa persona y sus clientes
+ * desaparecían del panel sin ningún error (AGENTS.md §5 y §6).
+ *
+ * @param {*} valor Celda de la columna I del Índice.
+ * @returns {string} "POD1", o "-" si la celda está vacía.
+ */
+function _webappNormalizarPod(valor) {
+  let pod = String(valor === null || valor === undefined ? '' : valor).trim();
+  if (pod.indexOf('@') !== -1) pod = pod.split('@')[0];
+  pod = pod.replace(/\s+/g, '').toUpperCase();
+  return pod || '-';
+}
+
+// La lista de clientes es la misma para todos (el recorte por POD lo hace quien la pide), y se
+// usa para llenar los desplegables de varias pantallas. Sin caché se leía el Índice entero en
+// CADA carga del panel, además de la lectura que ya hace _webappEstadoIndice() sobre la misma
+// planilla: dos lecturas completas por persona que entra.
+const WEBAPP_CACHE_LISTA_CLIENTES_SEGUNDOS = 300;
+
+/**
+ * Los clientes del Índice, para llenar los desplegables. Sin recorte por POD: quien la llama
+ * aplica webapp_filtrarPorPod() sobre el resultado.
+ *
+ * @returns {Array<{nombre: string, key: string, pod: string}>}
  */
 function webapp_listaClientes() {
+  const cacheKey = 'webapp_lista_clientes_v1';
+  const cache = CacheService.getScriptCache();
+  const guardado = cache.get(cacheKey);
+  if (guardado) {
+    try { return JSON.parse(guardado); } catch (e) {}
+  }
+
   const lista = [];
   try {
-    const PROD_INDEX_ID = "1ZriSQeckRp_hWXS0X-CdGzrnnplCj2KmcLHgAbXo6qU";
-    const spreadsheet = SpreadsheetApp.openById(PROD_INDEX_ID);
+    const spreadsheet = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
     const sheet = spreadsheet.getSheets()[0];
     const data = sheet.getDataRange().getValues();
     for (let i = 1; i < data.length; i++) {
       const cli = data[i][1]; // Index 1 is Client Name
       const pkey = data[i][3]; // Index 3 is Project Key
       if (cli && typeof cli === 'string') {
-        // Mismo criterio de normalización que _webappEstadoIndice (columna I): "pod1@wetcom.com" -> "POD1".
-        let pod = (data[i][8] || '').toString().trim();
-        if (pod.indexOf('@') !== -1) pod = pod.split('@')[0];
-        pod = pod.replace(/s+/g, '').toUpperCase();
-        lista.push({ nombre: cli.trim(), key: (pkey || '').toString().toUpperCase().trim(), pod: pod || '-' });
+        lista.push({
+          nombre: cli.trim(),
+          key: (pkey || '').toString().toUpperCase().trim(),
+          pod: _webappNormalizarPod(data[i][8])
+        });
       }
     }
   } catch (e) {
-    Logger.log('[WebApp] Error leyendo clientes desde PROD_INDEX: ' + e.message);
+    // Si no se pudo leer NO se cachea el resultado vacío: serviría una lista vacía durante
+    // cinco minutos a todos los que entren, y los desplegables quedarían sin clientes.
+    Logger.log('[WebApp] Error leyendo clientes desde el Índice: ' + e.message);
+    return lista;
   }
-  return lista.sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+  lista.sort((a, b) => a.nombre.localeCompare(b.nombre));
+  try {
+    const json = JSON.stringify(lista);
+    if (json.length < 90000) cache.put(cacheKey, json, WEBAPP_CACHE_LISTA_CLIENTES_SEGUNDOS);
+  } catch (e) {}
+  return lista;
 }
 
 /**
@@ -347,6 +387,12 @@ function webapp_obtenerDatosGraficosJira(projectKey, rango) {
   };
 }
 
+/**
+ * Estado inicial del panel. NO toca Gmail: devuelve la bandeja que haya en caché, para que
+ * abrir la página sea barato. El escaneo real lo pide el botón "Actualizar".
+ *
+ * @returns {Object}
+ */
 function webapp_estado() {
   const usuario = webapp_usuarioActual();
   const permiso = webapp_exigirAutorizacion(usuario);
@@ -1000,13 +1046,7 @@ function _webappEstadoIndice() {
         const tieneTanzu   = servicios.includes("tanzu");
         const tieneRVTools = servicios.includes("rvtools") || tieneVsphere;
 
-        // Normalización de POD (ej: "POD1", "pod1@wetcom.com" -> "POD1")
-        let podDisplay = podVal;
-        if (podVal.includes("@")) {
-          podDisplay = podVal.split("@")[0];
-        }
-        podDisplay = podDisplay.replace(/\s+/g, "").toUpperCase();
-        if (!podDisplay) podDisplay = "-";
+        const podDisplay = _webappNormalizarPod(podVal);
 
         clientes.push({
           fila: filaNum,
@@ -1439,7 +1479,107 @@ const WEBAPP_TECHS_SEMAFORO = ['vSphere', 'Veeam', 'Nutanix', 'Tanzu', 'RVTools'
  * @param {string} [overrideSheetId] Planilla de logs a usar (selector de entorno).
  * @param {boolean} [forzar] true para re-escanear Drive (botón "Actualizar").
  * @returns {Object}
+ * (la función está más abajo, después del helper que le arma la foto del día)
  */
+
+// Cuánto vive la foto de "lo que ya salió hoy". Corto a propósito: es la pantalla donde el
+// equipo va tildando, y mirar algo de hace cinco minutos llevaría a mandar dos veces el mismo
+// reporte. Un minuto alcanza para que varias personas entrando a la vez —o alguien que cambia
+// de pestaña y vuelve— no repitan la lectura entera del log.
+const WEBAPP_CACHE_ENVIOS_HOY_SEGUNDOS = 60;
+
+/**
+ * Lo que el semáforo necesita saber del día: a qué hora salió cada cliente×tecnología y quién
+ * lo mandó. Junta el log automático ("Envío de Mails") con los envíos hechos a mano.
+ *
+ * POR QUÉ ESTÁ SEPARADO Y CACHEADO
+ * Leer el log implica traer la hoja entera (crece todos los días) y era lo más lento de entrar
+ * a "Cumplimiento de Envíos": se repetía igual para cada persona que abría el panel.
+ *
+ * Lo que se guarda acá es GLOBAL, sin recorte por POD: son dos mapas chicos de "cliente|tech ->
+ * hora". El recorte por POD pasa después, sobre los clientes del Índice, así que el caché —que
+ * es del script y lo comparten todos— nunca puede servirle a un POD los datos de otro.
+ *
+ * El tilde del operador NO pasa por acá: eso vive en el Índice, que tiene su propio caché y se
+ * invalida al tildar. Lo de acá lo escribe la automatización minutos después, así que un minuto
+ * de demora no cambia lo que ve quien está tildando.
+ *
+ * @param {string} sheetId Planilla de logs.
+ * @param {boolean} forzar Saltea el caché (botón "Actualizar").
+ * @returns {{horaPorClienteTech: Object, operadoresPorCliente: Object, manualesError: (string|null), calculadoEnMs: number}}
+ */
+function _webappEnviosDeHoy(sheetId, forzar) {
+  const cacheKey = 'webapp_envios_hoy_v1_' + sheetId;
+  const cache = CacheService.getScriptCache();
+  if (!forzar) {
+    const guardado = cache.get(cacheKey);
+    if (guardado) {
+      try { return JSON.parse(guardado); } catch (e) {}
+    }
+  }
+
+  const normalizar = _webappClaveCliente;
+  const hoyStr = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'dd/MM/yyyy');
+  const resultado = {
+    horaPorClienteTech: {},
+    operadoresPorCliente: {},
+    manualesError: null,
+    calculadoEnMs: Date.now()
+  };
+
+  const anotarOperador = function (cliente, operador) {
+    if (!operador) return;
+    const k = normalizar(cliente);
+    if (!resultado.operadoresPorCliente[k]) resultado.operadoresPorCliente[k] = [];
+    if (resultado.operadoresPorCliente[k].indexOf(operador) === -1) {
+      resultado.operadoresPorCliente[k].push(operador);
+    }
+  };
+
+  try {
+    const logs = _webappLeerLogs(1000, sheetId);
+    (logs.envioMails || []).forEach(function (r) {
+      if (r.fecha !== hoyStr) return;
+      const clave = normalizar(r.cliente) + '|' + String(r.tecnologia || '').toLowerCase();
+      // Si el mismo mail salió más de una vez hoy, queda la hora del PRIMER envío: es la que
+      // responde "¿a qué hora salió?" y la que sirve para medir si fue fuera de horario.
+      if (!resultado.horaPorClienteTech[clave] || r.horaStr < resultado.horaPorClienteTech[clave]) {
+        resultado.horaPorClienteTech[clave] = r.horaStr;
+      }
+      anotarOperador(r.cliente, r.operador);
+    });
+  } catch (e) {
+    Logger.log("[WebApp] No se pudo leer el log de envíos para la matriz: " + e.message);
+  }
+
+  // --- Envíos hechos a mano (alarmas@ en copia): cuentan igual que los automáticos ---
+  try {
+    _webappSincronizarEnviosManuales(sheetId, !!forzar);
+    const hoyISO = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
+    _webappLeerEnviosManuales(SpreadsheetApp.openById(sheetId)).forEach(function (m) {
+      if (m.fecha !== hoyISO) return;
+      const clave = normalizar(m.cliente) + '|' + m.tecnologia.toLowerCase();
+      if (!resultado.horaPorClienteTech[clave] || m.hora < resultado.horaPorClienteTech[clave]) {
+        resultado.horaPorClienteTech[clave] = m.hora;
+      }
+      anotarOperador(m.cliente, m.operador);
+    });
+  } catch (e) {
+    Logger.log("[WebApp] No se pudieron leer los envíos a mano para la matriz: " + e.message);
+    resultado.manualesError = e.message;
+  }
+
+  // Si falló la lectura NO se cachea: guardar un resultado a medias lo serviría un minuto a
+  // todos los que entren, y el semáforo mostraría como pendiente algo que ya salió.
+  if (!resultado.manualesError) {
+    try {
+      const json = JSON.stringify(resultado);
+      if (json.length < 90000) cache.put(cacheKey, json, WEBAPP_CACHE_ENVIOS_HOY_SEGUNDOS);
+    } catch (e) {}
+  }
+  return resultado;
+}
+
 function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
   const usuario = webapp_usuarioActual();
   const permiso = webapp_exigirAutorizacion(usuario);
@@ -1451,52 +1591,12 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
   // La clave es "<cliente normalizado>|<tech>". El log guarda el nombre de empresa ("BALANZ")
   // y el Índice el nombre de operaciones ("Operaciones BALANZ"), así que se normalizan los dos
   // sacando el prefijo.
-  const horaPorClienteTech = {};
-  // Quién operó hoy a cada cliente (puede ser más de uno: una persona manda vSphere y otra
-  // Veeam). Sale de los mismos envíos que la hora: el log (columna K) y los envíos a mano.
-  const operadoresPorCliente = {};
-  const anotarOperador = function (cliente, operador) {
-    if (!operador) return;
-    const k = normalizar(cliente);
-    if (!operadoresPorCliente[k]) operadoresPorCliente[k] = [];
-    if (operadoresPorCliente[k].indexOf(operador) === -1) operadoresPorCliente[k].push(operador);
-  };
   const normalizar = _webappClaveCliente;
 
-  try {
-    const logs = _webappLeerLogs(1000, overrideSheetId || WEBAPP_LOGS_PROD_ID);
-    (logs.envioMails || []).forEach(function (r) {
-      if (r.fecha !== hoyStr) return;
-      const clave = normalizar(r.cliente) + '|' + String(r.tecnologia || '').toLowerCase();
-      // Si el mismo mail salió más de una vez hoy, queda la hora del PRIMER envío: es la que
-      // responde "¿a qué hora salió?" y la que sirve para medir si fue fuera de horario.
-      if (!horaPorClienteTech[clave] || r.horaStr < horaPorClienteTech[clave]) {
-        horaPorClienteTech[clave] = r.horaStr;
-      }
-      anotarOperador(r.cliente, r.operador);
-    });
-  } catch (e) {
-    Logger.log("[WebApp] No se pudo leer el log de envíos para la matriz: " + e.message);
-  }
-
-  // --- Envíos hechos a mano (alarmas@ en copia): cuentan igual que los automáticos ---
-  let manualesError = null;
-  try {
-    const idLogs = overrideSheetId || WEBAPP_LOGS_PROD_ID;
-    _webappSincronizarEnviosManuales(idLogs, !!forzar);
-    const hoyISO = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
-    _webappLeerEnviosManuales(SpreadsheetApp.openById(idLogs)).forEach(function (m) {
-      if (m.fecha !== hoyISO) return;
-      const clave = normalizar(m.cliente) + '|' + m.tecnologia.toLowerCase();
-      if (!horaPorClienteTech[clave] || m.hora < horaPorClienteTech[clave]) {
-        horaPorClienteTech[clave] = m.hora;
-      }
-      anotarOperador(m.cliente, m.operador);
-    });
-  } catch (e) {
-    Logger.log("[WebApp] No se pudieron leer los envíos a mano para la matriz: " + e.message);
-    manualesError = e.message;
-  }
+  const envios = _webappEnviosDeHoy(overrideSheetId || WEBAPP_LOGS_PROD_ID, !!forzar);
+  const horaPorClienteTech = envios.horaPorClienteTech;
+  const operadoresPorCliente = envios.operadoresPorCliente;
+  const manualesError = envios.manualesError;
 
   // --- RVTools: se verifica en Drive, no por mail, y es semanal (ver la función) ---
   const rvtools = _webappEstadoRVToolsCompleto(!!forzar);
@@ -1649,6 +1749,9 @@ function webapp_obtenerMatrizEnvios(overrideSheetId, forzar) {
   return _webappAdjuntarComentarios({
     fecha: hoyStr,
     fechaISO: hoyISOMatriz,
+    // Cuándo se leyó el log, para que la pantalla pueda decir "actualizado hace X" en vez de
+    // dar a entender que lo que se ve es de este segundo.
+    calculadoEnMs: envios.calculadoEnMs,
     tecnologias: WEBAPP_TECHS_SEMAFORO,
     clientes: clientes,
     driveError: rvtools.error || null,

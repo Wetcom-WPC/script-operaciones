@@ -1108,8 +1108,45 @@
       .webapp_obtenerMatrizEnvios(sheetId, forzar === true);
   }
 
+  /**
+   * Las etiquetas de "de cuándo son estos datos".
+   *
+   * Van aparte de pintarMatrizSalud() porque el intervalo de 60 s las refresca solas: son
+   * textos relativos ("hace 3 minutos") y, si solo se escribieran al cargar, una pestaña
+   * abierta toda la mañana seguiría diciendo "recién". Repintar la tabla entera cada minuto
+   * para esto sería carísimo; esto es un textContent.
+   */
+  function pintarAntiguedadMatriz() {
+    var el = document.getElementById('matrizActualizado');
+    if (!el) return;
+    el.textContent = (matrizGlobal && matrizGlobal.calculadoEnMs)
+      ? 'Lo enviado hoy, actualizado ' + antiguedad(matrizGlobal.calculadoEnMs) +
+        '. Apretá Actualizar para traer lo del último minuto.'
+      : '';
+  }
+
+  function pintarAntiguedadLlegadas() {
+    var el = document.getElementById('llegadasDesde');
+    if (!el || !llegadasGlobal) return;
+    // Tres situaciones distintas que antes caían todas en "Todavía no hay nada registrado",
+    // que era engañoso: con el filtro en "Hoy" aparecía aunque hubiera meses de historial,
+    // solo porque todavía no había llegado nada hoy.
+    var buscado = llegadasGlobal.registradoEnMs
+      ? 'Última búsqueda de correos ' + antiguedad(llegadasGlobal.registradoEnMs) + '.'
+      : '';
+    if (llegadasGlobal.registroDesde) {
+      el.textContent = 'Registro desde el ' + llegadasGlobal.registroDesde + '. ' + buscado;
+    } else if (llegadasGlobal.registradoEnMs) {
+      el.textContent = 'No hay reportes registrados en este período. ' + buscado;
+    } else {
+      el.textContent = 'Todavía no hay nada registrado. Apretá Actualizar para empezar.';
+    }
+  }
+
   function pintarMatrizSalud() {
     if (!matrizGlobal) return;
+
+    pintarAntiguedadMatriz();
 
     var filtroPod = document.getElementById('filtroPodMatriz') ? document.getElementById('filtroPodMatriz').value.toUpperCase().trim() : '';
     var filtroEstado = document.getElementById('filtroEstadoMatriz') ? document.getElementById('filtroEstadoMatriz').value : '';
@@ -3255,6 +3292,8 @@
   setInterval(function () {
     pintarUltimoLanzamiento();
     pintarContextoBandeja();
+    pintarAntiguedadMatriz();
+    pintarAntiguedadLlegadas();
     // Actualizar reloj y estado de envío si el panel está abierto
     if (datosIndiceGlobal) {
       datosIndiceGlobal.proximoEnvio = webapp_calcularProximoEnvioLocal();
@@ -3935,22 +3974,7 @@
     var cardFalta = document.getElementById('scLlegadasFaltantesCard');
     if (cardFalta) cardFalta.classList.toggle('alerta', faltantes.length > 0);
 
-    var desde = document.getElementById('llegadasDesde');
-    if (desde) {
-      // Tres situaciones distintas que antes caían todas en "Todavía no hay nada registrado",
-      // que era engañoso: con el filtro en "Hoy" aparecía aunque hubiera meses de historial,
-      // solo porque todavía no había llegado nada hoy.
-      var buscado = llegadasGlobal.registradoEnMs
-        ? 'Última búsqueda de correos ' + antiguedad(llegadasGlobal.registradoEnMs) + '.'
-        : '';
-      if (llegadasGlobal.registroDesde) {
-        desde.textContent = 'Registro desde el ' + llegadasGlobal.registroDesde + '. ' + buscado;
-      } else if (llegadasGlobal.registradoEnMs) {
-        desde.textContent = 'No hay reportes registrados en este período. ' + buscado;
-      } else {
-        desde.textContent = 'Todavía no hay nada registrado. Apretá Actualizar para empezar.';
-      }
-    }
+    pintarAntiguedadLlegadas();
     var aviso = document.getElementById('avisoLlegadas');
     if (aviso) {
       if (llegadasGlobal.aviso) mostrarAviso(aviso, 'warn', llegadasGlobal.aviso);
