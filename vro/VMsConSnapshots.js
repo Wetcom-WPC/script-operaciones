@@ -25,6 +25,24 @@ const SOP_AGE_MAX = 14;     // Días
 const SOP_SIZE_MAX = 1024;  // GB
 const SOP_CANTIDAD_MAX = 7; // Unidades
 
+// Dominios del Grupo Petersen que excluyen Soporte únicamente en el reporte de VMs con Snapshots.
+// Los demás reportes (RVTools, etc.) siguen creando tickets en Soporte normalmente.
+const DOMINIOS_PETERSEN_SIN_SOPORTE_SNAPSHOTS = [
+  "@bancosantacruz.com",
+  "@bancoentrerios.com.ar",
+  "@bancosanjuan.com",
+  "@bancosantafe.com.ar",
+  "@bancobsf.com.ar",
+  "@gbsj.com.ar",
+  "@gpsa.com.ar"
+];
+
+function esClientePetersenSnapshots(email) {
+  if (!email) return false;
+  const lower = String(email).toLowerCase();
+  return DOMINIOS_PETERSEN_SIN_SOPORTE_SNAPSHOTS.some(d => lower.includes(d));
+}
+
 /**
  * Summary del ticket de alerta, respetando el lado AVS del reporte.
  *
@@ -206,9 +224,9 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     const opsAlerts = [];
     const soporteAlerts = [];
 
-    // Chequear si el remitente corresponde a Petersen (@gbsj.com.ar o @gpsa.com.ar)
+    // Chequear si el remitente corresponde a Petersen
     const emailRemitente = ((clientConfig && clientConfig.senderEmail) ? clientConfig.senderEmail : this._currentSenderEmail || "").toLowerCase();
-    const esClientePetersen = emailRemitente.includes("@gbsj.com.ar") || emailRemitente.includes("@gpsa.com.ar");
+    const esClientePetersen = esClientePetersenSnapshots(emailRemitente);
 
     // Las reglas de soporte vienen de la misma planilla de Excepciones (columnas AGE/SIZE/QTY/CRITERIO)
     let sopRules = {};
@@ -307,7 +325,11 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 
       let fallsToOps = false;
 
-      if (hasExceptuarSop) {
+      if (esClientePetersen) {
+         // Para clientes de Petersen, se excluye de Soporte por completo en VMs con snapshots.
+         // Cae directamente a la evaluación de Operaciones (umbral de 7 días / 700 GB, proxies, etc.)
+         fallsToOps = true;
+      } else if (hasExceptuarSop) {
          fallsToOps = true;
       } else if (considerarSopRules.length > 0) {
          let rowBreaksRule = false;
@@ -433,7 +455,8 @@ class VMsConSnapshotsProcessor extends MailProcessor {
        clientConfigSop = getClientConfig(senderEmail, this.operationName + " SOP", true);
     }
 
-    const tieneSoporte = !!(clientConfigSop && clientConfigSop.jiraProjectKeySop);
+    // Si el remitente pertenece a los dominios de Petersen, se excluye Soporte al 100% en snapshots.
+    const tieneSoporte = !esClientePetersenSnapshots(senderEmail) && !!(clientConfigSop && clientConfigSop.jiraProjectKeySop);
 
     // REGLA DE NEGOCIO: Si el cliente NO tiene Soporte en la Columna N (está vacía),
     // cualquier alerta que hubiera calificado para Soporte se reporta en Operaciones (Columna D).
