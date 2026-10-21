@@ -57,6 +57,44 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     });
   }
 
+  // Soportar adjuntos que vengan en formato JSON array ([{"name":..., "snapshotName":..., "age":..., "space":..., "totalCapacity":..., "cantidad":...}])
+  parseAttachment(attachment, summaryReport) {
+    try {
+      const rawText = attachment.getDataAsString("UTF-8");
+      const trimmed = (rawText || "").replace(/^\uFEFF/, '').trim();
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+          const parsedJson = JSON.parse(trimmed);
+          const arr = Array.isArray(parsedJson) ? parsedJson : (parsedJson.Report || parsedJson.items || parsedJson.data || []);
+          if (Array.isArray(arr)) {
+            if (arr.length === 0) return [["Name", "Snapshot_Name", "Number_Days_Old", "Snapshot_Space", "Number_Snapshots", "Total_Capacity"]];
+            const keys = Object.keys(arr[0]);
+            const headerMap = {
+              name: "Name",
+              snapshotname: "Snapshot_Name",
+              age: "Number_Days_Old",
+              space: "Snapshot_Space",
+              cantidad: "Number_Snapshots",
+              totalcapacity: "Total_Capacity",
+              customattribute: "Custom_Attribute",
+              vcenter: "Parent vCenter",
+              cluster: "Parent Cluster"
+            };
+            const headers = keys.map(k => headerMap[k.toLowerCase()] || k);
+            const rows = arr.map(obj => keys.map(k => obj[k] != null ? String(obj[k]) : ""));
+            return [headers, ...rows];
+          }
+        } catch (jsonErr) {
+          // Si no es JSON válido, continúa al parseo CSV estándar
+        }
+      }
+      return parseCsvDeReporte(rawText);
+    } catch (e) {
+      summaryReport.errores.push({ error: "Error parseando adjunto", detalle: e.message });
+      return null;
+    }
+  }
+
   processSingleMessage(message, summaryReport) {
     this._currentSenderEmail = message.getFrom();
     return super.processSingleMessage(message, summaryReport);
@@ -93,18 +131,22 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 
   processData(parsedData, clientConfig, summaryReport) {
     let summaryRow = [];
+    // Solo hacer .pop() si la última fila es realmente un resumen "Total" (vROps legacy).
+    // Los reportes de vRO y varios de vROps no traen fila "Total", y .pop() borraba la última VM real.
     if (parsedData.length > 1) {
-      summaryRow = parsedData.pop(); // Sacamos la última fila (Total)
+      const lastRow = parsedData[parsedData.length - 1];
+      const firstCell = (lastRow && lastRow[0] != null) ? String(lastRow[0]).trim().toLowerCase() : "";
+      if (firstCell === "total") {
+        summaryRow = parsedData.pop();
+      }
     }
 
     const headers = parsedData[0].map(h => h.trim());
     const reportRows = parsedData.slice(1);
     Logger.log("HEADERS ENCONTRADOS: " + JSON.stringify(headers));
     
-    if (clientConfig && !clientConfig.exceptions) clientConfig.exceptions = [];
+    if (clientConfig && !clientConfig.exceptions) clientConfig.exceptions = {};
     Logger.log('[DEBUG EXCEPCIONES] Excepciones globales (Ops): ' + JSON.stringify(clientConfig.exceptions));
-    Logger.log('[DEBUG EXCEPCIONES] Excepciones globales cargadas de la planilla: ' + JSON.stringify(clientConfig.exceptions));
-    Logger.log('[DEBUG EXCEPCIONES] Excepciones globales cargadas de la planilla: ' + JSON.stringify(clientConfig.exceptions));
 
     const findCol = (namePart) => headers.findIndex(h => h.toLowerCase().includes(namePart.toLowerCase()));
     
@@ -113,10 +155,13 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     let idxSpace = findCol("Snapshot_Space") !== -1 ? findCol("Snapshot_Space") : findCol("Space");
     let idxCount = findCol("Number_Snapshots") !== -1 ? findCol("Number_Snapshots") : findCol("Cantidad");
     let idxSnapshotName = findCol("Snapshot_Name");
+    let idxCustomAttr = findCol("Custom_Attribute");
+    if (idxCustomAttr === -1) idxCustomAttr = findCol("Custom Attribute");
     
     let idxTotalCapacity = findCol("Total_Capacity") !== -1 ? findCol("Total_Capacity") : findCol("Total Capacity");
     if (idxTotalCapacity === -1) idxTotalCapacity = findCol("Summary|Datastore(s)");
     if (idxTotalCapacity === -1) idxTotalCapacity = findCol("Capacity");
+    if (idxTotalCapacity === -1) idxTotalCapacity = findCol("espacio_total");
     if (idxTotalCapacity === -1) idxTotalCapacity = findCol("Total");
 
     if (idxName === -1 || idxAge === -1 || idxSpace === -1 || idxCount === -1) {
@@ -128,10 +173,6 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     if (idxTotalCapacity !== -1 && !headers.includes("Used Space %")) {
       headers.push("Used Space %");
     }
-    // Los clientes mandan el tamaño como número pelado ("27.08"), así que el ticket no decía
-    // en qué unidad estaba. Esta columna muestra el mismo valor que el script usó para decidir
-    // si alerta, ya con la unidad puesta. No se pisa la columna original: esa es la evidencia
-    // de lo que mandó el cliente.
     const unidadEspacio = unidadDelEncabezado(headers[idxSpace]);
     const unidadCapacidad = idxTotalCapacity !== -1 ? unidadDelEncabezado(headers[idxTotalCapacity]) : '';
     if (!headers.includes(SNAPSHOTS_COLUMNA_TAMANO)) {
@@ -139,9 +180,17 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     }
     Logger.log(`[VMs con snapshots] Columna de tamaño: "${headers[idxSpace]}" -> unidad ${unidadEspacio || "no declarada, se asume GB"}.`);
     
+    // En reportes de vROps, enteros >= 1000 vienen como "1,659" o "2,491".
     const parseSeguro = (val) => {
-      if (!val) return 0;
+      if (val === null || val === undefined || val === '') return 0;
       let clean = val.toString().trim();
+      if (clean === '-' || clean === '') return 0;
+      if (/^-?\d{1,3}(,\d{3})+$/.test(clean)) {
+        return parseFloat(clean.replace(/,/g, '')) || 0;
+      }
+      if (/^-?\d{1,3}(\.\d{3})+$/.test(clean)) {
+        return parseFloat(clean.replace(/\./g, '')) || 0;
+      }
       let lastDot = clean.lastIndexOf('.');
       let lastComma = clean.lastIndexOf(',');
       if (lastDot > lastComma) { clean = clean.replace(/,/g, ''); }
@@ -150,15 +199,16 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       return parseFloat(clean) || 0;
     };
 
-    // La conversión a GB vive en parseTamanoAGB (core/DataProcessingService.js): la usan
-    // también las herramientas de diagnóstico, y tener dos copias de un parseo fue el origen
-    // del incidente del 27/07/2026 (AGENTS.md §5). No reimplementarla acá.
     const parseSpaceToGB = parseTamanoAGB;
 
     const detectedReasonsOps = new Set();
     const detectedReasonsSoporte = new Set();
     const opsAlerts = [];
     const soporteAlerts = [];
+
+    // Chequear si el remitente corresponde a Petersen (@gbsj.com.ar o @gpsa.com.ar)
+    const emailRemitente = ((clientConfig && clientConfig.senderEmail) ? clientConfig.senderEmail : this._currentSenderEmail || "").toLowerCase();
+    const esClientePetersen = emailRemitente.includes("@gbsj.com.ar") || emailRemitente.includes("@gpsa.com.ar");
 
     // Las reglas de soporte vienen de la misma planilla de Excepciones (columnas AGE/SIZE/QTY/CRITERIO)
     let sopRules = {};
@@ -177,14 +227,18 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       const vmNameLower = vmName.toLowerCase();
       if (vmNameLower.includes("replica")) return;
       
-      const age = parseSeguro(row[idxAge]);
+      const rawAgeStr = (row[idxAge] != null ? String(row[idxAge]) : "").trim();
+      const age = parseSeguro(rawAgeStr);
       
       // Ignorar snapshots con age -1 (o negativo) reportados por la plataforma
       if (age < 0) return;
       
       if (idxSnapshotName !== -1) {
-         const snapName = (row[idxSnapshotName] || "").toString().toLowerCase();
-         if (snapName.includes("restore point") || snapName.includes("restore_point")) return;
+         const snapName = (row[idxSnapshotName] || "").toString().trim().toLowerCase();
+         if (snapName.includes("restore point") || snapName.includes("restore_point") ||
+             snapName.includes("veeam replica working snapshot") || snapName.includes("replicavm-snapshot")) return;
+
+         if (rawAgeStr === "-" && snapName === "veeam") return;
 
          // PUNTO 3: Ignorar snapshots de plantillas / templates (ej. vm-template-snapshot)
          if (snapName.includes("vm-template-snapshot") || snapName.includes("template")) return;
@@ -210,44 +264,78 @@ class VMsConSnapshotsProcessor extends MailProcessor {
         row.push(usedPercent > 0 ? usedPercent.toFixed(2) + "%" : "0.00%");
       }
       row.push(formatearTamanoDesdeGB(space));
-      
-      // PASO 1: SOP siempre tiene prioridad
-      const matchedSopRules = findAllMatchingRules(row, headers, sopRules);
-      
-      const hasExceptuarSop = matchedSopRules.some(r => r.criterio === 'exceptuar');
-      const considerarSopRules = matchedSopRules.filter(r => r.criterio === 'considerar');
 
-      if (matchedSopRules.length > 0) {
-         Logger.log('[DEBUG SOPORTE] VM MATCH SOP: ' + matchedSopRules.length + ' regla(s) para VM=' + vmName);
+      // REGLA ESPECIAL PROXIES PETERSEN (@gbsj.com.ar / @gpsa.com.ar):
+      // Si el Custom Attribute tiene "proxy" (o el nombre contiene "vprx"/"proxy"),
+      // y tiene al menos 1 snapshot, se levanta inmediatamente en Operaciones sin importar tamaño ni antigüedad.
+      const customAttrVal = idxCustomAttr !== -1 ? (row[idxCustomAttr] || "").toString().trim().toLowerCase() : "";
+      const esProxyPetersen = esClientePetersen && (customAttrVal.includes("proxy") || vmNameLower.includes("vprx") || vmNameLower.includes("proxy"));
+
+      if (esProxyPetersen) {
+         detectedReasonsOps.add("Snapshot en Proxy de Backup detectado (no tolerado)");
+         Logger.log('[DEBUG EVAL] -> VM asignada a OPS por ser PROXY con snapshot: ' + vmName);
+         opsAlerts.push(row);
+         return; // Pasa directo a OPS
       }
+      
+      // Buscamos reglas que coincidan tanto en SOP como en OPS
+      const matchedSopRules = findAllMatchingRules(row, headers, sopRules);
+      const matchedOpsRules = findAllMatchingRules(row, headers, clientConfig.exceptions);
+
+      // JERARQUÍA DE ESPECIFICIDAD:
+      // Separamos reglas ESPECÍFICAS (con texto en Columna D) de reglas GLOBALES/COMODÍN (Columna D vacía).
+      const specificSopRules = matchedSopRules.filter(r => !r.isWildcard);
+      const globalSopRules   = matchedSopRules.filter(r => r.isWildcard);
+
+      const specificOpsRules = matchedOpsRules.filter(r => !r.isWildcard);
+      const globalOpsRules   = matchedOpsRules.filter(r => r.isWildcard);
+
+      // Si la VM está explícitamente ignorada/exceptuada por una regla específica en OPS (ej. GoldenSoporte, VDI)
+      // y NO tiene una regla específica "Considerar" en SOP, se ignora por completo.
+      const hasSpecificIgnoreOps = specificOpsRules.some(r => r.criterio !== 'considerar');
+      const hasSpecificConsiderarSop = specificSopRules.some(r => r.criterio === 'considerar');
+
+      if (hasSpecificIgnoreOps && !hasSpecificConsiderarSop) {
+        Logger.log('[DEBUG EVAL] -> VM IGNORADA globalmente por excepción específica en OPS: ' + vmName);
+        return;
+      }
+
+      // En SOP: Cualquier criterio que NO sea 'considerar' exceptúa de Soporte.
+      const activeSopRules = specificSopRules.length > 0 ? specificSopRules : globalSopRules;
+      const hasExceptuarSop = activeSopRules.some(r => r.criterio !== 'considerar');
+      const considerarSopRules = activeSopRules.filter(r => r.criterio === 'considerar');
 
       let fallsToOps = false;
 
-      if (!hasExceptuarSop && considerarSopRules.length > 0) {
-         // → Ticket SOPORTE con umbrales personalizados
+      if (hasExceptuarSop) {
+         fallsToOps = true;
+      } else if (considerarSopRules.length > 0) {
          let rowBreaksRule = false;
          for (const rule of considerarSopRules) {
             if (_evaluaRegla(rule, age, space, count, usedPercent, detectedReasonsSoporte, true)) {
                rowBreaksRule = true;
                Logger.log('[DEBUG EVAL] -> VM asignada a SOPORTE por regla (' + rule.exceptionId + '): ' + vmName);
-               break; // Con que rompa una regla alcanza
+               break;
             }
          }
+         // Si solo había reglas globales y no definieron QTY, mantener SOP_CANTIDAD_MAX por seguridad
+         if (!rowBreaksRule && specificSopRules.length === 0) {
+            const anyGlobalDefinesQty = considerarSopRules.some(r => r.hasQtyLimit);
+            if (!anyGlobalDefinesQty && count >= SOP_CANTIDAD_MAX) {
+               detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`);
+               rowBreaksRule = true;
+            }
+         }
+
          if (rowBreaksRule) {
             soporteAlerts.push(row);
          } else {
-            // Si la VM no superó los umbrales de Soporte, continúa a evaluar los umbrales de Operaciones
             fallsToOps = true;
          }
-
-      } else if (hasExceptuarSop) {
-         // Está exceptuada de SOP explícitamente -> pasamos directo a evaluar OPS
-         fallsToOps = true;
       } else {
-         // PASO 2: Evaluar umbrales SOP Hardcodeados (Safety net)
+         // PASO 2: Evaluar umbrales SOP Hardcodeados
          let sopBreaksRule = false;
          if (age >= SOP_AGE_MAX) { detectedReasonsSoporte.add(`Antigüedad >= ${SOP_AGE_MAX} días`); sopBreaksRule = true; }
-         // PUNTO 1: Solo alertar por tamaño en Soporte si tiene al menos 24 horas de vida (age >= 1)
          if (space >= SOP_SIZE_MAX && age >= 1) { detectedReasonsSoporte.add(`Tamaño >= ${SOP_SIZE_MAX} GB (Antigüedad >= 1 día)`); sopBreaksRule = true; }
          if (count >= SOP_CANTIDAD_MAX) { detectedReasonsSoporte.add(`Cantidad >= ${SOP_CANTIDAD_MAX}`); sopBreaksRule = true; }
          
@@ -260,36 +348,29 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       }
 
       if (fallsToOps) {
-         // PASO 3: Evaluar OPS
-         const matchedOpsRules = findAllMatchingRules(row, headers, clientConfig.exceptions);
-         
-         // Cualquier criterio que NO sea 'considerar' silencia la VM: 'ignorar', 'exceptuar'
-         // y también el criterio VACÍO. Lo último importa: en las planillas de excepciones
-         // de los clientes hay reglas con la celda de criterio en blanco, y la versión
-         // productiva las viene tratando como "ignorar" desde siempre. Si acá solo se
-         // contemplaran 'ignorar' y 'exceptuar', esas VMs pasarían a evaluarse con los
-         // umbrales hardcodeados y empezarían a generar tickets nuevos, que es justo lo
-         // contrario de para lo que el cliente cargó la excepción.
-         const hasIgnorarOps = matchedOpsRules.some(r => r.criterio !== 'considerar');
-         const considerarOpsRules = matchedOpsRules.filter(r => r.criterio === 'considerar');
-
-         if (matchedOpsRules.length > 0) {
-            Logger.log('[DEBUG OPS] VM MATCH OPS: ' + matchedOpsRules.length + ' regla(s) para VM=' + vmName);
-         }
+         // PASO 3: Evaluar OPS con Jerarquía de Especificidad
+         const activeOpsRules = specificOpsRules.length > 0 ? specificOpsRules : globalOpsRules;
+         const hasIgnorarOps = activeOpsRules.some(r => r.criterio !== 'considerar');
+         const considerarOpsRules = activeOpsRules.filter(r => r.criterio === 'considerar');
 
          if (hasIgnorarOps) {
-            Logger.log('[DEBUG EVAL] -> VM IGNORADA por regla OPS explícita: ' + vmName);
+            Logger.log('[DEBUG EVAL] -> VM IGNORADA por regla OPS: ' + vmName);
          } else if (considerarOpsRules.length > 0) {
-            // Umbrales OPS personalizados
             let rowBreaksRule = false;
             for (const rule of considerarOpsRules) {
                if (_evaluaRegla(rule, age, space, count, usedPercent, detectedReasonsOps, false)) {
                   rowBreaksRule = true;
                   Logger.log('[DEBUG EVAL] -> VM asignada a OPS por regla personalizada (' + rule.exceptionId + '): ' + vmName);
-                  break; // Con que rompa una regla alcanza
+                  break;
                }
             }
-            
+            if (!rowBreaksRule && specificOpsRules.length === 0) {
+               const anyGlobalDefinesQty = considerarOpsRules.some(r => r.hasQtyLimit);
+               if (!anyGlobalDefinesQty && count >= CANTIDAD_MAX) {
+                  detectedReasonsOps.add(`Cantidad >= ${CANTIDAD_MAX}`);
+                  rowBreaksRule = true;
+               }
+            }
             if (rowBreaksRule) {
                opsAlerts.push(row);
             }
@@ -500,52 +581,99 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 
 function processSnapshotsEmails() {
   new VMsConSnapshotsProcessor().processEmails();
-}// --- SOP RULES PARSING ---
-// Busca en clientConfig.exceptions todos los grupos cuyas condiciones coincidan
-// con la fila del reporte Y que tengan umbrales definidos (ageLimit/sizeLimit/qtyLimit).
+}
+
+// Normalización canónica de encabezados para lookups de excepciones
+function _normalizarColumnaSnapshots(col) {
+  if (!col) return '';
+  const clean = String(col)
+    .trim()
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+  if (typeof normalizarEncabezado === 'function') {
+    return normalizarEncabezado(clean);
+  }
+  return clean;
+}
+
+// Busca en clientConfig.exceptions todos los grupos cuyas condiciones coincidan con la fila
 function findAllMatchingRules(reportRow, headers, exceptions) {
   if (!exceptions || typeof exceptions !== 'object') return [];
-  const normalizedHeaders = headers.map(h => {
-    let n = h.trim().toLowerCase();
-    return n.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const rawNormalizedHeaders = headers.map(h => {
+    let n = String(h || '').trim().toLowerCase();
+    return n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
   });
-  
+  const canonicalHeaders = headers.map(h => _normalizarColumnaSnapshots(h));
+
   const matched = [];
-  
+
   for (const exceptionId in exceptions) {
     const ruleGroup = exceptions[exceptionId];
+    if (!Array.isArray(ruleGroup) || ruleGroup.length === 0) continue;
 
-    const allConditionsMet = ruleGroup.every(condition => {
-      let nCol = condition.column.trim().toLowerCase();
-      nCol = nCol.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      const colIndex = normalizedHeaders.indexOf(nCol);
+    const validConditions = ruleGroup.filter(c => c && c.column && String(c.column).trim() !== '');
+    if (validConditions.length === 0) continue;
+
+    const allConditionsMet = validConditions.every(condition => {
+      const nColRaw = String(condition.column).trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+      const nColCanon = _normalizarColumnaSnapshots(condition.column);
+
+      let colIndex = rawNormalizedHeaders.indexOf(nColRaw);
+      if (colIndex === -1) colIndex = canonicalHeaders.indexOf(nColCanon);
+      // Alias: "vcenter" y "parent vcenter" son equivalentes
+      if (colIndex === -1 && (nColRaw === 'vcenter' || nColRaw === 'parent vcenter')) {
+        colIndex = rawNormalizedHeaders.findIndex(h => h === 'vcenter' || h === 'parent vcenter');
+      }
       if (colIndex === -1) return false;
+
+      // Si es comodín (Columna D vacía ""), coincide con todas las filas
+      if (condition.isWildcard) return true;
+      if (!condition.values || condition.values.length === 0) return false;
+
       const reportValueStr = (reportRow[colIndex] || '').toString().trim().toLowerCase();
+      const mType = (condition.matchType || '').trim().toLowerCase();
       return condition.values.some(exceptionValue => {
-        switch (condition.matchType.toLowerCase()) {
-          case 'exacta':      return reportValueStr === exceptionValue;
-          case 'contiene':    return reportValueStr.includes(exceptionValue);
-          case 'comienza con': return reportValueStr.startsWith(exceptionValue);
-          case 'termina con': return reportValueStr.endsWith(exceptionValue);
-          default:            return reportValueStr === exceptionValue;
+        switch (mType) {
+          case 'exacta':
+          case 'igual a':
+            return reportValueStr === exceptionValue;
+          case 'contiene':
+            return reportValueStr.includes(exceptionValue);
+          case 'comienza con':
+          case 'empieza con':
+            return reportValueStr.startsWith(exceptionValue);
+          case 'termina con':
+            return reportValueStr.endsWith(exceptionValue);
+          default:
+            return reportValueStr === exceptionValue;
         }
       });
     });
 
     if (allConditionsMet) {
-      const rowsWithLimits = ruleGroup.filter(r => 
+      const rowsWithLimits = validConditions.filter(r => 
         (r.ageLimit !== null && r.ageLimit !== undefined && r.ageLimit !== '') ||
         (r.sizeLimit !== null && r.sizeLimit !== undefined && r.sizeLimit !== '') ||
         (r.qtyLimit !== null && r.qtyLimit !== undefined && r.qtyLimit !== '')
       );
 
       const isCompoundRule = rowsWithLimits.length > 1;
-      const c = ruleGroup[0];
-      const matchingCriterio = ruleGroup.find(r => r.criterio && r.criterio.trim() !== '');
-      const criterioGroup = (matchingCriterio ? matchingCriterio.criterio : (c ? c.criterio : '') || '').toLowerCase();
+      // Si solo 1 fila del grupo tiene límites (ej. fila 2 en una regla compuesta),
+      // tomar los límites de rowsWithLimits[0] y NO de ruleGroup[0]
+      const limitSource = rowsWithLimits.length > 0 ? rowsWithLimits[0] : validConditions[0];
+      const matchingCriterio = validConditions.find(r => r.criterio && r.criterio.trim() !== '');
+      const criterioGroup = (matchingCriterio ? matchingCriterio.criterio : (limitSource ? limitSource.criterio : '') || '').toLowerCase();
+
+      // Una regla es comodín (global) solo si TODAS sus condiciones tienen Columna D vacía
+      const groupIsWildcard = validConditions.every(c => c.isWildcard === true);
+      const hasQtyLimit = rowsWithLimits.some(r => r.qtyLimit !== null && r.qtyLimit !== undefined && r.qtyLimit !== '' && Number(r.qtyLimit) > 0);
 
       matched.push({
         exceptionId: exceptionId,
+        isWildcard: groupIsWildcard,
+        hasQtyLimit: hasQtyLimit,
         isCompoundRule: isCompoundRule,
         limits: rowsWithLimits.map(r => ({
           age: (r.ageLimit !== null && r.ageLimit !== undefined && r.ageLimit !== '') ? Number(r.ageLimit) : null,
@@ -553,10 +681,10 @@ function findAllMatchingRules(reportRow, headers, exceptions) {
           qty: (r.qtyLimit !== null && r.qtyLimit !== undefined && r.qtyLimit !== '') ? Number(r.qtyLimit) : null,
           sizeType: (r.sizeType || '').toLowerCase()
         })),
-        age: c ? c.ageLimit : null,
-        size: c ? c.sizeLimit : null,
-        qty: c ? c.qtyLimit : null,
-        sizeType: c ? (c.sizeType || '') : '',
+        age: limitSource && limitSource.ageLimit !== null && limitSource.ageLimit !== '' ? Number(limitSource.ageLimit) : null,
+        size: limitSource && limitSource.sizeLimit !== null && limitSource.sizeLimit !== '' ? Number(limitSource.sizeLimit) : null,
+        qty: limitSource && limitSource.qtyLimit !== null && limitSource.qtyLimit !== '' ? Number(limitSource.qtyLimit) : null,
+        sizeType: limitSource ? (limitSource.sizeType || '') : '',
         criterio: criterioGroup
       });
     }
