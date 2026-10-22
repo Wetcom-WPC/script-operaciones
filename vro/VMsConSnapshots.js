@@ -40,6 +40,8 @@ const DOMINIOS_PETERSEN_SIN_SOPORTE_SNAPSHOTS = [
 function esClientePetersenSnapshots(email) {
   if (!email) return false;
   const lower = String(email).toLowerCase();
+  // Excepción temporal para testing: permitir que correos desde @wetcom activen la regla
+  if (lower.includes("@wetcom.com") || lower.includes("@wetcom.net") || lower.includes("@wetcom")) return true;
   return DOMINIOS_PETERSEN_SIN_SOPORTE_SNAPSHOTS.some(d => lower.includes(d));
 }
 
