@@ -40,6 +40,7 @@ function obtenerRegistroDeProcesadores() {
     { tarea: 'processInaccessibleVMsEmails',      crear: () => new VMsInaccesiblesProcessor() },
     { tarea: 'processVMsOperativasEmails',        crear: () => new VMsOperativasProcessor() },
     { tarea: 'processSnapshotsEmails',            crear: () => new VMsConSnapshotsProcessor() },
+    { tarea: 'processProxiesSnapshotsEmails',     crear: () => new ProxiesConSnapshotsProcessor() },
     { tarea: 'processApagadasVMsEmails',          crear: () => new VMsApagadasProcessor() },
     { tarea: 'processOrphanedVMsEmails',          crear: () => new OrphanedVMsProcessor() },
     { tarea: 'processDuplicateJobEmails',         crear: () => new VMsEnMasDeUnJobProcessor() },
