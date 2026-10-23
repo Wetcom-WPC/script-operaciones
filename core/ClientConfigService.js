@@ -139,20 +139,41 @@ function procesarReglasExcepciones(rawExceptionData, exceptionSheet) {
     }
   });
 
-  const activeExceptions = exceptionData.filter(row => (row[5] != null ? String(row[5]) : "").toUpperCase() === 'SI');
+  const activeExceptions = exceptionData.filter(row => (row[5] != null ? String(row[5]).trim() : "").toUpperCase() === 'SI');
   const groupedExceptions = {};
-  activeExceptions.forEach(row => {
-    const exceptionId = row[0];
+  activeExceptions.forEach((row, idx) => {
+    const rawId = row[0] != null ? String(row[0]).trim() : "";
+    const rawCol = row[1] != null ? String(row[1]).trim() : "";
+    const rawMatchType = row[2] != null ? String(row[2]).trim() : "";
+
+    // Ignorar filas basura marcadas como 'SI' pero sin Columna del Reporte
+    if (!rawCol) {
+      Logger.log(`[DEBUG EXCEPCIONES] Ignorando fila activa vacía/incompleta (ID="${rawId}", Columna="${rawCol}").`);
+      return;
+    }
+
+    const exceptionId = rawId || `_auto_rule_${idx}`;
     if (!groupedExceptions[exceptionId]) groupedExceptions[exceptionId] = [];
+
+    // Soportar separación por comas, saltos de línea (Alt+Enter) o punto y coma,
+    // y eliminar strings vacíos accidentales por coma final ("vm1, vm2, ").
+    const rawValStr = row[3] != null ? String(row[3]).trim() : "";
+    const isWildcard = rawValStr === "";
+    const parsedValues = isWildcard
+      ? [""]
+      : rawValStr.split(/[,\n\r;]+/).map(v => v.trim().toLowerCase()).filter(v => v !== "");
+
     Logger.log("[DEBUG SOPORTE] Leyendo excepcion " + exceptionId + ": AGE=" + row[6] + ", SIZE=" + row[7] + ", QTY=" + row[8] + ", CRITERIO=" + row[10]);
     groupedExceptions[exceptionId].push({
-      column: row[1], matchType: row[2],
-      values: (row[3] != null ? String(row[3]) : "").split(',').map(v => v.trim().toLowerCase()),
-      ageLimit:  (row[6] !== undefined && row[6] !== '') ? Number(row[6])  : null,
-      sizeLimit: (row[7] !== undefined && row[7] !== '') ? Number(row[7])  : null,
-      qtyLimit:  (row[8] !== undefined && row[8] !== '') ? Number(row[8])  : null,
-      sizeType:  (row[9]  != null ? String(row[9])  : '').toLowerCase(),
-      criterio:  (row[10] != null ? String(row[10]) : '').toLowerCase()
+      column: rawCol,
+      matchType: rawMatchType,
+      values: parsedValues,
+      isWildcard: isWildcard,
+      ageLimit:  (row[6] !== undefined && row[6] !== null && String(row[6]).trim() !== '') ? Number(row[6])  : null,
+      sizeLimit: (row[7] !== undefined && row[7] !== null && String(row[7]).trim() !== '') ? Number(row[7])  : null,
+      qtyLimit:  (row[8] !== undefined && row[8] !== null && String(row[8]).trim() !== '') ? Number(row[8])  : null,
+      sizeType:  (row[9]  != null ? String(row[9]).trim()  : '').toLowerCase(),
+      criterio:  (row[10] != null ? String(row[10]).trim() : '').toLowerCase()
     });
   });
   return groupedExceptions;
