@@ -40,7 +40,7 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
           const parsedJson = JSON.parse(trimmed);
           const arr = Array.isArray(parsedJson) ? parsedJson : (parsedJson.Report || parsedJson.items || parsedJson.data || []);
           if (Array.isArray(arr)) {
-            if (arr.length === 0) return [["Name", "Snapshot_Name", "Number_Days_Old", "Snapshot_Space", "Number_Snapshots", "Total_Capacity", "Custom_Attribute"]];
+            if (arr.length === 0) return [["Name", "Snapshot_Name", "Number_Days_Old", "Snapshot_Space", "Number_Snapshots", "Total_Capacity"]];
             const keys = Object.keys(arr[0]);
             const headerMap = {
               name: "Name",
@@ -49,7 +49,6 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
               space: "Snapshot_Space",
               cantidad: "Number_Snapshots",
               totalcapacity: "Total_Capacity",
-              customattribute: "Custom_Attribute",
               vcenter: "Parent vCenter",
               cluster: "Parent Cluster"
             };
@@ -114,8 +113,6 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
     let idxAge = findCol("Number_Days_Old") !== -1 ? findCol("Number_Days_Old") : findCol("Age");
     let idxCount = findCol("Number_Snapshots") !== -1 ? findCol("Number_Snapshots") : findCol("Cantidad");
     let idxSnapshotName = findCol("Snapshot_Name");
-    let idxCustomAttr = findCol("Custom_Attribute");
-    if (idxCustomAttr === -1) idxCustomAttr = findCol("Custom Attribute");
 
     if (idxName === -1 || idxSpace === -1) {
       summaryReport.advertencias.push("Faltan columnas requeridas (Name o Space).");

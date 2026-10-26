@@ -94,7 +94,6 @@ class VMsConSnapshotsProcessor extends MailProcessor {
               space: "Snapshot_Space",
               cantidad: "Number_Snapshots",
               totalcapacity: "Total_Capacity",
-              customattribute: "Custom_Attribute",
               vcenter: "Parent vCenter",
               cluster: "Parent Cluster"
             };
@@ -173,8 +172,6 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     let idxSpace = findCol("Snapshot_Space") !== -1 ? findCol("Snapshot_Space") : findCol("Space");
     let idxCount = findCol("Number_Snapshots") !== -1 ? findCol("Number_Snapshots") : findCol("Cantidad");
     let idxSnapshotName = findCol("Snapshot_Name");
-    let idxCustomAttr = findCol("Custom_Attribute");
-    if (idxCustomAttr === -1) idxCustomAttr = findCol("Custom Attribute");
     
     let idxTotalCapacity = findCol("Total_Capacity") !== -1 ? findCol("Total_Capacity") : findCol("Total Capacity");
     if (idxTotalCapacity === -1) idxTotalCapacity = findCol("Summary|Datastore(s)");
@@ -283,18 +280,6 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       }
       row.push(formatearTamanoDesdeGB(space));
 
-      // REGLA ESPECIAL PROXIES PETERSEN (@gbsj.com.ar / @gpsa.com.ar):
-      // Si el Custom Attribute tiene "proxy" (o el nombre contiene "vprx"/"proxy"),
-      // y tiene al menos 1 snapshot, se levanta inmediatamente en Operaciones sin importar tamaño ni antigüedad.
-      const customAttrVal = idxCustomAttr !== -1 ? (row[idxCustomAttr] || "").toString().trim().toLowerCase() : "";
-      const esProxyPetersen = esClientePetersen && (customAttrVal.includes("proxy") || vmNameLower.includes("vprx") || vmNameLower.includes("proxy"));
-
-      if (esProxyPetersen) {
-         detectedReasonsOps.add("Snapshot en Proxy de Backup detectado (no tolerado)");
-         Logger.log('[DEBUG EVAL] -> VM asignada a OPS por ser PROXY con snapshot: ' + vmName);
-         opsAlerts.push(row);
-         return; // Pasa directo a OPS
-      }
       
       // Buscamos reglas que coincidan tanto en SOP como en OPS
       const matchedSopRules = findAllMatchingRules(row, headers, sopRules);
