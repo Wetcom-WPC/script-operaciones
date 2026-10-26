@@ -95,6 +95,10 @@ const E2E_FIXTURES = {
     extension: "csv",
     cuerpo: "VM Name,Age,Snapshot_Space,Cantidad\r\nvm-e2e-snap-01,15,45.2,1\r\nvm-e2e-snap-02,1,1.5,0"
   },
+  processProxiesSnapshotsEmails: {
+    extension: "csv",
+    cuerpo: "Name,Snapshot_Name,Number_Days_Old,Snapshot_Space,Number_Snapshots,Total_Capacity\r\n\"VPRX-TEST-01\",\"Snap Test\",5,40.26,1,94.41"
+  },
   processApagadasVMsEmails: {
     extension: "csv",
     cuerpo: "Virtual Machine,Days Powered Off,Last Active\r\nvm-e2e-off-01,45,01/06/2026"
