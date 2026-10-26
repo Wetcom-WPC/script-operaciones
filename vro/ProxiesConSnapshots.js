@@ -153,15 +153,7 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
       headers.push(PROXIES_COLUMNA_TAMANO);
     }
 
-    const unidadEspacio = idxSpace !== -1 ? detectarUnidadTamano(headers[idxSpace]) : 'GB';
-    const formatearTamanoDesdeGB = (spaceGB) => {
-      if (spaceGB === null || isNaN(spaceGB) || spaceGB === undefined) return "";
-      if (spaceGB < 1 && spaceGB > 0) {
-        const mb = spaceGB * 1024;
-        return `${Number(mb.toFixed(2))} MB`;
-      }
-      return `${Number(spaceGB.toFixed(2))} GB`;
-    };
+    const unidadEspacio = idxSpace !== -1 ? unidadDelEncabezado(headers[idxSpace]) : '';
 
     const opsAlerts = [];
     const detectedReasonsOps = new Set();
@@ -172,14 +164,7 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
       const vmName = (row[idxName] || "").toString().trim();
       if (!vmName) return;
 
-      let spaceGB = 0;
-      if (idxSpace !== -1) {
-        let rawSpace = parseSeguro(row[idxSpace]);
-        if (unidadEspacio === 'MB') rawSpace = rawSpace / 1024;
-        else if (unidadEspacio === 'TB') rawSpace = rawSpace * 1024;
-        spaceGB = rawSpace;
-      }
-
+      const spaceGB = idxSpace !== -1 ? parseTamanoAGB(row[idxSpace], unidadEspacio) : 0;
       row.push(formatearTamanoDesdeGB(spaceGB));
 
       // Verificar si hay reglas de excepción personalizadas para este proxy en la planilla de excepciones
@@ -225,7 +210,7 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
                                  findExistingJiraTicket(summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_TABLE, clientConfigOps), clientConfigOps.jiraProjectKey) ||
                                  findExistingJiraTicket(summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps), clientConfigOps.jiraProjectKey);
 
-    const nombreReporteOps = attachmentName.replace(/\.(xlsx|csv|xls|json)$/i, "") + "-OPS.xlsx";
+    const nombreReporteOps = (attachmentName || "Proxies con snapshots.csv").replace(/\.(xlsx|csv|xls|json)$/i, "") + "-OPS.xlsx";
     const xlsxBlobOps = convertDataToXlsxBlob([headers, ...opsAlertsFinal], nombreReporteOps);
     if (xlsxBlobOps) {
       this.extractedBlobs = this.extractedBlobs || [];
@@ -273,6 +258,7 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
         if (creationResult.status === 'SUCCESS') {
           summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)), cliente: clientConfigOps.clientName });
         } else {
+          summaryReport.errores.push({ error: "Fallo al crear ticket en Jira", detalle: JSON.stringify(creationResult.detail) });
           globalStatus = 'FAILURE';
         }
       } else {
@@ -282,6 +268,7 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
         if (creationResult.status === 'SUCCESS') {
           summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)), cliente: clientConfigOps.clientName });
         } else {
+          summaryReport.errores.push({ error: "Fallo al crear ticket en Jira", detalle: JSON.stringify(creationResult.detail) });
           globalStatus = 'FAILURE';
         }
       }
