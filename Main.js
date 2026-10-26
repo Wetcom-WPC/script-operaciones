@@ -10,6 +10,7 @@ function onOpen() {
     .addItem('Ejecutar Guardia de Alarmas', 'disparadorGuardia_Manual')
     .addSeparator()
     .addItem('Actualizar Dropdowns de Clientes', 'actualizarDropdownsClientes')
+    .addItem('Preparar columna "Mail de Guardia"', 'actualizarDropdownMailGuardia')
     .addToUi();
 
   ui.createMenu('Ejecutar reporte de licencias')
@@ -320,15 +321,59 @@ function actualizarDropdownsClientes() {
 }
 
 /**
+ * Pone el dropdown SI / NO en la Columna D ("Mail de Guardia") de la hoja Clientes.
+ *
+ * El riesgo real de esa columna no es que alguien escriba NO de más: es que escriba algo
+ * que el script no entienda —"No enviar", "Banco Marco" mal tipeado en una lista suelta—
+ * y el filtro se descarte sin que nadie lo note. Es el §6 de AGENTS.md, el patrón de bug
+ * más frecuente de este proyecto. Con la validación cargada, eso deja de ser posible desde
+ * la planilla, que es donde realmente se edita.
+ *
+ * Dejar la celda vacía sigue siendo válido y significa SI: la validación acota lo que se
+ * puede escribir, no obliga a completar nada. Ver DataRepository._crearMapaMailGuardia.
+ */
+function actualizarDropdownMailGuardia() {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const clientesSheet = ss.getSheetByName(Config.SHEET_CLIENTES);
+    if (!clientesSheet) return;
+
+    // El encabezado se escribe sólo si D1 está vacía: si alguien ya la tituló de otra forma,
+    // es su decisión y no la pisamos.
+    const encabezado = clientesSheet.getRange(1, 4);
+    if (!encabezado.getValue()) {
+      encabezado.setValue("Mail de Guardia")
+                .setFontWeight(clientesSheet.getRange(1, 3).getFontWeight());
+    }
+
+    const maxRows = clientesSheet.getMaxRows();
+    if (maxRows < 2) return;
+
+    const rule = SpreadsheetApp.newDataValidation()
+                               .requireValueInList(["SI", "NO"], true)
+                               .setAllowInvalid(false)
+                               .setHelpText('SI o NO. Vacío equivale a SI: el cliente aparece en el mail de guardia de su POD.')
+                               .build();
+    clientesSheet.getRange(2, 4, maxRows - 1, 1).setDataValidation(rule);
+
+    Logger.log('Dropdown "Mail de Guardia" aplicado en la Columna D de la hoja Clientes.');
+  } catch (e) {
+    Logger.log('Error al aplicar el dropdown de "Mail de Guardia": ' + e.message);
+  }
+}
+
+/**
  * Trigger simple que se ejecuta al editar la planilla.
- * Si detecta que se modificó la hoja "Clientes", actualiza automáticamente 
+ * Si detecta que se modificó la hoja "Clientes", actualiza automáticamente
  * los dropdowns en todas las pestañas de excepciones.
  */
 function onEdit(e) {
   if (!e || !e.range) return;
   const sheet = e.range.getSheet();
-  
+
   if (sheet.getName() === Config.SHEET_CLIENTES) {
     actualizarDropdownsClientes();
+    // Para que un cliente agregado hoy tenga el dropdown sin que nadie corra nada a mano.
+    actualizarDropdownMailGuardia();
   }
 }
