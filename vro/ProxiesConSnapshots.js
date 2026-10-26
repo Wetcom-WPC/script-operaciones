@@ -106,10 +106,19 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
     if (config) {
       config.isAVS = esAVS;
       if (esAVS && !config.jiraProjectKeyAVS) {
-        summaryReport.advertencias.push(`El cliente "${config.clientName}" tiene reporte AVS de Proxies con snapshots pero no tiene configurado Proyecto Jira AVS.`);
+        summaryReport.advertencias.push({
+          cliente: config.clientName,
+          problema: `El cliente "${config.clientName}" tiene reporte AVS de Proxies con snapshots pero no tiene configurado Proyecto Jira AVS.`,
+          accion: "Configurar la columna AVS en el Índice Maestro si corresponde."
+        });
       }
     }
     return config;
+  }
+
+  findExistingTicket(clientConfig) {
+    return findExistingJiraTicket(summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_TABLE, clientConfig), clientConfig.jiraProjectKey) ||
+           findExistingJiraTicket(summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfig), clientConfig.jiraProjectKey);
   }
 
   processData(parsedData, clientConfig, summaryReport) {
@@ -121,7 +130,7 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
     const reportRows = parsedData.slice(1);
 
     const clientName = clientConfig ? clientConfig.clientName : "_Desconocido_";
-    const exceptions = ClientConfigService.getExceptions(clientName, this.operationName);
+    const exceptions = (clientConfig && clientConfig.exceptions) || {};
 
     const normHeaders = headers.map(h => normalizarEncabezado(h));
     const findCol = (name) => {
@@ -136,7 +145,11 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
     let idxSnapshotName = findCol("Snapshot_Name");
 
     if (idxName === -1) {
-      summaryReport.errores.push({ error: "Falta columna Name en reporte de Proxies con snapshots." });
+      summaryReport.errores.push({
+        cliente: clientName,
+        error: "Falta columna Name en reporte de Proxies con snapshots.",
+        detalle: "Encabezados recibidos: " + JSON.stringify(headers)
+      });
       return null;
     }
 
@@ -167,9 +180,14 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
       const spaceGB = idxSpace !== -1 ? parseTamanoAGB(row[idxSpace], unidadEspacio) : 0;
       row.push(formatearTamanoDesdeGB(spaceGB));
 
-      // Verificar si hay reglas de excepción personalizadas para este proxy en la planilla de excepciones
-      const matchedRules = typeof findAllMatchingRules === 'function' ? findAllMatchingRules(row, headers, exceptions) : [];
-      const isExcepted = matchedRules.some(r => r.criterio === 'exceptuar');
+      // Verificar si hay reglas de excepción para este proxy en la planilla de excepciones
+      let isExcepted = false;
+      if (typeof isRowExcepted === 'function' && isRowExcepted(row, headers, exceptions)) {
+        isExcepted = true;
+      } else if (typeof findAllMatchingRules === 'function') {
+        const matchedRules = findAllMatchingRules(row, headers, exceptions);
+        isExcepted = matchedRules.some(r => !r.criterio || r.criterio === 'exceptuar' || r.criterio === 'ignorar');
+      }
 
       if (isExcepted) {
         Logger.log(`[Proxies con snapshots] -> Proxy exceptuado por regla personalizada: ${vmName}`);
@@ -203,12 +221,7 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
       return this.handleNoAlerts(existingTicketKey, clientConfig, summaryReport);
     }
 
-    const clientConfigOps = (typeof getClientConfigByName === 'function' ? getClientConfigByName(clientConfig.clientName, this.operationName) : null) || clientConfig;
-    if (clientConfig.isAVS) clientConfigOps.isAVS = true;
-
-    const existingTicketKeyOps = existingTicketKey ||
-                                 findExistingJiraTicket(summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_TABLE, clientConfigOps), clientConfigOps.jiraProjectKey) ||
-                                 findExistingJiraTicket(summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps), clientConfigOps.jiraProjectKey);
+    const existingTicketKeyOps = existingTicketKey || this.findExistingTicket(clientConfig);
 
     const nombreReporteOps = (attachmentName || "Proxies con snapshots.csv").replace(/\.(xlsx|csv|xls|json)$/i, "") + "-OPS.xlsx";
     const xlsxBlobOps = convertDataToXlsxBlob([headers, ...opsAlertsFinal], nombreReporteOps);
@@ -226,15 +239,15 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
             commentText += "Se adjunta reporte detallado.\n";
           }
           addCommentToJiraTicket(existingTicketKeyOps, commentText);
-          summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con comentario y adjunto.`, cliente: clientConfigOps.clientName });
+          summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con comentario y adjunto.`, cliente: clientConfig.clientName });
         } else {
           if (xlsxBlobOps) {
             const attStatus = addAttachmentToJiraTicket(existingTicketKeyOps, xlsxBlobOps);
             if (attStatus.status === 'SUCCESS') {
               commentText += "Se adjunta reporte detallado.";
               addCommentToJiraTicket(existingTicketKeyOps, commentText);
-              summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con adjunto.`, cliente: clientConfigOps.clientName });
-              const accountIdAsignado = chequearSiEsInformativa(clientConfigOps.clientName, this.operationName);
+              summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con adjunto.`, cliente: clientConfig.clientName });
+              const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName);
               if (accountIdAsignado) ticketInformativo(existingTicketKeyOps, accountIdAsignado, summaryReport.timeGuard);
             } else {
               summaryReport.advertencias.push({ problema: "Fallo al adjuntar reporte en ticket Ops.", accion: "Verificar permisos de Jira." });
@@ -249,26 +262,26 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
       let summary, description;
       description = `Se detectaron ${opsAlertsFinal.length} Proxies con snapshots activos (Ops):\n${opsReasonsFinal}\n\n`;
       if (opsAlertsFinal.length <= PROXIES_ROW_LIMIT_FOR_TABLE) {
-        summary = summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_TABLE, clientConfigOps);
+        summary = summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_TABLE, clientConfig);
         description += `|| ${headers.join(" || ")} ||\n`;
         opsAlertsFinal.forEach(row => {
           description += `| ${row.map(c => (c != null ? String(c).trim() : "")).join(" | ")} |\n`;
         });
-        const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfigOps, this.operationName);
+        const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfig, this.operationName);
         if (creationResult.status === 'SUCCESS') {
-          summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)), cliente: clientConfigOps.clientName });
+          summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)), cliente: clientConfig.clientName });
         } else {
-          summaryReport.errores.push({ error: "Fallo al crear ticket en Jira", detalle: JSON.stringify(creationResult.detail) });
+          summaryReport.errores.push({ error: "Fallo al crear ticket en Jira", detalle: JSON.stringify(creationResult.detail), cliente: clientConfig.clientName });
           globalStatus = 'FAILURE';
         }
       } else {
-        summary = summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfigOps);
+        summary = summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfig);
         description += `Debido a la cantidad de registros, se adjunta el reporte detallado.`;
-        const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfigOps, this.operationName);
+        const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfig, this.operationName);
         if (creationResult.status === 'SUCCESS') {
-          summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)), cliente: clientConfigOps.clientName });
+          summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)), cliente: clientConfig.clientName });
         } else {
-          summaryReport.errores.push({ error: "Fallo al crear ticket en Jira", detalle: JSON.stringify(creationResult.detail) });
+          summaryReport.errores.push({ error: "Fallo al crear ticket en Jira", detalle: JSON.stringify(creationResult.detail), cliente: clientConfig.clientName });
           globalStatus = 'FAILURE';
         }
       }
