@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @fileoverview Lógica específica para procesar reportes de "VMs con snapshots".
  * Refactorizado utilizando la clase base MailProcessor.
  */
@@ -310,11 +310,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 
       let fallsToOps = false;
 
-      if (esClientePetersen) {
-         // Para clientes de Petersen, se excluye de Soporte por completo en VMs con snapshots.
-         // Cae directamente a la evaluación de Operaciones (umbral de 7 días / 700 GB, proxies, etc.)
-         fallsToOps = true;
-      } else if (hasExceptuarSop) {
+      if (hasExceptuarSop) {
          fallsToOps = true;
       } else if (considerarSopRules.length > 0) {
          let rowBreaksRule = false;
