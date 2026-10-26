@@ -1,7 +1,7 @@
 /**
  * @fileoverview Lógica específica para procesar reportes de "Proxies con snapshots".
  * Consume la configuración del cliente desde el Índice Maestro.
- * Reporta todo proxy de backup con snapshot directamente como alerta de Operaciones (Ops).
+ * Reporta todo proxy de backup con snapshot directamente como alerta en Operaciones.
  */
 
 // --- CONFIGURACIÓN ESPECÍFICA ---
@@ -168,8 +168,8 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
 
     const unidadEspacio = idxSpace !== -1 ? unidadDelEncabezado(headers[idxSpace]) : '';
 
-    const opsAlerts = [];
-    const detectedReasonsOps = new Set();
+    const finalAlerts = [];
+    const detectedReasons = new Set();
 
     reportRows.forEach(row => {
       if (!row || row.length === 0 || row.join('').trim() === '') return;
@@ -194,63 +194,60 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
         return;
       }
 
-      // Regla de Negocio: Todo proxy de backup con snapshot activo es una anomalía para Operaciones (Ops)
-      detectedReasonsOps.add("Snapshot activo en Proxy de Backup (no tolerado)");
-      Logger.log(`[Proxies con snapshots] -> Proxy con snapshot asignado a OPS: ${vmName}`);
-      opsAlerts.push(row);
+      // Regla de Negocio: Todo proxy de backup con snapshot activo es una anomalía
+      detectedReasons.add("Snapshot activo en Proxy de Backup (no tolerado)");
+      Logger.log(`[Proxies con snapshots] -> Proxy con snapshot detectado: ${vmName}`);
+      finalAlerts.push(row);
     });
 
-    const reasonsText = Array.from(detectedReasonsOps).join("\n") || "Se detectaron proxies de backup con snapshots activos.";
-    this.opsAlerts = opsAlerts;
-    this.opsReasonsText = reasonsText;
+    const reasonsText = Array.from(detectedReasons).join("\n") || "Se detectaron proxies de backup con snapshots activos.";
+    this.finalAlerts = finalAlerts;
+    this.reasonsText = reasonsText;
 
     return {
       headers: headers,
-      finalAlerts: opsAlerts,
-      rowsForExport: opsAlerts,
+      finalAlerts: finalAlerts,
+      rowsForExport: finalAlerts,
       reasonsText: reasonsText
     };
   }
 
   handleAlerts(existingTicketKey, clientConfig, summaryReport, headers, finalAlerts, rowsForExport, reasonsText, attachmentName) {
     let globalStatus = 'SUCCESS';
-    const opsAlertsFinal = [...(this.opsAlerts || finalAlerts || [])];
-    const opsReasonsFinal = this.opsReasonsText || reasonsText || "Se detectaron proxies de backup con snapshots activos.";
+    const alertsToReport = [...(this.finalAlerts || finalAlerts || [])];
+    const alertCount = alertsToReport.length;
+    const reasonsFinal = this.reasonsText || reasonsText || "Se detectaron proxies de backup con snapshots activos.";
 
-    if (opsAlertsFinal.length === 0) {
+    if (alertCount === 0) {
       return this.handleNoAlerts(existingTicketKey, clientConfig, summaryReport);
     }
 
-    const existingTicketKeyOps = existingTicketKey || this.findExistingTicket(clientConfig);
+    const ticketKey = existingTicketKey || this.findExistingTicket(clientConfig);
 
-    const nombreReporteOps = (attachmentName || "Proxies con snapshots.csv").replace(/\.(xlsx|csv|xls|json)$/i, "") + "-OPS.xlsx";
-    const xlsxBlobOps = convertDataToXlsxBlob([headers, ...opsAlertsFinal], nombreReporteOps);
-    if (xlsxBlobOps) {
-      this.extractedBlobs = this.extractedBlobs || [];
-      this.extractedBlobs.push(xlsxBlobOps);
-    }
+    const newFileName = (attachmentName || "Proxies con snapshots.csv").replace(/\.(xlsx|csv|xls|json)$/i, "") + ".xlsx";
+    const xlsxBlob = convertDataToXlsxBlob([headers, ...alertsToReport], newFileName);
 
-    if (existingTicketKeyOps) {
-      if (!haSidoActualizadoHoy(existingTicketKeyOps, "ALERTA-PROXIES-OPS")) {
-        let commentText = `⏳ **El problema persiste.** [HU-ALERTA-PROXIES-OPS]\n\nSe detectaron ${opsAlertsFinal.length} Proxies fuera de norma:\n${opsReasonsFinal}\n\n`;
-        if (opsAlertsFinal.length <= PROXIES_ROW_LIMIT_FOR_TABLE) {
-          if (xlsxBlobOps) {
-            addAttachmentToJiraTicket(existingTicketKeyOps, xlsxBlobOps);
+    if (ticketKey) {
+      if (!haSidoActualizadoHoy(ticketKey, "ALERTA-PROXIES")) {
+        let commentText = `⏳ **El problema persiste.** [ALERTA-PROXIES]\n\nSe detectaron ${alertCount} proxies con snapshots activos:\n${reasonsFinal}\n\n`;
+        if (alertCount <= PROXIES_ROW_LIMIT_FOR_TABLE) {
+          if (xlsxBlob) {
+            addAttachmentToJiraTicket(ticketKey, xlsxBlob);
             commentText += "Se adjunta reporte detallado.\n";
           }
-          addCommentToJiraTicket(existingTicketKeyOps, commentText);
-          summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con comentario y adjunto.`, cliente: clientConfig.clientName });
+          addCommentToJiraTicket(ticketKey, commentText);
+          summaryReport.exitos.push({ mensaje: `Ticket ${ticketKey} actualizado con comentario y adjunto.`, cliente: clientConfig.clientName });
         } else {
-          if (xlsxBlobOps) {
-            const attStatus = addAttachmentToJiraTicket(existingTicketKeyOps, xlsxBlobOps);
+          if (xlsxBlob) {
+            const attStatus = addAttachmentToJiraTicket(ticketKey, xlsxBlob);
             if (attStatus.status === 'SUCCESS') {
               commentText += "Se adjunta reporte detallado.";
-              addCommentToJiraTicket(existingTicketKeyOps, commentText);
-              summaryReport.exitos.push({ mensaje: `Ticket OPS ${existingTicketKeyOps} actualizado con adjunto.`, cliente: clientConfig.clientName });
+              addCommentToJiraTicket(ticketKey, commentText);
+              summaryReport.exitos.push({ mensaje: `Ticket ${ticketKey} actualizado con adjunto.`, cliente: clientConfig.clientName });
               const accountIdAsignado = chequearSiEsInformativa(clientConfig.clientName, this.operationName);
-              if (accountIdAsignado) ticketInformativo(existingTicketKeyOps, accountIdAsignado, summaryReport.timeGuard);
+              if (accountIdAsignado) ticketInformativo(ticketKey, accountIdAsignado, summaryReport.timeGuard);
             } else {
-              summaryReport.advertencias.push({ problema: "Fallo al adjuntar reporte en ticket Ops.", accion: "Verificar permisos de Jira." });
+              summaryReport.advertencias.push({ problema: "Fallo al adjuntar reporte en ticket.", accion: "Verificar permisos de Jira." });
               globalStatus = 'FAILURE';
             }
           } else {
@@ -260,16 +257,16 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
       }
     } else {
       let summary, description;
-      description = `Se detectaron ${opsAlertsFinal.length} Proxies con snapshots activos (Ops):\n${opsReasonsFinal}\n\n`;
-      if (opsAlertsFinal.length <= PROXIES_ROW_LIMIT_FOR_TABLE) {
+      description = `Se detectaron ${alertCount} Proxies con snapshots activos:\n${reasonsFinal}\n\n`;
+      if (alertCount <= PROXIES_ROW_LIMIT_FOR_TABLE) {
         summary = summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_TABLE, clientConfig);
         description += `|| ${headers.join(" || ")} ||\n`;
-        opsAlertsFinal.forEach(row => {
+        alertsToReport.forEach(row => {
           description += `| ${row.map(c => (c != null ? String(c).trim() : "")).join(" | ")} |\n`;
         });
-        const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfig, this.operationName);
+        const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, this.operationName);
         if (creationResult.status === 'SUCCESS') {
-          summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)), cliente: clientConfig.clientName });
+          summaryReport.exitos.push({ mensaje: creationResult.detail.mensaje || JSON.stringify(creationResult.detail), cliente: clientConfig.clientName });
         } else {
           summaryReport.errores.push({ error: "Fallo al crear ticket en Jira", detalle: JSON.stringify(creationResult.detail), cliente: clientConfig.clientName });
           globalStatus = 'FAILURE';
@@ -277,9 +274,9 @@ class ProxiesConSnapshotsProcessor extends MailProcessor {
       } else {
         summary = summaryProxiesSegunAVS(PROXIES_JIRA_TICKET_SUMMARY_ATTACHMENT, clientConfig);
         description += `Debido a la cantidad de registros, se adjunta el reporte detallado.`;
-        const creationResult = createTicketAndNotify(summary, description, xlsxBlobOps, clientConfig, this.operationName);
+        const creationResult = createTicketAndNotify(summary, description, xlsxBlob, clientConfig, this.operationName);
         if (creationResult.status === 'SUCCESS') {
-          summaryReport.exitos.push({ mensaje: "Ops: " + (creationResult.detail.mensaje || JSON.stringify(creationResult.detail)), cliente: clientConfig.clientName });
+          summaryReport.exitos.push({ mensaje: creationResult.detail.mensaje || JSON.stringify(creationResult.detail), cliente: clientConfig.clientName });
         } else {
           summaryReport.errores.push({ error: "Fallo al crear ticket en Jira", detalle: JSON.stringify(creationResult.detail), cliente: clientConfig.clientName });
           globalStatus = 'FAILURE';
