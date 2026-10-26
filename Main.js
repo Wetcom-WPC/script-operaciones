@@ -186,9 +186,16 @@ function _procesarYEnviarGuardia() {
   const { mensajesProcesados, mappings } = resultado;
   
   for (const pod in mensajesProcesados) {
-    const alarmasPorCliente = mensajesProcesados[pod];
+    const alarmasPorCliente = _clientesParaMailDeGuardia(mensajesProcesados[pod], mappings.mapaMailGuardia, pod);
+
+    // Un POD cuyos únicos clientes quedaron excluidos no recibe un correo vacío.
+    if (Object.keys(alarmasPorCliente).length === 0) {
+      Logger.log(`[${pod}] No queda ningún cliente para el mail de guardia: no se envía.`);
+      continue;
+    }
+
     const podFormateado = pod === "WPC" ? pod : (pod.toUpperCase().includes('POD') ? pod : `POD ${pod}`);
-    
+
     const htmlCorreo = MessageFormatter.generarCorreoGuardiaHTML(podFormateado, alarmasPorCliente);
     const destino = mappings.mapaCorreosPods[podFormateado] || mappings.mapaCorreosPods[pod] || Config.EMAIL_FALLBACK;
     const tz = Session.getScriptTimeZone() || "America/Argentina/Buenos_Aires";
@@ -201,6 +208,43 @@ function _procesarYEnviarGuardia() {
   }
   
   Logger.log("Ejecución de Guardia finalizada con éxito.");
+}
+
+/**
+ * Saca del mail de guardia a los clientes marcados con "NO" en la Columna D de la hoja
+ * Clientes (ver DataRepository._crearMapaMailGuardia).
+ *
+ * El filtro se aplica acá y no antes a propósito: el mail de guardia es el único consumidor
+ * que tiene que ver un subconjunto. El resumen de Slack —el de días hábiles y el del propio
+ * fin de semana— se arma desde `mensajesProcesados` completo, así que el cliente excluido
+ * sigue estando a la vista del equipo. Filtrar más arriba lo sacaría de todos lados, que es
+ * justamente lo que hace el motor de Excepciones y lo que acá NO se quiere.
+ *
+ * @param {Object} alarmasPorCliente mensajesProcesados[pod], indexado por nombre de cliente.
+ * @param {Object} mapaMailGuardia Nombre de cliente en mayúsculas -> false si está excluido.
+ * @param {string} pod Sólo para el log.
+ * @returns {Object} Los clientes que sí van al correo.
+ */
+function _clientesParaMailDeGuardia(alarmasPorCliente, mapaMailGuardia, pod) {
+  const mapa = mapaMailGuardia || Object.create(null);
+  const incluidos = {};
+  const omitidos = [];
+
+  for (const cliente in alarmasPorCliente) {
+    if (mapa[cliente.toString().trim().toUpperCase()] === false) {
+      omitidos.push(cliente);
+    } else {
+      incluidos[cliente] = alarmasPorCliente[cliente];
+    }
+  }
+
+  // AGENTS.md §7: que un cliente no aparezca en el correo tiene que poder explicarse mirando
+  // el log, no deduciéndose de una ausencia.
+  if (omitidos.length > 0) {
+    Logger.log(`[${pod}] Fuera del mail de guardia por la hoja Clientes: ${omitidos.join(', ')}. Sus alarmas siguen en Jira y en el resumen de Slack.`);
+  }
+
+  return incluidos;
 }
 
 /**

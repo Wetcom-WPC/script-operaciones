@@ -41,6 +41,7 @@ const DataRepository = {
       mapaAlarmas: this._createMap(sheetTiposAlarmas.getDataRange().getValues()),
       mapaCorreos: this._parseCorreosEntorno(correosData),
       mapaCorreosPods: this._parseCorreosEntorno(correosPodsData),
+      mapaMailGuardia: this._crearMapaMailGuardia(datosClientes),
       reglasExcepcion: todasLasExcepciones
     };
   },
@@ -69,6 +70,38 @@ const DataRepository = {
     return dataArray.slice(1).reduce((map, row) => {
       if (row[0] && row[2]) {
         map[row[0].toString().trim()] = row[2].toString().trim();
+      }
+      return map;
+    }, Object.create(null));
+  },
+
+  /**
+   * Clientes que NO deben aparecer en el mail de guardia, por nombre (Columna B) normalizado.
+   *
+   * La Columna D de la hoja Clientes ("Mail de Guardia") admite SI / NO. Vacía —o ausente,
+   * si la planilla todavía tiene tres columnas— significa SI: un cliente nuevo entra al mail
+   * sin que nadie tenga que acordarse de marcar nada.
+   *
+   * Esto NO es una excepción: la alarma se procesa, se agrupa, se publica en el resumen de
+   * Slack y su ticket de Jira queda abierto igual que siempre. Lo único que cambia es si el
+   * cliente aparece en el correo del fin de semana. Para silenciar una alarma de verdad está
+   * el motor de Excepciones, que además cierra el ticket (ver Config.CERRAR_ALARMAS_SILENCIADAS).
+   *
+   * Caso que lo motivó (26/10/2026): Banco Macro tiene servicio de alarmas 24x7 propio, así
+   * que el POD 5 no quiere recibir sus alarmas los fines de semana — pero sí seguir viéndolas
+   * en el resumen de días hábiles.
+   */
+  _crearMapaMailGuardia: function(dataArray) {
+    return dataArray.slice(1).reduce((map, row) => {
+      const cliente = row[1] ? row[1].toString().trim() : '';
+      const valor = row[3] ? row[3].toString().trim().toUpperCase() : '';
+      if (!cliente || valor === '') return map;
+
+      if (valor === 'NO') {
+        map[cliente.toUpperCase()] = false;
+      } else if (valor !== 'SI' && valor !== 'SÍ') {
+        // AGENTS.md §7: una celda con un valor que no entendemos no puede decidir en silencio.
+        Logger.log(`Hoja "${Config.SHEET_CLIENTES}": valor no reconocido en "Mail de Guardia" para ${cliente} ("${row[3]}"). Se asume SI.`);
       }
       return map;
     }, Object.create(null));
