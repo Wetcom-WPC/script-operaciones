@@ -57,6 +57,7 @@ const TECNOLOGIA_POR_OPERACION = {
   "Alertas de vSphere":                               "vRO",
   "VMs con preguntas":                                "vRO",
   "VMs con snapshots":                                "vRO",
+  "Proxies con snapshots":                            "vRO",
   "Discos montados en proxy":                         "vRO",
   // vrops/
   "Alertas de vROps":                                 "vROps",
