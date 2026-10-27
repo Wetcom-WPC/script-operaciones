@@ -142,6 +142,16 @@ function manual_compararMotorExcepciones(opciones = {}) {
       if (cambioGrupos.soloNuevo.length) Logger.log(`   aparecen:         ${cambioGrupos.soloNuevo.join(', ')}`);
       if (cambioGrupos.modificados.length) Logger.log(`   cambian:          ${cambioGrupos.modificados.join(', ')}`);
 
+      // Ninguna diferencia queda sin explicar: cada campo que cambió se nombra y se dice si el
+      // motor lo absorbe ("inocuo") o si hay que mirarlo.
+      cambioGrupos.detalleModificados.forEach(d => {
+        if (!d.inocuo) {
+          const clave = 'CAMBIA_' + d.campo;
+          tallyMotivos[clave] = (tallyMotivos[clave] || 0) + 1;
+        }
+        Logger.log(`   [${d.inocuo ? 'inocuo ' : 'REVISAR'}] ${d.id} cond.${d.condicion} ${d.campo}: ${d.prod} -> ${d.nuevo}`);
+      });
+
       motivos.forEach(m => {
         tallyMotivos[m.motivo] = (tallyMotivos[m.motivo] || 0) + 1;
         Logger.log(`   fila ${m.fila}: ${m.motivo} — ${m.detalle}`);
@@ -408,8 +418,61 @@ function _compararGrupos(viejo, nuevo) {
     .filter(id => idsNuevo.indexOf(id) !== -1)
     .filter(id => canon(viejo[id]) !== canon(nuevo[id]));
 
+  // Qué campo cambió en cada grupo modificado. Sin esto quedaban pestañas reportadas como
+  // "cambian" sin ningún motivo que lo explicara, y una diferencia sin explicación no sirve
+  // para decidir: puede ser basura inocua o un cambio de comportamiento.
+  const detalleModificados = [];
+  modificados.forEach(id => {
+    _camposQueCambian(viejo[id] || [], nuevo[id] || []).forEach(d => {
+      detalleModificados.push(Object.assign({ id: id }, d));
+    });
+  });
+
   return {
     hayCambio: soloViejo.length > 0 || soloNuevo.length > 0 || modificados.length > 0,
-    soloViejo, soloNuevo, modificados
+    soloViejo, soloNuevo, modificados, detalleModificados
   };
+}
+
+/**
+ * Compara condición por condición y devuelve los campos que difieren, marcando si el motor
+ * los absorbe o no.
+ *
+ * `column` es el ÚNICO campo que el motor normaliza antes de comparar (`normalizarEncabezado`,
+ * y lo aplica a los dos lados), así que recortarle basura al borde casi siempre da lo mismo.
+ * El resto se comparan literalmente y un espacio cambia el comportamiento:
+ *   - `matchType`: `isRowExcepted` hace `condition.matchType.toLowerCase()` sin recortar, así
+ *     que "contiene " cae en el `default` del switch y la regla NO aplica.
+ *   - `criterio`: se compara con `!== 'considerar'`, así que "considerar " se lee como
+ *     "silenciar" — exactamente lo contrario de lo que quiso quien lo cargó.
+ *   - `sizeType`: se compara con `=== 'porcentaje'` / `'relativo'`, y decide si el umbral de
+ *     tamaño es absoluto o relativo.
+ */
+function _camposQueCambian(grupoViejo, grupoNuevo) {
+  const CAMPOS = ['column', 'matchType', 'values', 'ageLimit', 'sizeLimit', 'qtyLimit', 'sizeType', 'criterio'];
+  const dif = [];
+  const total = Math.max(grupoViejo.length, grupoNuevo.length);
+
+  for (let i = 0; i < total; i++) {
+    const a = grupoViejo[i], b = grupoNuevo[i];
+
+    if (!a || !b) {
+      dif.push({
+        condicion: i + 1, campo: '(cantidad de condiciones)',
+        prod: grupoViejo.length, nuevo: grupoNuevo.length, inocuo: false
+      });
+      continue;
+    }
+
+    CAMPOS.forEach(campo => {
+      const prod = JSON.stringify(a[campo] === undefined ? null : a[campo]);
+      const nuevo = JSON.stringify(b[campo] === undefined ? null : b[campo]);
+      if (prod === nuevo) return;
+
+      const inocuo = (campo === 'column') && (_normalizaColumna(a[campo]) === _normalizaColumna(b[campo]));
+      dif.push({ condicion: i + 1, campo: campo, prod: prod, nuevo: nuevo, inocuo: inocuo });
+    });
+  }
+
+  return dif;
 }
