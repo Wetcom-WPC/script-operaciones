@@ -2654,14 +2654,16 @@
       var pod = o.cli.pod || 'Sin POD';
       if (!porPod[pod]) porPod[pod] = {};
       if (!porPod[pod][o.cli.nombre]) porPod[pod][o.cli.nombre] = [];
-      porPod[pod][o.cli.nombre].push({ tech: o.tech, promedio: minutosAHora(o.prom), tarde: o.tarde, n: o.n, fuera: o.fuera });
+      // Solo lo que el mensaje de Slack muestra. Los conteos de "N de M tarde" y las novedades
+      // salieron del resumen a pedido del equipo: el mensaje se volvía ilegible y lo que se
+      // quiere de un vistazo es la hora y si está en horario.
+      porPod[pod][o.cli.nombre].push({ tech: o.tech, promedio: minutosAHora(o.prom), tarde: o.tarde });
     });
     var pods = Object.keys(porPod).sort().map(function(pod) {
       return {
         pod: pod,
         clientes: Object.keys(porPod[pod]).sort(function(a, b) { return a.localeCompare(b); }).map(function(nombre) {
-          return { cliente: nombre, tecnologias: porPod[pod][nombre],
-            novedades: novedadesDe(claveDeCliente(nombre), rango.desdeIso, rango.hastaIso, f.tech) };
+          return { cliente: nombre, tecnologias: porPod[pod][nombre] };
         })
       };
     });

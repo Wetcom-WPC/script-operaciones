@@ -2372,6 +2372,15 @@ function webapp_guardarComentarioEnvio(datos) {
 // "de prueba" termine en el canal de un POD sin que nadie lo haya decidido.
 const WEBAPP_PROP_WEBHOOK_HORARIOS = 'SLACK_WEBHOOK_REPORTE_HORARIOS';
 
+// Los colores de la barra lateral de cada POD en Slack. Son los verdes y rojos de la paleta
+// de Slack, que es la que se lee bien tanto en tema claro como en oscuro.
+const WEBAPP_SLACK_COLOR_OK    = '#2EB67D';
+const WEBAPP_SLACK_COLOR_TARDE = '#E01E5A';
+// Slack deja de renderizar los attachments que pasan de 20, y el mensaje entero se corta a los
+// 40 KB. Los topes están para que el recorte sea nuestro y avisado, no de Slack y en silencio.
+const WEBAPP_SLACK_MAX_PODS = 20;
+const WEBAPP_SLACK_MAX_CLIENTES = 100;
+
 function _webappTexto(valor, max) {
   return String(valor === undefined || valor === null ? '' : valor).substring(0, max || 200);
 }
@@ -2517,38 +2526,51 @@ function webapp_enviarResumenHorariosSlack(datos) {
   }
 
   const envios = _webappEntero(datos.envios), fuera = _webappEntero(datos.fuera);
-  let texto = '🕚 *Horario de envío del mail de operaciones*\n' +
-    _webappEscaparSlack(datos.periodo) + ': del ' + _webappEscaparSlack(datos.desde) + ' al ' + _webappEscaparSlack(datos.hasta) +
-    (datos.filtros ? ' · filtro: ' + _webappEscaparSlack(datos.filtros) : '') + '\n' +
-    'Promedio general: *' + _webappHora(datos.promedio) + '* ' + (datos.promedioTarde ? '🔴' : '🟢') +
-    ' · ' + fuera + ' de ' + envios + ' envíos después de las 11:00\n';
 
-  datos.pods.slice(0, 20).forEach(function (pod) {
-    texto += '\n*' + _webappEscaparSlack(pod.pod) + '*\n';
-    (Array.isArray(pod.clientes) ? pod.clientes : []).slice(0, 100).forEach(function (cli) {
+  // El encabezado va en "text" y no en un attachment porque es lo que Slack usa como vista
+  // previa en la notificación y en la lista de canales.
+  const encabezado = '🕚 *Horario de envío del mail de operaciones*\n' +
+    _webappEscaparSlack(datos.periodo) + ' · ' + _webappEscaparSlack(datos.desde) + ' al ' + _webappEscaparSlack(datos.hasta) +
+    (datos.filtros ? ' · ' + _webappEscaparSlack(datos.filtros) : '') + '\n' +
+    'Promedio general: *' + _webappHora(datos.promedio) + '* ' + (datos.promedioTarde ? '🔴' : '🟢') +
+    ' · ' + fuera + ' de ' + envios + ' envíos después de las 11:00';
+
+  // Un attachment por POD. El "color" es la barra lateral que pinta Slack: verde si todos los
+  // clientes de ese POD están en horario, rojo si alguno se pasa de las 11. Es lo que permite
+  // ver de un vistazo, sin leer, qué POD necesita atención.
+  const attachments = datos.pods.slice(0, WEBAPP_SLACK_MAX_PODS).map(function (pod) {
+    const clientes = Array.isArray(pod.clientes) ? pod.clientes : [];
+    let algunoTarde = false;
+
+    const lineas = clientes.slice(0, WEBAPP_SLACK_MAX_CLIENTES).map(function (cli) {
       const techs = Array.isArray(cli.tecnologias) ? cli.tecnologias.slice(0, 10) : [];
-      const algunaTarde = techs.some(function (t) { return !!t.tarde; });
+      const tardeAca = techs.some(function (t) { return !!t.tarde; });
+      if (tardeAca) algunoTarde = true;
       const partes = techs.map(function (t) {
         const hora = _webappHora(t.promedio);
-        const f = _webappEntero(t.fuera), n = _webappEntero(t.n);
-        return _webappEscaparSlack(t.tech) + ' ' + (t.tarde ? '*' + hora + '*' : hora) +
-          (f > 0 ? ' (' + f + ' de ' + n + ' tarde)' : '');
+        // La hora en negrita es la que explica el círculo rojo: sin esto se ve que el cliente
+        // está en rojo pero no por cuál tecnología.
+        return _webappEscaparSlack(t.tech) + ' ' + (t.tarde ? '*' + hora + '*' : hora);
       });
-      texto += (algunaTarde ? '🔴 ' : '🟢 ') + _webappEscaparSlack(cli.cliente) + ' — ' + partes.join(' · ') + '\n';
-      // Novedades del cliente en el período: la constancia de lo que pasó.
-      (Array.isArray(cli.novedades) ? cli.novedades.slice(0, 10) : []).forEach(function (n) {
-        texto += '      ↳ _' + _webappEscaparSlack(n.fecha) + ' ' + _webappEscaparSlack(n.tech) + ':_ ' +
-          _webappEscaparSlack(_webappTexto(n.texto, 200)) + (n.excluido ? ' _(no cuenta en el promedio)_' : '') + '\n';
-      });
+      return (tardeAca ? '🔴' : '🟢') + '  *' + _webappEscaparSlack(cli.cliente) + '*  —  ' + partes.join('  ·  ');
     });
-  });
 
-  if (texto.length > 39000) texto = texto.substring(0, 39000) + '\n_… mensaje recortado por el límite de Slack._';
+    let cuerpo = lineas.join('\n');
+    // Slack corta el texto de un attachment en 8000 caracteres.
+    if (cuerpo.length > 7800) cuerpo = cuerpo.substring(0, 7800) + '\n_… recortado._';
+
+    return {
+      color: algunoTarde ? WEBAPP_SLACK_COLOR_TARDE : WEBAPP_SLACK_COLOR_OK,
+      title: _webappEscaparSlack(pod.pod),
+      text: cuerpo,
+      mrkdwn_in: ['text']
+    };
+  });
 
   const respuesta = fetchWithRetries(webhook, {
     method: 'post',
     contentType: 'application/json',
-    payload: JSON.stringify({ text: texto })
+    payload: JSON.stringify({ text: encabezado, attachments: attachments })
   });
   // Nunca fallar en silencio (AGENTS.md §7): si Slack no lo aceptó, el botón tiene que decirlo.
   const codigo = respuesta ? respuesta.getResponseCode() : null;
