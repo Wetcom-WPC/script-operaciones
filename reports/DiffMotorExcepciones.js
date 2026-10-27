@@ -318,11 +318,17 @@ function _motivosDeDivergencia(rawExceptionData) {
       }
       return;
     }
-    if (col !== col.trim()) {
+    // Acá hay que comparar la forma NORMALIZADA y no la cruda. `normalizarEncabezado` ya recorta
+    // espacios y saca el BOM y las comillas, y se aplica a los dos lados de la comparación, así
+    // que una columna con basura al borde normalmente matchea igual hoy: recortarla no cambia
+    // nada. Sólo importa cuando la basura rompe esa normalización — el caso real es un BOM ANTES
+    // de una comilla, que impide que el regex /^"|"$/ saque la comilla de apertura y deja
+    // '"name' en lugar de 'name'.
+    if (col !== col.trim() && _normalizaColumna(col) !== _normalizaColumna(col.trim())) {
       motivos.push({
-        fila: nroFila, motivo: 'COLUMNA_CON_ESPACIOS',
-        detalle: `la columna del reporte es "${col}" (con espacios al borde)`,
-        efecto: 'hoy no matchea ningún encabezado y la regla queda inerte; recortada, empieza a aplicar'
+        fila: nroFila, motivo: 'COLUMNA_ROMPE_NORMALIZACION',
+        detalle: `la columna del reporte es ${JSON.stringify(col)}: normaliza a ${JSON.stringify(_normalizaColumna(col))} en vez de ${JSON.stringify(_normalizaColumna(col.trim()))}`,
+        efecto: 'hoy no matchea el encabezado y la regla queda inerte; recortada, empieza a aplicar y el cliente deja de recibir esas alertas. REVISAR.'
       });
     }
 
@@ -368,6 +374,18 @@ function _motivosDeDivergencia(rawExceptionData) {
   });
 
   return motivos;
+}
+
+/**
+ * Normaliza un nombre de columna igual que lo hace el motor al buscarla en el reporte.
+ *
+ * Usa la `normalizarEncabezado` real del proyecto (core/DataProcessingService.js, AGENTS.md §5:
+ * es el único lugar donde vive esa lógica). El respaldo existe sólo para que la herramienta no
+ * se caiga si se la corre en un proyecto donde ese archivo no está.
+ */
+function _normalizaColumna(col) {
+  if (typeof normalizarEncabezado === 'function') return normalizarEncabezado(String(col));
+  return String(col).trim().toLowerCase();
 }
 
 /**
