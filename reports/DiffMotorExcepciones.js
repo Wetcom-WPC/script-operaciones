@@ -26,9 +26,17 @@
  * Compara, pestaña por pestaña, las reglas que produce el parser productivo contra las que
  * produce el de Playground.
  *
+ * Corriendo en Playground lee el Índice de Playground, que apunta a las planillas de
+ * testing: sirve para probar la herramienta, no para decidir sobre producción. Para medir
+ * el universo real sin desplegar nada en producción, cargar el ID del Índice productivo en
+ * la Script Property `INDICE_PRODUCCION_SOLO_LECTURA` de este proyecto (o pasarlo en
+ * `opciones.indiceId`). Se abre de solo lectura, como cualquier otra planilla.
+ *
  * @param {Object} [opciones]
+ * @param {string} [opciones.indiceId] Índice Maestro a leer. Por defecto usa la Script
+ *   Property `INDICE_PRODUCCION_SOLO_LECTURA` si existe, y si no el Índice de este proyecto.
  * @param {string} [opciones.cliente] Acota la corrida a un cliente (coincidencia parcial, sin
- *   distinguir mayúsculas). Sin esto recorre todas las planillas del Índice Maestro.
+ *   distinguir mayúsculas). Sin esto recorre todas las planillas del Índice.
  * @param {number} [opciones.minutosMax=4.5] Presupuesto de tiempo. Apps Script corta a los 6
  *   minutos: al llegar al límite se detiene ordenadamente y dice por dónde seguir.
  * @param {boolean} [opciones.soloDiferencias=true] En false lista también las pestañas iguales.
@@ -47,11 +55,32 @@ function manual_compararMotorExcepciones(opciones = {}) {
     return { status: 'ERROR', motivo: 'SIN_PARSER_NUEVO' };
   }
 
-  const planillas = _obtenerPlanillasExcepcionesUnicas();
+  const props = PropertiesService.getScriptProperties();
+  const indiceOverride = opciones.indiceId
+    || props.getProperty('INDICE_PRODUCCION_SOLO_LECTURA')
+    || null;
+  const indicePropio = props.getProperty('MASTER_INDEX_SHEET_ID');
+
+  // Que quede en el log de qué universo habla el resultado: una corrida contra el Índice de
+  // Playground no autoriza a promover nada, y la diferencia no se ve en los números.
+  if (indiceOverride && indiceOverride !== indicePropio) {
+    Logger.log(`Índice leído: EXTERNO (${indiceOverride}). Alcance: el universo real de clientes.`);
+  } else {
+    Logger.log('Índice leído: el de ESTE proyecto. Si esto es Playground, el alcance son las');
+    Logger.log('planillas de testing: sirve para probar la herramienta, NO para decidir sobre');
+    Logger.log('producción. Ver INDICE_PRODUCCION_SOLO_LECTURA en el encabezado del archivo.');
+  }
+
+  const masterData = indiceOverride
+    ? _leerIndicePorId(indiceOverride)
+    : _leerMasterDataDirecto();
+  const planillas = _agruparPlanillasPorArchivo(masterData);
+
   if (!planillas.length) {
-    Logger.log('No se encontró ninguna planilla de excepciones en el Índice Maestro.');
+    Logger.log('No se encontró ninguna planilla de excepciones en el Índice.');
     return { status: 'SIN_DATOS' };
   }
+  Logger.log(`Planillas de excepciones a recorrer: ${planillas.length} (de ${Math.max(0, masterData.length - 1)} filas del Índice).`);
 
   const diferencias = [];
   const tallyMotivos = {};
@@ -147,6 +176,48 @@ function manual_compararMotorExcepcionesDeCliente(nombreCliente) {
 }
 
 // ======================================================================
+// LECTURA DEL ÍNDICE
+// ======================================================================
+
+/**
+ * Lee la primera hoja de un Índice Maestro cualquiera por ID. Mismo criterio que
+ * `_leerMasterDataDirecto` (reports/AuditorExcepciones.js), que es el que se usa cuando no hay
+ * Índice externo configurado; acá sólo cambia de dónde sale el ID.
+ */
+function _leerIndicePorId(indiceId) {
+  try {
+    return SpreadsheetApp.openById(indiceId).getSheets()[0].getDataRange().getValues();
+  } catch (e) {
+    Logger.log(`[Comparador] No se pudo leer el Índice ${indiceId}: ${e.message}`);
+    return [];
+  }
+}
+
+/**
+ * Agrupa las filas del Índice por archivo de excepciones (Columna C), juntando los clientes que
+ * comparten planilla. Un ID de menos de 15 caracteres se descarta por inválido.
+ */
+function _agruparPlanillasPorArchivo(masterData) {
+  if (!masterData || masterData.length < 2) return [];
+  const map = Object.create(null);
+
+  for (let i = 1; i < masterData.length; i++) {
+    const row = masterData[i];
+    if (!row) continue;
+    const clientName = row[1] ? String(row[1]).trim() : '';
+    const exceptionFileId = row[2] ? String(row[2]).trim() : '';
+    if (!exceptionFileId || exceptionFileId.length < 15) continue;
+
+    if (!map[exceptionFileId]) map[exceptionFileId] = { fileId: exceptionFileId, clientes: [] };
+    if (clientName && map[exceptionFileId].clientes.indexOf(clientName) === -1) {
+      map[exceptionFileId].clientes.push(clientName);
+    }
+  }
+
+  return Object.keys(map).map(k => map[k]);
+}
+
+// ======================================================================
 // COPIA CONGELADA DEL PARSER PRODUCTIVO
 // ======================================================================
 
@@ -200,6 +271,19 @@ function _motivosDeDivergencia(rawExceptionData) {
   const motivos = [];
   const texto = (v) => (v != null ? String(v) : '');
 
+  // Cuántas filas activas de cada ID tienen columna y cuántas no. Sin este conteo no se puede
+  // distinguir los dos casos, que tienen efectos opuestos: si al descartar una fila sin columna
+  // queda alguna hermana, el grupo pasa a aplicar (menos alertas); si no queda ninguna, la regla
+  // ya era inerte —isRowExcepted falla al no encontrar la columna— y nada cambia.
+  const porId = Object.create(null);
+  filas.forEach(row => {
+    if (texto(row[5]).trim().toUpperCase() !== 'SI') return;
+    const id = texto(row[0]).trim();
+    if (!porId[id]) porId[id] = { conColumna: 0, sinColumna: 0 };
+    if (texto(row[1]).trim() === '') porId[id].sinColumna++;
+    else porId[id].conColumna++;
+  });
+
   filas.forEach((row, i) => {
     const nroFila = i + 2; // +1 por el encabezado, +1 porque las filas de la hoja arrancan en 1
     const activaCruda = texto(row[5]);
@@ -217,11 +301,21 @@ function _motivosDeDivergencia(rawExceptionData) {
 
     const col = texto(row[1]);
     if (col.trim() === '') {
-      motivos.push({
-        fila: nroFila, motivo: 'FILA_IGNORADA_SIN_COLUMNA',
-        detalle: `activa pero sin "Columna del Reporte" (ID "${texto(row[0]).trim()}")`,
-        efecto: 'hoy esta fila hace fallar TODO su grupo (las filas de un mismo ID se evalúan con AND); al descartarla, el resto del grupo se activa y pueden dejar de llegar alertas'
-      });
+      const id = texto(row[0]).trim();
+      const hermanas = porId[id] ? porId[id].conColumna : 0;
+      if (hermanas > 0) {
+        motivos.push({
+          fila: nroFila, motivo: 'FILA_IGNORADA_SIN_COLUMNA',
+          detalle: `activa pero sin "Columna del Reporte" (ID "${id}", que tiene ${hermanas} fila(s) más con columna)`,
+          efecto: 'hoy esta fila hace fallar TODO su grupo (las filas de un mismo ID se evalúan con AND); al descartarla, el resto del grupo se activa y pueden dejar de llegar alertas. REVISAR.'
+        });
+      } else {
+        motivos.push({
+          fila: nroFila, motivo: 'GRUPO_YA_INERTE_SE_DESCARTA',
+          detalle: `activa pero sin "Columna del Reporte" (ID "${id}", ninguna de cuyas filas tiene columna)`,
+          efecto: 'la regla tampoco aplica hoy: isRowExcepted no encuentra la columna y da la condición por fallida. Descartarla no cambia el comportamiento, sólo deja de arrastrar un grupo muerto. Es ruido en la planilla, no un cambio de alcance.'
+        });
+      }
       return;
     }
     if (col !== col.trim()) {
