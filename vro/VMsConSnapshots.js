@@ -188,6 +188,10 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     if (idxTotalCapacity !== -1 && !headers.includes("Used Space %")) {
       headers.push("Used Space %");
     }
+    // Los clientes mandan el tamaño como número pelado ("27.08"), así que el ticket no decía
+    // en qué unidad estaba. Esta columna muestra el mismo valor que el script usó para decidir
+    // si alerta, ya con la unidad puesta. No se pisa la columna original: esa es la evidencia
+    // de lo que mandó el cliente.
     const unidadEspacio = unidadDelEncabezado(headers[idxSpace]);
     const unidadCapacidad = idxTotalCapacity !== -1 ? unidadDelEncabezado(headers[idxTotalCapacity]) : '';
     if (!headers.includes(SNAPSHOTS_COLUMNA_TAMANO)) {
@@ -214,6 +218,9 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       return parseFloat(clean) || 0;
     };
 
+    // La conversión a GB vive en parseTamanoAGB (core/DataProcessingService.js): la usan
+    // también las herramientas de diagnóstico, y tener dos copias de un parseo fue el origen
+    // del incidente del 27/07/2026 (AGENTS.md §5). No reimplementarla acá.
     const parseSpaceToGB = parseTamanoAGB;
 
     const detectedReasonsOps = new Set();
@@ -303,7 +310,8 @@ class VMsConSnapshotsProcessor extends MailProcessor {
         return;
       }
 
-      // En SOP: Cualquier criterio que NO sea 'considerar' exceptúa de Soporte.
+      // En SOP: Cualquier criterio que NO sea 'considerar' exceptúa de Soporte, incluido el
+      // criterio VACÍO (ver el comentario largo en la evaluación de OPS, más abajo).
       const activeSopRules = specificSopRules.length > 0 ? specificSopRules : globalSopRules;
       const hasExceptuarSop = activeSopRules.some(r => r.criterio !== 'considerar');
       const considerarSopRules = activeSopRules.filter(r => r.criterio === 'considerar');
@@ -312,7 +320,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
 
       if (esClientePetersen) {
          // Para clientes de Petersen, se excluye de Soporte por completo en VMs con snapshots.
-         // Cae directamente a la evaluación de Operaciones (umbral de 7 días / 700 GB, proxies, etc.)
+         // Cae directamente a la evaluación de Operaciones (AGE_MAX / SIZE_MAX / CANTIDAD_MAX).
          fallsToOps = true;
       } else if (hasExceptuarSop) {
          fallsToOps = true;
@@ -357,6 +365,13 @@ class VMsConSnapshotsProcessor extends MailProcessor {
       if (fallsToOps) {
          // PASO 3: Evaluar OPS con Jerarquía de Especificidad
          const activeOpsRules = specificOpsRules.length > 0 ? specificOpsRules : globalOpsRules;
+         // Cualquier criterio que NO sea 'considerar' silencia la VM: 'ignorar', 'exceptuar'
+         // y también el criterio VACÍO. Lo último importa: en las planillas de excepciones
+         // de los clientes hay reglas con la celda de criterio en blanco, y la versión
+         // productiva las viene tratando como "ignorar" desde siempre. Si acá solo se
+         // contemplaran 'ignorar' y 'exceptuar', esas VMs pasarían a evaluarse con los
+         // umbrales hardcodeados y empezarían a generar tickets nuevos, que es justo lo
+         // contrario de para lo que el cliente cargó la excepción.
          const hasIgnorarOps = activeOpsRules.some(r => r.criterio !== 'considerar');
          const considerarOpsRules = activeOpsRules.filter(r => r.criterio === 'considerar');
 
@@ -606,7 +621,8 @@ function _normalizarColumnaSnapshots(col) {
   return clean;
 }
 
-// Busca en clientConfig.exceptions todos los grupos cuyas condiciones coincidan con la fila
+// Busca en clientConfig.exceptions todos los grupos cuyas condiciones coincidan
+// con la fila del reporte Y que tengan umbrales definidos (ageLimit/sizeLimit/qtyLimit).
 function findAllMatchingRules(reportRow, headers, exceptions) {
   if (!exceptions || typeof exceptions !== 'object') return [];
   const rawNormalizedHeaders = headers.map(h => {
