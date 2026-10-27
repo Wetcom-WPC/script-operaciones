@@ -2525,15 +2525,14 @@ function webapp_enviarResumenHorariosSlack(datos) {
       '" con el webhook del canal donde tiene que llegar el resumen.');
   }
 
-  const envios = _webappEntero(datos.envios), fuera = _webappEntero(datos.fuera);
-
   // El encabezado va en "text" y no en un attachment porque es lo que Slack usa como vista
   // previa en la notificación y en la lista de canales.
+  //
+  // Sin promedio general a propósito: mezclaba clientes y tecnologías en un solo número que no
+  // se podía accionar, y el dato que importa —la hora de cada cliente— ya está en el cuadro.
   const encabezado = '🕚 *Horario de envío del mail de operaciones*\n' +
     _webappEscaparSlack(datos.periodo) + ' · ' + _webappEscaparSlack(datos.desde) + ' al ' + _webappEscaparSlack(datos.hasta) +
-    (datos.filtros ? ' · ' + _webappEscaparSlack(datos.filtros) : '') + '\n' +
-    'Promedio general: *' + _webappHora(datos.promedio) + '* ' + (datos.promedioTarde ? '🔴' : '🟢') +
-    ' · ' + fuera + ' de ' + envios + ' envíos después de las 11:00';
+    (datos.filtros ? ' · ' + _webappEscaparSlack(datos.filtros) : '');
 
   // Un attachment por POD. El "color" es la barra lateral que pinta Slack: verde si todos los
   // clientes de ese POD están en horario, rojo si alguno se pasa de las 11. Es lo que permite
