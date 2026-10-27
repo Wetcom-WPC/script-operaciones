@@ -2145,6 +2145,88 @@ function manual_configurarRegistroDeLlegadas() {
 }
 
 /**
+ * Instala el activador del resumen mensual de horarios a Slack.
+ *
+ * El activador corre TODOS los dias a la tarde y se va solo salvo que hoy sea el ultimo dia
+ * habil del mes. Es a proposito: un activador mensual de Apps Script se ata a un numero de
+ * dia, y el ultimo habil se mueve segun como caigan el finde y los feriados.
+ *
+ * Correrlo con la cuenta alarmas@: getProjectTriggers() solo ve los activadores del usuario
+ * que los creo, y el resto del sistema corre con esa cuenta.
+ *
+ * Es idempotente: borra los activadores previos de esta funcion antes de crear el suyo.
+ */
+function manual_configurarResumenMensualHorarios() {
+  let borrados = 0;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'enviarResumenMensualHorarios') {
+      ScriptApp.deleteTrigger(t);
+      borrados++;
+    }
+  });
+  if (borrados > 0) Logger.log("Se eliminaron " + borrados + " activador(es) previo(s) del resumen mensual.");
+
+  ScriptApp.newTrigger('enviarResumenMensualHorarios')
+    .timeBased()
+    .everyDays(1)
+    .atHour(18)
+    .create();
+
+  Logger.log("OK Resumen mensual configurado: enviarResumenMensualHorarios todos los dias 18-19hs.");
+  Logger.log("   Solo manda algo el ultimo dia habil del mes; el resto de los dias sale sin hacer nada.");
+  Logger.log("");
+  const ya = PropertiesService.getScriptProperties().getProperty(WEBAPP_PROP_RESUMEN_MENSUAL);
+  Logger.log("Ultimo mes ya enviado: " + (ya || "ninguno"));
+  Logger.log("");
+  Logger.log("Para ver que mandaria SIN mandarlo: manual_probarResumenMensualHorarios()");
+}
+
+/**
+ * Simulacion del resumen mensual: dice que rango tomaria y que mostraria, SIN mandar nada
+ * a Slack. Sirve para revisar los numeros antes de que salga de verdad.
+ */
+function manual_probarResumenMensualHorarios() {
+  const hoy = new Date();
+  const hoyISO = Utilities.formatDate(hoy, HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
+  const rango = _webappRangoHabilDelMes(hoy);
+
+  Logger.log("=== RESUMEN MENSUAL (simulacion, no manda nada) ===");
+  Logger.log("Hoy: " + hoyISO);
+  Logger.log("Dias habiles del mes: " + rango.desdeISO + " al " + rango.hastaISO);
+  Logger.log("Feriados consultados: " + (rango.feriadosOk ? "si" : "NO (se tomaron habiles todos los dias de semana)"));
+  Logger.log(hoyISO === rango.hastaISO
+    ? ">>> HOY mandaria el resumen."
+    : ">>> Hoy NO manda. Lo mandaria el " + rango.hastaISO + ".");
+  const ya = PropertiesService.getScriptProperties().getProperty(WEBAPP_PROP_RESUMEN_MENSUAL);
+  if (ya) Logger.log("Ultimo mes ya enviado: " + ya + (ya === hoyISO.substring(0, 7) ? "  <-- este mes ya salio, no se repetiria" : ""));
+
+  const datos = _webappResumenHorariosParaSlack({
+    desdeISO: rango.desdeISO, hastaISO: rango.hastaISO, periodo: 'Resumen mensual', forzar: true
+  });
+
+  Logger.log("");
+  Logger.log("--- Contenido que tendria el mensaje ---");
+  Logger.log(datos.periodo + " - " + datos.desde + " al " + datos.hasta);
+  if (!datos.pods.length) {
+    Logger.log("(sin envios en el rango: no se mandaria nada)");
+    return;
+  }
+  datos.pods.forEach(function (pod) {
+    const algunoTarde = pod.clientes.some(function (c) {
+      return c.tecnologias.some(function (t) { return t.tarde; });
+    });
+    Logger.log("");
+    Logger.log("[" + (algunoTarde ? "ROJO" : "VERDE") + "] " + pod.pod);
+    pod.clientes.forEach(function (cli) {
+      const partes = cli.tecnologias.map(function (t) {
+        return t.tech + " " + t.promedio + (t.tarde ? " (TARDE)" : "");
+      });
+      Logger.log("   " + cli.cliente + " - " + partes.join("  |  "));
+    });
+  });
+}
+
+/**
  * Donde estan los remitentes de los clientes, y en que planilla.
  *
  * Hay dos Indices distintos y es facil confundirlos:

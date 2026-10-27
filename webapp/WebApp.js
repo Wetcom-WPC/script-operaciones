@@ -2509,16 +2509,189 @@ function webapp_generarPdfHorarios(datos) {
   return { nombre: nombre, base64: Utilities.base64Encode(pdf.getBytes()) };
 }
 
+// ─── Resumen de horarios para Slack ──────────────────────────────────────────────────────
+//
+// Lo que va a Slack se calcula SIEMPRE acá, lo pida el botón del panel o el envío mensual
+// automático. El navegador tiene su propia agregación (agregarHorarios, en Script.html) pero
+// esa es para la PANTALLA: si el mensaje de Slack se armara de los dos lados, el día que
+// cambie la regla de "tarde" el botón y el trigger dirían cosas distintas del mismo mes y no
+// habría forma de saber a cuál creerle (AGENTS.md §5).
+
+/** Minutos desde medianoche a "HH:MM". */
+function _webappMinutosAHora(minutos) {
+  const t = Math.round(Number(minutos) || 0);
+  return ('0' + Math.floor(t / 60)).slice(-2) + ':' + ('0' + (t % 60)).slice(-2);
+}
+
+/**
+ * Los feriados de un año como mapa "yyyy-MM-dd" -> true, o null si no se pudieron consultar.
+ * Se apoya en _consultarFeriados() (core/Utils.js), que cachea por ejecución y devuelve null
+ * cuando la API falla — a diferencia de esFeriadoHoy(), que ante la duda responde "es feriado".
+ * Esa diferencia importa acá: si un fallo de red hiciera parecer feriados a los días que
+ * quedan del mes, el resumen saldría antes de tiempo.
+ */
+function _webappFeriadosDelAnio(anio) {
+  try {
+    const lista = _consultarFeriados(anio);
+    if (!Array.isArray(lista)) return null;
+    const mapa = {};
+    lista.forEach(function (f) { if (f && f.fecha) mapa[String(f.fecha)] = true; });
+    return mapa;
+  } catch (e) {
+    Logger.log('[WebApp] No se pudieron consultar los feriados de ' + anio + ': ' + e.message);
+    return null;
+  }
+}
+
+/**
+ * Del primer al último día HÁBIL del mes de la fecha dada.
+ *
+ * No son "los últimos 30 días": si el mes arranca un jueves 1 y el último hábil es el 30, el
+ * rango es 01 al 30 aunque el mes tenga 31. Lo que importa son los días en los que se trabaja.
+ *
+ * @param {Date} fecha Cualquier día del mes que se quiere medir.
+ * @returns {{desdeISO: (string|null), hastaISO: (string|null), feriadosOk: boolean}}
+ */
+function _webappRangoHabilDelMes(fecha) {
+  const anio = Number(Utilities.formatDate(fecha, HORARIO_OPERATIVO_TZ, 'yyyy'));
+  const mes  = Number(Utilities.formatDate(fecha, HORARIO_OPERATIVO_TZ, 'MM'));
+  const feriados = _webappFeriadosDelAnio(anio);
+  // Día 0 del mes siguiente es el último de este, sin tener que saber cuántos trae cada mes.
+  const ultimoDia = new Date(anio, mes, 0).getDate();
+
+  let desde = null, hasta = null;
+  for (let d = 1; d <= ultimoDia; d++) {
+    const iso = anio + '-' + ('0' + mes).slice(-2) + '-' + ('0' + d).slice(-2);
+    if (_webappEsFinDeSemana(iso)) continue;
+    // Sin lista de feriados se cuentan hábiles todos los días de semana. Es determinista, y lo
+    // peor que puede pasar es que el resumen salga un feriado: los datos son los mismos.
+    if (feriados && feriados[iso]) continue;
+    if (!desde) desde = iso;
+    hasta = iso;
+  }
+  return { desdeISO: desde, hastaISO: hasta, feriadosOk: feriados !== null };
+}
+
+/**
+ * Arma el resumen por POD que se manda a Slack.
+ *
+ * @param {Object} opciones
+ * @param {string} opciones.desdeISO  Primer día del rango (inclusive).
+ * @param {string} opciones.hastaISO  Último día del rango (inclusive).
+ * @param {string} [opciones.periodo] Texto del período para el encabezado.
+ * @param {string} [opciones.pod]     Filtrar a un POD.
+ * @param {string} [opciones.cliente] Filtrar a un cliente.
+ * @param {string} [opciones.tech]    Filtrar a una tecnología.
+ * @param {string} [opciones.operador] Filtrar a un operador.
+ * @param {boolean} [opciones.forzar] Releer en vez de usar la caché de 30 minutos.
+ * @returns {Object} El mismo shape que consume _webappPostearResumenHorarios().
+ */
+function _webappResumenHorariosParaSlack(opciones) {
+  const o = opciones || {};
+  const completo = _webappHorariosEnvioCompleto(null, !!o.forzar);
+  const limite = completo.limiteMinutos;
+
+  // Un día marcado "no cuenta en el promedio" sale de todas las métricas, igual que en la
+  // pantalla y en el PDF. La clave es la misma que usa el navegador: fecha|cliente|tecnología.
+  const excluidos = {};
+  (completo.comentarios || []).forEach(function (c) {
+    if (c && c.excluir) excluidos[c.fecha + '|' + c.clave + '|' + c.tecnologia] = true;
+  });
+
+  const podFiltro = o.pod ? _webappNormalizarPod(o.pod) : '';
+  const acum = {};
+  (completo.envios || []).forEach(function (e) {
+    const fecha = e[0];
+    if (o.desdeISO && fecha < o.desdeISO) return;
+    if (o.hastaISO && fecha > o.hastaISO) return;
+    const cli = completo.clientes[e[1]];
+    const tech = completo.tecnologias[e[2]];
+    if (!cli || !tech) return;
+    if (podFiltro && _webappNormalizarPod(cli.pod) !== podFiltro) return;
+    if (o.cliente && cli.nombre !== o.cliente) return;
+    if (o.tech && tech !== o.tech) return;
+    if (o.operador && (e[4] === undefined || e[4] < 0 || completo.operadores[e[4]] !== o.operador)) return;
+    if (excluidos[fecha + '|' + cli.clave + '|' + tech]) return;
+
+    const k = e[1] + '|' + e[2];
+    if (!acum[k]) acum[k] = { cli: cli, tech: tech, suma: 0, n: 0 };
+    acum[k].suma += e[3];
+    acum[k].n++;
+  });
+
+  // Agrupado POD -> cliente -> tecnologías, con el mismo orden que venía teniendo el mensaje:
+  // PODs y clientes alfabéticos, y dentro de cada cliente la tecnología más tarde primero.
+  const porPod = {};
+  Object.keys(acum).forEach(function (k) {
+    const a = acum[k];
+    const prom = a.suma / a.n;
+    const pod = _webappNormalizarPod(a.cli.pod) || 'Sin POD';
+    if (!porPod[pod]) porPod[pod] = {};
+    if (!porPod[pod][a.cli.nombre]) porPod[pod][a.cli.nombre] = [];
+    porPod[pod][a.cli.nombre].push({
+      tech: a.tech,
+      promedio: _webappMinutosAHora(prom),
+      orden: prom,
+      tarde: Math.round(prom) > limite
+    });
+  });
+
+  const pods = Object.keys(porPod).sort().map(function (pod) {
+    return {
+      pod: pod,
+      clientes: Object.keys(porPod[pod]).sort(function (a, b) { return a.localeCompare(b); })
+        .map(function (nombre) {
+          const techs = porPod[pod][nombre].sort(function (a, b) { return b.orden - a.orden; });
+          return { cliente: nombre, tecnologias: techs };
+        })
+    };
+  });
+
+  const filtros = [];
+  if (o.cliente) filtros.push('cliente ' + o.cliente);
+  if (o.tech) filtros.push(o.tech);
+  if (o.pod) filtros.push(o.pod);
+  if (o.operador) filtros.push(o.operador);
+
+  return {
+    periodo: o.periodo || '',
+    desde: _webappFechaCorta(o.desdeISO),
+    hasta: _webappFechaCorta(o.hastaISO),
+    filtros: filtros.join(', '),
+    pods: pods
+  };
+}
+
+/** "2026-10-02" -> "02/10/2026". */
+function _webappFechaCorta(iso) {
+  const p = String(iso || '').split('-');
+  return p.length === 3 ? p[2] + '/' + p[1] + '/' + p[0] : String(iso || '');
+}
+
 /**
  * Manda a Slack el resumen del horario de envío agrupado por POD.
  * @param {Object} datos Lo calculado por prepararSlackHorarios() en el front.
  * @returns {{ok: boolean}}
  */
-function webapp_enviarResumenHorariosSlack(datos) {
+function webapp_enviarResumenHorariosSlack(filtros) {
   const usuario = webapp_usuarioActual();
   webapp_exigirAdmin(usuario);
-  if (!datos || !Array.isArray(datos.pods) || datos.pods.length === 0) throw new Error('No hay datos para enviar.');
+  const f = filtros || {};
+  const datos = _webappResumenHorariosParaSlack({
+    desdeISO: f.desdeISO, hastaISO: f.hastaISO, periodo: f.periodo,
+    pod: f.pod, cliente: f.cliente, tech: f.tech, operador: f.operador
+  });
+  if (!datos.pods.length) throw new Error('No hay datos para enviar.');
+  _webappPostearResumenHorarios(datos);
+  Logger.log('[WebApp] Resumen de horarios enviado a Slack por ' + usuario + '.');
+  return { ok: true };
+}
 
+/**
+ * Arma el mensaje y lo postea. Sin control de acceso: lo llaman el endpoint del botón (que ya
+ * verificó el rol) y el envío mensual automático (que corre sin usuario).
+ */
+function _webappPostearResumenHorarios(datos) {
   const webhook = PropertiesService.getScriptProperties().getProperty(WEBAPP_PROP_WEBHOOK_HORARIOS);
   if (!webhook) {
     throw new Error('Falta configurar la Script Property "' + WEBAPP_PROP_WEBHOOK_HORARIOS +
@@ -2578,8 +2751,74 @@ function webapp_enviarResumenHorariosSlack(datos) {
     Logger.log('[WebApp] Slack rechazó el resumen de horarios: HTTP ' + codigo + ' ' + cuerpo);
     throw new Error('Slack respondió HTTP ' + codigo + ': ' + cuerpo);
   }
-  Logger.log('[WebApp] Resumen de horarios enviado a Slack por ' + usuario + '.');
   return { ok: true };
+}
+
+// ─── Envío mensual automático ────────────────────────────────────────────────────────────
+
+// El mes ya enviado, en "yyyy-MM". Es lo que evita que el resumen salga dos veces si el
+// activador corre de más, o si alguien lo ejecuta a mano el mismo día.
+const WEBAPP_PROP_RESUMEN_MENSUAL = 'WEBAPP_RESUMEN_HORARIOS_ENVIADO';
+
+/**
+ * Manda el resumen del mes a Slack el último día hábil, con los días hábiles de ESE mes.
+ *
+ * Pensado para un activador diario: corre todos los días y se va solo salvo que hoy sea el
+ * último día hábil del mes. Esa forma —en vez de un activador mensual— es la que permite que
+ * un feriado a fin de mes corra la fecha sin tener que tocar nada.
+ *
+ * No recibe parámetros a propósito: un activador le pasa el evento, y eso se interpretaría
+ * como opciones.
+ */
+function enviarResumenMensualHorarios() {
+  const hoy = new Date();
+  const hoyISO = Utilities.formatDate(hoy, HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
+  const rango = _webappRangoHabilDelMes(hoy);
+
+  if (!rango.hastaISO) {
+    Logger.log('[WebApp] Resumen mensual: el mes no tiene ningún día hábil. No se manda nada.');
+    return { enviado: false, motivo: 'sin-dias-habiles' };
+  }
+  if (hoyISO !== rango.hastaISO) {
+    Logger.log('[WebApp] Resumen mensual: hoy (' + hoyISO + ') no es el último día hábil del mes (' +
+      rango.hastaISO + '). No se manda nada.');
+    return { enviado: false, motivo: 'no-es-el-dia' };
+  }
+
+  const ciclo = hoyISO.substring(0, 7);
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty(WEBAPP_PROP_RESUMEN_MENSUAL) === ciclo) {
+    Logger.log('[WebApp] Resumen mensual: el de ' + ciclo + ' ya se envió. No se repite.');
+    return { enviado: false, motivo: 'ya-enviado' };
+  }
+  if (!rango.feriadosOk) {
+    Logger.log('[WebApp] Resumen mensual: no se pudo consultar el calendario de feriados; ' +
+      'se tomaron hábiles todos los días de semana.');
+  }
+
+  // forzar: el resumen sale a fin del día y tiene que incluir lo de hoy, no una foto de hace
+  // media hora. Además sincroniza los envíos hechos a mano antes de medir.
+  const datos = _webappResumenHorariosParaSlack({
+    desdeISO: rango.desdeISO,
+    hastaISO: rango.hastaISO,
+    periodo: 'Resumen mensual',
+    forzar: true
+  });
+
+  if (!datos.pods.length) {
+    Logger.log('[WebApp] Resumen mensual: no hubo envíos entre ' + rango.desdeISO + ' y ' +
+      rango.hastaISO + '. No se manda nada.');
+    return { enviado: false, motivo: 'sin-envios' };
+  }
+
+  _webappPostearResumenHorarios(datos);
+  // La marca va DESPUÉS de postear: si Slack falla, el activador del día siguiente no sirve
+  // (ya no es el último día hábil), pero al menos el log dice qué pasó y no quedó marcado
+  // como enviado algo que nunca salió (AGENTS.md §7).
+  props.setProperty(WEBAPP_PROP_RESUMEN_MENSUAL, ciclo);
+  Logger.log('[WebApp] Resumen mensual de ' + ciclo + ' enviado a Slack: ' +
+    rango.desdeISO + ' al ' + rango.hastaISO + ', ' + datos.pods.length + ' POD(s).');
+  return { enviado: true, desde: rango.desdeISO, hasta: rango.hastaISO, pods: datos.pods.length };
 }
 
 // =================================================================

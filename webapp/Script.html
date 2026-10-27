@@ -2673,12 +2673,16 @@
     if (f.tech) filtros.push(f.tech);
     if (f.pod) filtros.push(f.pod);
 
+    // Se mandan los FILTROS, no el cálculo: el resumen de Slack lo arma el servidor, que es
+    // el mismo que usa el envío mensual automático. Así los dos mensajes no pueden discrepar.
     var datosSlack = {
+      desdeISO: rango.desdeIso,
+      hastaISO: rango.hastaIso,
       periodo: f.periodoTxt,
-      desde: isoACorta(rango.desdeIso),
-      hasta: isoACorta(rango.hastaIso),
-      filtros: filtros.join(', '),
-      pods: pods
+      pod: f.pod || '',
+      cliente: f.cliente || '',
+      tech: f.tech || '',
+      operador: f.operador || ''
     };
 
     var btn = document.getElementById('btnSlackHorarios');
