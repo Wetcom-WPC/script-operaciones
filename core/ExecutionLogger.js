@@ -58,6 +58,8 @@ const TECNOLOGIA_POR_OPERACION = {
   "VMs con preguntas":                                "vRO",
   "VMs con snapshots":                                "vRO",
   "Proxies con snapshots":                            "vRO",
+  "Políticas de vSAN":                                "vRO",
+  "Auditoria de VM Storage Policies":                 "vRO",
   "Discos montados en proxy":                         "vRO",
   // vrops/
   "Alertas de vROps":                                 "vROps",
