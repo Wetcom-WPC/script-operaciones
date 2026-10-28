@@ -1025,13 +1025,22 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
 }
 
 /**
- * Políticas de vSAN: una columna ausente en el reporte no puede alertar todo el parque.
+ * Políticas de vSAN: qué alerta y qué no.
  *
- * El 28/10/2026, con un CSV al que le faltaba la columna Política o la columna Cluster, el
- * procesador alertaba las 3 de 3 VMs sanas: con idx === -1 el valor leído quedaba "" y las
- * reglas "sin política asignada" y "sin cluster asignado" daban verdadero para toda fila. El
- * guard de arriba sólo exigía Name y Compliance, así que el reporte pasaba el control y se
- * creaba un ticket con el parque completo.
+ * Acá quedan fijadas dos cosas distintas.
+ *
+ * 1) Una columna que el reporte no trae no puede convertirse en "todas las VMs están mal". El
+ *    28/10/2026, con un CSV sin la columna Política o sin la columna Cluster, el procesador
+ *    alertaba las 3 de 3 VMs sanas: con idx === -1 el valor leído quedaba "" y las reglas "sin
+ *    política asignada" y "sin cluster asignado" daban verdadero para toda fila. Esas dos
+ *    reglas después se quitaron (ver 2), así que hoy el caso pasa de taquito — pero el día que
+ *    alguien agregue una regla de ese estilo sin chequear el índice, este test se lo dice.
+ *
+ * 2) El alcance actual: alerta SÓLO por compliance fuera de norma (Out of Date y
+ *    Non-Compliant). Las reglas de política no asignada, política default de vSAN, VM sin
+ *    cluster y compliance "-" existieron y se quitaron a propósito el 28/10/2026. Los asserts
+ *    que esperan 0 documentan esa decisión, no un olvido: si se quiere volver a alertar por
+ *    alguna, este es el lugar donde se ve exactamente qué cambia.
  */
 function _testsPoliticasVSANColumnasFaltantes(assertEqual, assertTrue) {
   const proc = new PoliticasVSANProcessor();
@@ -1043,6 +1052,8 @@ function _testsPoliticasVSANColumnasFaltantes(assertEqual, assertTrue) {
     return r ? r.finalAlerts.length : -1;   // -1 = processData cortó por falta de columnas clave
   };
 
+  const COMPLETO = ["Name", "Politica", "Compliance", "Cluster"];
+
   // Tres VMs sanas: compliant, con política corporativa y con cluster.
   const sanas = [
     ["vm-01", "Politica-Corp-Oro",   "Compliant", "CL-PROD"],
@@ -1050,34 +1061,35 @@ function _testsPoliticasVSANColumnasFaltantes(assertEqual, assertTrue) {
     ["vm-03", "Politica-Corp-Plata", "Compliant", "CL-DESA"]
   ];
 
-  assertEqual(correr(["Name", "Politica", "Compliance", "Cluster"], sanas), 0,
+  // --- 1) columnas ausentes ---
+  assertEqual(correr(COMPLETO, sanas), 0,
     "Políticas de vSAN: reporte completo con VMs sanas no alerta ninguna");
 
   assertEqual(correr(["Name", "Politica", "Compliance"], sanas.map(function (f) { return f.slice(0, 3); })), 0,
-    "Políticas de vSAN: sin columna Cluster NO alerta (antes alertaba las 3)");
+    "Políticas de vSAN: sin columna Cluster no alerta (antes alertaba las 3)");
 
   assertEqual(correr(["Name", "Compliance", "Cluster"], sanas.map(function (f) { return [f[0], f[2], f[3]]; })), 0,
-    "Políticas de vSAN: sin columna Política NO alerta (antes alertaba las 3)");
+    "Políticas de vSAN: sin columna Política no alerta (antes alertaba las 3)");
 
-  // Y las anomalías de verdad tienen que seguir detectándose.
-  const COMPLETO = ["Name", "Politica", "Compliance", "Cluster"];
-
-  assertEqual(correr(COMPLETO, [["vm-mala", "-", "Compliant", "CL-PROD"]]), 1,
-    "Políticas de vSAN: VM sin política asignada sigue alertando");
-
-  assertEqual(correr(COMPLETO, [["vm-mala", "Politica-Corp-Oro", "Out of date", "CL-PROD"]]), 1,
-    "Políticas de vSAN: compliance Out of Date sigue alertando");
-
-  assertEqual(correr(COMPLETO, [["vm-mala", "Politica-Corp-Oro", "Non-Compliant", "CL-PROD"]]), 1,
-    "Políticas de vSAN: compliance Non-Compliant sigue alertando");
-
-  assertEqual(correr(COMPLETO, [["vm-mala", "vSAN Default Storage Policy", "Compliant", "CL-PROD"]]), 1,
-    "Políticas de vSAN: política default de vSAN sigue alertando");
-
-  assertEqual(correr(COMPLETO, [["vm-mala", "Politica-Corp-Oro", "Compliant", "-"]]), 1,
-    "Políticas de vSAN: VM sin cluster sigue alertando cuando la columna SÍ existe");
-
-  // Sin las columnas clave el procesador corta y lo reporta, no inventa un resultado.
   assertEqual(correr(["Politica", "Cluster"], [["Politica-Corp-Oro", "CL-PROD"]]), -1,
     "Políticas de vSAN: sin Name ni Compliance corta y deja el error en el resumen");
+
+  // --- 2) alcance: sólo compliance fuera de norma ---
+  assertEqual(correr(COMPLETO, [["vm-mala", "Politica-Corp-Oro", "Out of date", "CL-PROD"]]), 1,
+    "Políticas de vSAN: compliance Out of Date alerta");
+
+  assertEqual(correr(COMPLETO, [["vm-mala", "Politica-Corp-Oro", "Non-Compliant", "CL-PROD"]]), 1,
+    "Políticas de vSAN: compliance Non-Compliant alerta");
+
+  assertEqual(correr(COMPLETO, [["vm-ok", "-", "Compliant", "CL-PROD"]]), 0,
+    "Políticas de vSAN: VM sin política asignada NO alerta (decisión del 28/10/2026)");
+
+  assertEqual(correr(COMPLETO, [["vm-ok", "vSAN Default Storage Policy", "Compliant", "CL-PROD"]]), 0,
+    "Políticas de vSAN: política default de vSAN NO alerta (decisión del 28/10/2026)");
+
+  assertEqual(correr(COMPLETO, [["vm-ok", "Politica-Corp-Oro", "Compliant", "-"]]), 0,
+    "Políticas de vSAN: VM sin cluster NO alerta (decisión del 28/10/2026)");
+
+  assertEqual(correr(COMPLETO, [["vm-ok", "Politica-Corp-Oro", "-", "CL-PROD"]]), 0,
+    "Políticas de vSAN: compliance \"-\" NO alerta (decisión del 28/10/2026)");
 }

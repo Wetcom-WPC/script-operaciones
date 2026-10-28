@@ -1,7 +1,7 @@
 /**
  * @fileoverview Lógica específica para procesar reportes de "Políticas de vSAN" (Auditoría de VM Storage Policies).
  * Consume la configuración del cliente (ej. Banco Macro SDDC) mediante resolución por remitente SMTP desde el Índice General/Maestro.
- * Reporta VMs con compliance Out of Date, Non-Compliant, sin política asignada o con política default a Operaciones.
+ * Reporta VMs con compliance fuera de norma (Out of Date, Non-Compliant) a Operaciones.
  */
 
 // --- CONFIGURACIÓN ESPECÍFICA ---
@@ -90,18 +90,20 @@ class PoliticasVSANProcessor extends MailProcessor {
     const clientName = clientConfig ? clientConfig.clientName : "_Desconocido_";
     const exceptions = (clientConfig && clientConfig.exceptions) || {};
 
+    const stripAccents = (s) => String(s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
     const normHeaders = headers.map(h => normalizarEncabezado(h));
+
     const findCol = (namePart) => {
-      let idx = headers.findIndex(h => h.toLowerCase().includes(namePart.toLowerCase()));
+      const target = stripAccents(namePart);
+      let idx = headers.findIndex(h => stripAccents(h).includes(target));
       if (idx !== -1) return idx;
-      return normHeaders.findIndex(h => h.includes(normalizarEncabezado(namePart)));
+      return normHeaders.findIndex(h => stripAccents(h).includes(target));
     };
 
-    let idxName = findCol("Name") !== -1 ? findCol("Name") : findCol("VM");
-    let idxPolicy = findCol("Poltica") !== -1 ? findCol("Poltica") : findCol("Policy");
-    if (idxPolicy === -1) idxPolicy = findCol("Politica");
-    let idxCompliance = findCol("Compliance") !== -1 ? findCol("Compliance") : findCol("Estado");
-    let idxCluster = findCol("Cluster");
+    let idxName = findCol("name") !== -1 ? findCol("name") : findCol("vm");
+    let idxPolicy = findCol("pol") !== -1 ? findCol("pol") : findCol("policy");
+    let idxCompliance = findCol("compliance") !== -1 ? findCol("compliance") : findCol("estado");
+    let idxCluster = findCol("cluster");
 
     if (idxName === -1 || idxCompliance === -1) {
       summaryReport.errores.push({
@@ -144,49 +146,29 @@ class PoliticasVSANProcessor extends MailProcessor {
         return;
       }
 
-      const complianceVal = (idxCompliance !== -1 ? (row[idxCompliance] || "") : "").toString().trim().toLowerCase();
-      const policyVal = (idxPolicy !== -1 ? (row[idxPolicy] || "") : "").toString().trim().toLowerCase();
-      const clusterVal = (idxCluster !== -1 ? (row[idxCluster] || "") : "").toString().trim();
+      const complianceVal = (idxCompliance !== -1 ? (row[idxCompliance] || "") : "").toString().trim();
+      const cLower = complianceVal.toLowerCase();
 
       let isAlert = false;
 
-      // 1. Compliance fuera de norma
-      if (complianceVal === "out of date") {
+      // Alertar exclusivamente sobre VMs con Compliance fuera de estado Compliant
+      if (cLower === "out of date") {
         detectedReasons.add("Política de Storage desactualizada (Out of Date)");
         isAlert = true;
-      } else if (complianceVal.includes("non-compliant") || complianceVal.includes("non compliant")) {
+      } else if (cLower.includes("non-compliant") || cLower.includes("non compliant")) {
         detectedReasons.add("Política de Storage en incumplimiento (Non-Compliant)");
-        isAlert = true;
-      } else if (complianceVal === "-" || complianceVal === "not applicable" || complianceVal === "") {
-        detectedReasons.add("Estado de Compliance no asignado (-)");
-        isAlert = true;
-      }
-
-      // 2. Política no asignada o incorrecta
-      // El guard de idx: si el reporte no trae la columna, policyVal queda "" y esta regla
-      // daría verdadero para TODA fila. Es AGENTS.md §6 al revés: en vez de dejar de filtrar
-      // en silencio, alertaría el parque entero. Una columna que no vino no es una anomalía.
-      if (idxPolicy !== -1 && (policyVal === "-" || policyVal === "")) {
-        detectedReasons.add("Sin Política de Storage asignada (-)");
-        isAlert = true;
-      } else if (policyVal.includes("default storage policy") || policyVal === "vsan default storage policy") {
-        detectedReasons.add("Política por defecto de vSAN en uso (no corporativa)");
-        isAlert = true;
-      }
-
-      // 3. Cluster no asignado / huérfana
-      if (idxCluster !== -1 && (clusterVal === "" || clusterVal === "-")) {
-        detectedReasons.add("VM sin Cluster asignado en vCenter");
         isAlert = true;
       }
 
       if (isAlert) {
-        Logger.log(`[Políticas de vSAN] -> Anomalía detectada en VM: ${vmName} (Compliance: ${row[idxCompliance]}, Política: ${row[idxPolicy]}, Cluster: ${clusterVal})`);
+        const polText = idxPolicy !== -1 ? row[idxPolicy] : "";
+        const clusText = idxCluster !== -1 ? row[idxCluster] : "";
+        Logger.log(`[Políticas de vSAN] -> Anomalía detectada en VM: ${vmName} (Compliance: ${complianceVal}, Política: ${polText}, Cluster: ${clusText})`);
         finalAlerts.push(row);
       }
     });
 
-    const reasonsText = Array.from(detectedReasons).map(r => `* ${r}`).join('\n') || "Se detectaron VMs con anomalías en políticas de vSAN.";
+    const reasonsText = Array.from(detectedReasons).map(r => `* ${r}`).join('\n') || "Se detectaron VMs con políticas de almacenamiento fuera de norma.";
     this.finalAlerts = finalAlerts;
     this.reasonsText = reasonsText;
 
@@ -214,7 +196,7 @@ class PoliticasVSANProcessor extends MailProcessor {
 
     if (ticketKey) {
       if (!haSidoActualizadoHoy(ticketKey, "ALERTA-POLITICAS-VSAN")) {
-        let commentText = `⏳ **El problema persiste.** [ALERTA-POLITICAS-VSAN]\n\nSe detectaron ${alertCount} VMs con anomalías en políticas de vSAN:\n${reasonsFinal}\n\n`;
+        let commentText = `**El problema persiste.** [ALERTA-POLITICAS-VSAN]\n\nSe detectaron ${alertCount} VMs con anomalías en políticas de vSAN:\n${reasonsFinal}\n\n`;
         if (alertCount <= POLITICAS_VSAN_ROW_LIMIT_FOR_TABLE) {
           if (xlsxBlob) {
             addAttachmentToJiraTicket(ticketKey, xlsxBlob);
