@@ -1499,10 +1499,28 @@ function procesarInfraestructuraClienteVeeam(cliente, emailDestino, rootFolderId
   let nombresArchivos = [];
   try {
     const rootFolder = DriveApp.getFolderById(rootFolderId);
-    const anioFolder = typeof obtenerSubcarpetaMasReciente === "function" ? obtenerSubcarpetaMasReciente(rootFolder, /^\d{4}/) : rootFolder.getFolders().next();
-    if (!anioFolder) throw new Error("No se encontró carpeta de Año (YYYY)");
-    const fechaFolder = typeof obtenerSubcarpetaMasReciente === "function" ? obtenerSubcarpetaMasReciente(anioFolder, /^\d{8}/) : anioFolder.getFolders().next();
-    if (!fechaFolder) throw new Error(`No se encontró carpeta de Fecha en ${anioFolder.getName()}`);
+
+    // El mes EN CURSO, no "la carpeta más reciente". Antes se tomaba la fecha más alta que
+    // hubiera sin mirar de qué mes era: si el cliente no subía el reporte de este mes, se
+    // auditaba el del mes pasado y el mail al POD salía como si los datos fueran de hoy. Un
+    // reporte viejo presentado como actual es peor que no tener reporte.
+    //
+    // Ahora ese cliente falla solo: el catch de quien llama deja el motivo en su fila de la
+    // planilla, lo suma a summaryReport.errores y sigue con el siguiente. El resumen del final
+    // del ciclo lo publica en el canal de logs de Slack.
+    //
+    // La búsqueda la hacen las mismas funciones que usa el chequeo previo
+    // (services/LicenciasPendientes.js), así que el aviso del día 28 y lo que el ciclo
+    // realmente lee no pueden discrepar (AGENTS.md §5).
+    const hoy = new Date();
+    const anioEnCurso = String(hoy.getFullYear());
+    const prefijoMes = anioEnCurso + ('0' + (hoy.getMonth() + 1)).slice(-2);
+
+    const anioFolder = _licPendSubcarpetaPorNombre(rootFolder, anioEnCurso);
+    if (!anioFolder) throw new Error(`No existe la carpeta de año ${anioEnCurso} en el Drive de licencias.`);
+
+    const fechaFolder = _licPendCarpetaDeFechaDelMes(anioFolder, prefijoMes);
+    if (!fechaFolder) throw new Error(`No se subió el reporte de licencias de ${anioEnCurso}-${prefijoMes.slice(4)}: la carpeta ${anioFolder.getName()} no tiene ninguna ${prefijoMes}xx. No se audita, para no informar datos de un mes anterior.`);
 
     rutaLog = `${anioFolder.getName()} > ${fechaFolder.getName()}`;
     console.log(`📂 Ruta resuelta Veeam: ${rutaLog}`);
