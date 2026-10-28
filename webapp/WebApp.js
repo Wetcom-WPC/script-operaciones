@@ -152,6 +152,10 @@ function webapp_exigirAutorizacion(usuario) {
 
 // --- API que consume el navegador ----------------------------------------------------------
 
+// Lo que devuelve _webappNormalizarPod() cuando la celda del POD está vacía. Un cliente que
+// cae acá no está mal cargado necesariamente: puede no estar en el Índice todavía.
+const WEBAPP_POD_SIN_ASIGNAR = '-';
+
 /**
  * El POD de una fila del Índice, normalizado: "pod1@wetcom.com" y "POD 1" son el mismo "POD1".
  *
@@ -168,7 +172,7 @@ function _webappNormalizarPod(valor) {
   let pod = String(valor === null || valor === undefined ? '' : valor).trim();
   if (pod.indexOf('@') !== -1) pod = pod.split('@')[0];
   pod = pod.replace(/\s+/g, '').toUpperCase();
-  return pod || '-';
+  return pod || WEBAPP_POD_SIN_ASIGNAR;
 }
 
 // La lista de clientes es la misma para todos (el recorte por POD lo hace quien la pide), y se
@@ -2649,11 +2653,17 @@ function _webappResumenHorariosParaSlack(opciones) {
 
   // Agrupado POD -> cliente -> tecnologías, con el mismo orden que venía teniendo el mensaje:
   // PODs y clientes alfabéticos, y dentro de cada cliente la tecnología más tarde primero.
+  // Un cliente sin POD no entra en el mensaje: no hay canal al que mandarlo, y agruparlo bajo
+  // "-" se lo mostraba a todos los PODs en el canal general. No se descarta en silencio
+  // (AGENTS.md §6): los nombres quedan en el log, así que si alguien no aparece en el resumen
+  // hay dónde ver por qué. Se arregla cargándole el POD en la columna I del Índice.
+  const sinPod = {};
   const porPod = {};
   Object.keys(acum).forEach(function (k) {
     const a = acum[k];
     const prom = a.suma / a.n;
-    const pod = _webappNormalizarPod(a.cli.pod) || 'Sin POD';
+    const pod = _webappNormalizarPod(a.cli.pod);
+    if (pod === WEBAPP_POD_SIN_ASIGNAR) { sinPod[a.cli.nombre] = true; return; }
     if (!porPod[pod]) porPod[pod] = {};
     if (!porPod[pod][a.cli.nombre]) porPod[pod][a.cli.nombre] = [];
     porPod[pod][a.cli.nombre].push({
@@ -2663,6 +2673,12 @@ function _webappResumenHorariosParaSlack(opciones) {
       tarde: Math.round(prom) > limite
     });
   });
+
+  const nombresSinPod = Object.keys(sinPod);
+  if (nombresSinPod.length) {
+    Logger.log('[WebApp] Resumen de horarios: fuera del mensaje por no tener POD en el Índice: ' +
+      nombresSinPod.sort().join(', '));
+  }
 
   const pods = Object.keys(porPod).sort().map(function (pod) {
     return {

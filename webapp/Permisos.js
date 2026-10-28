@@ -210,7 +210,7 @@ function _webappPodsDelIndice() {
   try {
     (_webappEstadoIndice().clientes || []).forEach(function (c) {
       const p = String(c.pod || '').trim().toUpperCase();
-      if (p && p !== '-' && pods.indexOf(p) === -1) pods.push(p);
+      if (p && p !== WEBAPP_POD_SIN_ASIGNAR && pods.indexOf(p) === -1) pods.push(p);
     });
     pods.sort();
   } catch (e) {
