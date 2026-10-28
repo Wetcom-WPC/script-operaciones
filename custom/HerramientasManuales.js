@@ -2169,10 +2169,10 @@ function manual_configurarResumenMensualHorarios() {
   ScriptApp.newTrigger('enviarResumenMensualHorarios')
     .timeBased()
     .everyDays(1)
-    .atHour(18)
+    .atHour(15)
     .create();
 
-  Logger.log("OK Resumen mensual configurado: enviarResumenMensualHorarios todos los dias 18-19hs.");
+  Logger.log("OK Resumen mensual configurado: enviarResumenMensualHorarios todos los dias 15-16hs.");
   Logger.log("   Solo manda algo el ultimo dia habil del mes; el resto de los dias sale sin hacer nada.");
   Logger.log("");
   const ya = PropertiesService.getScriptProperties().getProperty(WEBAPP_PROP_RESUMEN_MENSUAL);
