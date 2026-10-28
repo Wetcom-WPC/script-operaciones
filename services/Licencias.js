@@ -656,9 +656,9 @@ function procesarTodasLasLicencias(opciones) {
     // PROP_CICLO se conserva: es la marca de que este mes ya se auditó.
     seguimiento.terminar(summaryReport.errores.length);
 
-    if (typeof enviarResumenSlack === "function" && (summaryReport.errores.length > 0 || summaryReport.exitos.length > 0)) {
-      enviarResumenSlack(LICENCIAS_OPERATION_NAME, summaryReport);
-    }
+    // Antes esto llamaba a enviarResumenSlack(), que vive en el proyecto de Ops y no acá: el
+    // typeof siempre daba false y el resumen nunca se envió. Ver enviarResumenLicenciasALogs.
+    enviarResumenLicenciasALogs(LICENCIAS_OPERATION_NAME, summaryReport);
     return 'finalizado';
   } finally {
     lock.releaseLock();
@@ -1195,7 +1195,9 @@ function enviarAlertaLicencias(cliente, destinatarioRaw, todasLasLicencias) {
 }
 
 function enviarAlertaSlackDetallada(cliente, alertas) {
-  if (typeof SLACK_WEBHOOK_URL === 'undefined') return;
+  // SLACK_WEBHOOK_URL no está declarada en ningún archivo de este proyecto, así que este
+  // guard daba siempre verdadero y la función salía sin enviar nada. Los webhooks reales
+  // los resuelve Config desde Script Properties, y de eso ya se encarga SlackService.
   const clas = clasificarLicenciasVsphere(alertas);
   const vencidas = clas.vencidas;
   const proximas = clas.proximas;
@@ -1204,7 +1206,7 @@ function enviarAlertaSlackDetallada(cliente, alertas) {
   let msg = `*Reporte de Licencias - ${cliente}*\n`;
   if (vencidas.length > 0) msg += `🔴 *CRÍTICO:* ${vencidas.length} licencias vencidas en uso.\n`;
   if (proximas.length > 0) msg += `🟡 *WARNING:* ${proximas.length} próximas a vencer.\n`;
-  SlackService.enviarNotificacionGuardia(msg);
+  SlackService.enviarLogTexto(msg);
 }
 
 /**
@@ -1341,6 +1343,12 @@ function instalarTriggerVeeamLic() {
 function gatilloDiarioVeeamLic() {
   if (typeof esUltimoDiaHabilMes === "function" && esUltimoDiaHabilMes()) {
     console.log("📅 HOY ES EL ÚLTIMO DÍA HÁBIL DEL MES. Iniciando auditoría Veeam...");
+    // Antes de arrancar, avisar qué clientes no subieron el reporte de este mes. Después de
+    // este punto el mail sale con lo que haya en el Drive, y como la navegación de carpetas
+    // toma la fecha más reciente sin mirar de qué mes es, un reporte del mes pasado se
+    // informaría como si fuera de hoy. No lanza: si la revisión falla, el ciclo corre igual.
+    avisarLicenciasVeeamPendientesAntesDelCiclo();
+
     // Si vSphere (7 AM) todavía no terminó, queda en cola en vez de perder el mes.
     ejecutarAuditoriaLicencias(LIC_TECNOLOGIA_VEEAM, { nuevoCiclo: true });
   } else {
@@ -1478,9 +1486,8 @@ function procesarTodasLasLicenciasVeeam(opciones) {
     props.deleteProperty(VEEAM_LIC_PROP_ENVIADOS);
     seguimiento.terminar(summaryReport.errores.length);
 
-    if (typeof enviarResumenSlack === "function" && (summaryReport.errores.length > 0 || summaryReport.exitos.length > 0)) {
-      enviarResumenSlack(VEEAM_LIC_OPERATION_NAME, summaryReport);
-    }
+    // Mismo caso que en vSphere: enviarResumenSlack() no existe en este proyecto.
+    enviarResumenLicenciasALogs(VEEAM_LIC_OPERATION_NAME, summaryReport);
     return 'finalizado';
   } finally {
     lock.releaseLock();
@@ -1839,7 +1846,7 @@ function enviarAlertaLicenciasVeeam(cliente, destinatarioRaw, todasLasLicencias)
 }
 
 function enviarAlertaSlackVeeamLic(cliente, alertas) {
-  if (typeof SLACK_WEBHOOK_URL === 'undefined' || typeof sendSlackMessage !== 'function') return;
+  // Mismo guard falso que en vSphere, más un sendSlackMessage que tampoco existe acá.
   const clas = clasificarLicenciasVeeam(alertas);
   const vencidas = clas.vencidas;
   const proximas = clas.proximas;
@@ -1848,7 +1855,7 @@ function enviarAlertaSlackVeeamLic(cliente, alertas) {
   let msg = `*Reporte de Licencias Veeam - ${cliente}*\n`;
   if (vencidas.length > 0) msg += `🔴 *CRÍTICO:* ${vencidas.length} licencias vencidas.\n`;
   if (proximas.length > 0) msg += `🟡 *WARNING:* ${proximas.length} próximas a vencer.\n`;
-  SlackService.enviarNotificacionGuardia(msg);
+  SlackService.enviarLogTexto(msg);
 }
 
 function ejecutarClienteSeleccionadoVeeamLic() {
