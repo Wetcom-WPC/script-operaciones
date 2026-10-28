@@ -163,7 +163,10 @@ class PoliticasVSANProcessor extends MailProcessor {
       }
 
       // 2. Política no asignada o incorrecta
-      if (policyVal === "-" || policyVal === "") {
+      // El guard de idx: si el reporte no trae la columna, policyVal queda "" y esta regla
+      // daría verdadero para TODA fila. Es AGENTS.md §6 al revés: en vez de dejar de filtrar
+      // en silencio, alertaría el parque entero. Una columna que no vino no es una anomalía.
+      if (idxPolicy !== -1 && (policyVal === "-" || policyVal === "")) {
         detectedReasons.add("Sin Política de Storage asignada (-)");
         isAlert = true;
       } else if (policyVal.includes("default storage policy") || policyVal === "vsan default storage policy") {
@@ -172,7 +175,7 @@ class PoliticasVSANProcessor extends MailProcessor {
       }
 
       // 3. Cluster no asignado / huérfana
-      if (clusterVal === "" || clusterVal === "-") {
+      if (idxCluster !== -1 && (clusterVal === "" || clusterVal === "-")) {
         detectedReasons.add("VM sin Cluster asignado en vCenter");
         isAlert = true;
       }
