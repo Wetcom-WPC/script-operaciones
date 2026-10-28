@@ -2372,6 +2372,34 @@ function webapp_guardarComentarioEnvio(datos) {
 // "de prueba" termine en el canal de un POD sin que nadie lo haya decidido.
 const WEBAPP_PROP_WEBHOOK_HORARIOS = 'SLACK_WEBHOOK_REPORTE_HORARIOS';
 
+// Un canal por POD: el webhook de cada uno vive en su propia Script Property, como
+// SLACK_WEBHOOK_HORARIOS_POD1. Van ahí y no en el código ni en una columna del Índice porque
+// un webhook es un secreto: quien lo tiene puede postear en ese canal (AGENTS.md §9).
+//
+// El nombre lleva HORARIOS adentro a propósito: el día que otro reporte quiera su propio canal
+// por POD, no se pisa con este ni hay que adivinar cuál era de cuál.
+const WEBAPP_PREFIJO_WEBHOOK_POD = 'SLACK_WEBHOOK_HORARIOS_';
+
+/**
+ * A qué canal va el resumen de un POD: el suyo si lo tiene configurado, y si no el general.
+ *
+ * El respaldo al canal general es a propósito: un POD al que todavía no se le cargó el webhook
+ * tiene que seguir apareciendo en algún lado, no desaparecer del reporte sin que nadie se
+ * entere (AGENTS.md §7).
+ *
+ * @param {string} pod
+ * @returns {{url: string, prop: string, propio: boolean}} url vacía si no hay ni uno ni otro.
+ */
+function _webappWebhookDePod(pod) {
+  const props = PropertiesService.getScriptProperties();
+  const nombreProp = WEBAPP_PREFIJO_WEBHOOK_POD + _webappNormalizarPod(pod);
+  const propio = props.getProperty(nombreProp);
+  if (propio && propio.trim()) return { url: propio.trim(), prop: nombreProp, propio: true };
+
+  const general = props.getProperty(WEBAPP_PROP_WEBHOOK_HORARIOS);
+  return { url: general ? general.trim() : '', prop: WEBAPP_PROP_WEBHOOK_HORARIOS, propio: false };
+}
+
 // Los colores de la barra lateral de cada POD en Slack. Son los verdes y rojos de la paleta
 // de Slack, que es la que se lee bien tanto en tema claro como en oscuro.
 const WEBAPP_SLACK_COLOR_OK    = '#2EB67D';
@@ -2682,9 +2710,16 @@ function webapp_enviarResumenHorariosSlack(filtros) {
     pod: f.pod, cliente: f.cliente, tech: f.tech, operador: f.operador
   });
   if (!datos.pods.length) throw new Error('No hay datos para enviar.');
-  _webappPostearResumenHorarios(datos);
-  Logger.log('[WebApp] Resumen de horarios enviado a Slack por ' + usuario + '.');
-  return { ok: true };
+
+  const r = _webappPostearResumenHorarios(datos);
+  Logger.log('[WebApp] Resumen de horarios enviado a Slack por ' + usuario +
+    ' (' + r.enviados + ' canal/es).');
+  // Si alguno falló se avisa, pero diciendo también lo que SÍ salió: "no se pudo enviar" a
+  // secas haría pensar que no llegó nada y que hay que reintentar todo (AGENTS.md §7).
+  if (r.errores.length) {
+    throw new Error('Se envió a ' + r.enviados + ' canal/es, pero falló en: ' + r.errores.join(' | '));
+  }
+  return { ok: true, enviados: r.enviados };
 }
 
 /**
@@ -2692,12 +2727,49 @@ function webapp_enviarResumenHorariosSlack(filtros) {
  * verificó el rol) y el envío mensual automático (que corre sin usuario).
  */
 function _webappPostearResumenHorarios(datos) {
-  const webhook = PropertiesService.getScriptProperties().getProperty(WEBAPP_PROP_WEBHOOK_HORARIOS);
-  if (!webhook) {
-    throw new Error('Falta configurar la Script Property "' + WEBAPP_PROP_WEBHOOK_HORARIOS +
-      '" con el webhook del canal donde tiene que llegar el resumen.');
+  // Los PODs se agrupan por canal de destino. Los que tienen el suyo salen cada uno a su
+  // canal; los que no, juntos al general — que es exactamente como funcionaba antes de que
+  // existieran los canales por POD.
+  const porCanal = {};
+  const orden = [];
+  (datos.pods || []).slice(0, WEBAPP_SLACK_MAX_PODS).forEach(function (pod) {
+    const destino = _webappWebhookDePod(pod.pod);
+    if (!destino.url) return;
+    if (!porCanal[destino.url]) {
+      porCanal[destino.url] = { destino: destino, pods: [] };
+      orden.push(destino.url);
+    }
+    porCanal[destino.url].pods.push(pod);
+  });
+
+  if (!orden.length) {
+    throw new Error('No hay ningún canal de Slack configurado. Cargá la Script Property "' +
+      WEBAPP_PROP_WEBHOOK_HORARIOS + '" (canal general) o una "' + WEBAPP_PREFIJO_WEBHOOK_POD +
+      '<POD>" por cada POD.');
   }
 
+  // Se intentan TODOS los canales aunque uno falle: que el webhook de un POD esté vencido no
+  // puede dejar sin resumen a los otros cuatro.
+  const errores = [];
+  let enviados = 0;
+  orden.forEach(function (url) {
+    const grupo = porCanal[url];
+    const nombres = grupo.pods.map(function (p) { return p.pod; }).join(', ');
+    try {
+      _webappPostearMensajeSlack(url, datos, grupo.pods);
+      enviados++;
+      Logger.log('[WebApp] Resumen de horarios enviado a ' + grupo.destino.prop + ' (' + nombres + ').');
+    } catch (e) {
+      Logger.log('[WebApp] No se pudo enviar el resumen a ' + grupo.destino.prop + ' (' + nombres + '): ' + e.message);
+      errores.push(nombres + ': ' + e.message);
+    }
+  });
+
+  return { ok: errores.length === 0, enviados: enviados, errores: errores };
+}
+
+/** Arma y postea el mensaje de un grupo de PODs a un canal. */
+function _webappPostearMensajeSlack(webhook, datos, pods) {
   // El encabezado va en "text" y no en un attachment porque es lo que Slack usa como vista
   // previa en la notificación y en la lista de canales.
   //
@@ -2710,7 +2782,7 @@ function _webappPostearResumenHorarios(datos) {
   // Un attachment por POD. El "color" es la barra lateral que pinta Slack: verde si todos los
   // clientes de ese POD están en horario, rojo si alguno se pasa de las 11. Es lo que permite
   // ver de un vistazo, sin leer, qué POD necesita atención.
-  const attachments = datos.pods.slice(0, WEBAPP_SLACK_MAX_PODS).map(function (pod) {
+  const attachments = pods.map(function (pod) {
     const clientes = Array.isArray(pod.clientes) ? pod.clientes : [];
     let algunoTarde = false;
 
@@ -2811,14 +2883,24 @@ function enviarResumenMensualHorarios() {
     return { enviado: false, motivo: 'sin-envios' };
   }
 
-  _webappPostearResumenHorarios(datos);
-  // La marca va DESPUÉS de postear: si Slack falla, el activador del día siguiente no sirve
-  // (ya no es el último día hábil), pero al menos el log dice qué pasó y no quedó marcado
-  // como enviado algo que nunca salió (AGENTS.md §7).
-  props.setProperty(WEBAPP_PROP_RESUMEN_MENSUAL, ciclo);
-  Logger.log('[WebApp] Resumen mensual de ' + ciclo + ' enviado a Slack: ' +
-    rango.desdeISO + ' al ' + rango.hastaISO + ', ' + datos.pods.length + ' POD(s).');
-  return { enviado: true, desde: rango.desdeISO, hasta: rango.hastaISO, pods: datos.pods.length };
+  const r = _webappPostearResumenHorarios(datos);
+
+  // El mes se marca si llegó a SALIR a algún canal. Si no se marcara, una corrida repetida del
+  // activador volvería a postear en los canales que ya lo recibieron. Lo que falló queda en el
+  // log, y el día siguiente ya no es el último hábil, así que no se reintenta solo.
+  if (r.enviados > 0) props.setProperty(WEBAPP_PROP_RESUMEN_MENSUAL, ciclo);
+
+  if (r.errores.length) {
+    Logger.log('[WebApp] Resumen mensual de ' + ciclo + ': salió a ' + r.enviados +
+      ' canal/es y falló en: ' + r.errores.join(' | '));
+  } else {
+    Logger.log('[WebApp] Resumen mensual de ' + ciclo + ' enviado: ' + rango.desdeISO + ' al ' +
+      rango.hastaISO + ', ' + datos.pods.length + ' POD(s) en ' + r.enviados + ' canal/es.');
+  }
+  return {
+    enviado: r.enviados > 0, desde: rango.desdeISO, hasta: rango.hastaISO,
+    pods: datos.pods.length, canales: r.enviados, errores: r.errores
+  };
 }
 
 // =================================================================

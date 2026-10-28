@@ -2227,6 +2227,49 @@ function manual_probarResumenMensualHorarios() {
 }
 
 /**
+ * Que canal de Slack le toca a cada POD en el resumen de horarios.
+ *
+ * NO imprime los webhooks: un webhook es un secreto y el log de ejecucion lo ve cualquiera
+ * que entre al editor. Solo dice si esta cargado o no, y a donde caeria ese POD.
+ *
+ * Los PODs salen del Indice, asi que aparecen los que existen de verdad.
+ */
+function manual_auditarWebhooksPorPod() {
+  const props = PropertiesService.getScriptProperties();
+  const general = props.getProperty(WEBAPP_PROP_WEBHOOK_HORARIOS);
+
+  Logger.log("=== CANALES DE SLACK DEL RESUMEN DE HORARIOS ===");
+  Logger.log("Canal general (" + WEBAPP_PROP_WEBHOOK_HORARIOS + "): " +
+    (general && general.trim() ? "configurado" : "NO configurado"));
+  Logger.log("");
+
+  const pods = _webappPodsDelIndice();
+  if (!pods.length) {
+    Logger.log("No se pudieron listar los PODs del Indice.");
+    return;
+  }
+
+  let propios = 0;
+  pods.forEach(function (pod) {
+    const nombreProp = WEBAPP_PREFIJO_WEBHOOK_POD + pod;
+    const tiene = !!(props.getProperty(nombreProp) || "").trim();
+    if (tiene) propios++;
+    Logger.log("  " + pod + "  ->  " + (tiene
+      ? "canal propio (" + nombreProp + ")"
+      : "SIN canal propio; cae al general" + (general && general.trim() ? "" : " ... que TAMPOCO esta configurado")));
+  });
+
+  Logger.log("");
+  Logger.log(propios + " de " + pods.length + " POD(s) con canal propio.");
+  Logger.log("");
+  Logger.log("Para agregar uno: Configuracion del Proyecto > Propiedades de la Secuencia de");
+  Logger.log("Comandos > Agregar propiedad, con el nombre " + WEBAPP_PREFIJO_WEBHOOK_POD + "<POD>");
+  Logger.log("(por ejemplo " + WEBAPP_PREFIJO_WEBHOOK_POD + "POD1) y el webhook como valor.");
+  Logger.log("");
+  Logger.log("Ojo: un cliente sin POD en el Indice queda agrupado como \"-\" y cae al canal general.");
+}
+
+/**
  * Donde estan los remitentes de los clientes, y en que planilla.
  *
  * Hay dos Indices distintos y es facil confundirlos:
