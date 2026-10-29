@@ -304,6 +304,7 @@
 
         <div class="tabs-container" role="tablist" aria-label="Subpestañas de llegada de reportes" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
           <button class="tab-btn active" role="tab" aria-selected="true" data-tab-llegadas="datos">Llegó al mail</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab-llegadas="drive">Subido a Drive</button>
           <button class="tab-btn" role="tab" aria-selected="false" data-tab-llegadas="patrones">Patrones</button>
         </div>
 
@@ -412,6 +413,26 @@
           <p id="llegadasVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">
             Todavía no hay llegadas registradas para estos filtros. El registro arranca la primera vez
             que se aprieta Actualizar y se va acumulando día a día.
+          </p>
+        </div>
+
+        <!-- ---------- Sub-pestaña: Subido a Drive ---------- -->
+        <div id="panelLlegadasDrive" style="display: none;">
+          <p class="ayuda" style="margin: 0 0 16px 0;">
+            Lo mismo que la pestaña anterior pero del otro lado: acá no se mira si el correo
+            <strong>llegó</strong>, sino si el reporte se <strong>procesó y quedó archivado</strong>.
+            Cuando el mail está en verde y esto en rojo, el cliente cumplió y lo que falló es
+            nuestro. Es siempre el día de hoy.
+          </p>
+          <div class="est-bloque" id="driveBloque" hidden>
+            <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+              <h3 style="margin: 0; font-size: 16px;">Procesado hoy</h3>
+              <span class="ayuda" id="driveResumen"></span>
+            </div>
+            <div id="driveLista"></div>
+          </div>
+          <p id="driveVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">
+            Todavía no hay nada procesado hoy.
           </p>
         </div>
 
