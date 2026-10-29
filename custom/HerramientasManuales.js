@@ -2750,3 +2750,100 @@ function _pendientesMismoCliente(a, b) {
   if (!x || !y) return false;
   return x === y || x.indexOf(y) !== -1 || y.indexOf(x) !== -1;
 }
+
+/**
+ * Por que un cliente o una casilla no aparece donde deberia.
+ *
+ * Responde tres preguntas de una, que son las que vienen apareciendo cada vez que un esperado
+ * no cruza con ninguna llegada:
+ *   1. Que filas del Indice mencionan ese texto (casillas cargadas, nombre corto, POD).
+ *   2. Como resuelve esa casilla hoy: a que cliente, por casilla exacta o por dominio.
+ *   3. Que hay registrado hoy para ese cliente, y que asuntos REALES hay en Gmail.
+ *
+ * El punto 3 es el que importa: el registro de llegadas no guarda el asunto del correo, guarda
+ * el asunto del PROCESSOR que lo matcheo. Por eso "DRP - Affinity Rules Santa Cruz",
+ * "DRP - Affinity Rules BERSA" y las otras dos variantes quedan todas registradas como
+ * "Affinity Rules", y no hay forma de saber cual de las cuatro llego. Esta funcion muestra los
+ * dos lados para poder verlo.
+ *
+ * No escribe nada y no manda nada.
+ *
+ * @param {string} texto Un mail ("veeam@falabella.com.ar"), un dominio o un nombre de cliente.
+ */
+function manual_diagnosticarRemitente(texto) {
+  const busca = String(texto || "").trim().toLowerCase();
+  if (!busca) {
+    Logger.log("Pasale algo para buscar: manual_diagnosticarRemitente('veeam@falabella.com.ar')");
+    return;
+  }
+  Logger.log("=== DIAGNOSTICO DE '" + busca + "' ===");
+  Logger.log("");
+
+  // 1. Las filas del Indice que lo mencionan.
+  Logger.log("--- Filas del Indice que lo mencionan ---");
+  const ss = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
+  const hoja = ss.getSheetByName("Sheet1") || ss.getSheets()[0];
+  let encontradas = 0;
+  if (hoja.getLastRow() > 1) {
+    hoja.getRange(2, 1, hoja.getLastRow() - 1, 12).getValues().forEach(function (fila, i) {
+      const linea = (String(fila[0] || "") + " " + String(fila[1] || "") + " " + String(fila[11] || "")).toLowerCase();
+      if (linea.indexOf(busca) === -1) return;
+      encontradas++;
+      Logger.log("  Fila " + (i + 2) + ":");
+      Logger.log("    A remitentes : " + String(fila[0] || "(vacio)"));
+      Logger.log("    B operacion  : " + String(fila[1] || "(vacio)"));
+      Logger.log("    I POD        : " + String(fila[8] || "(vacio)"));
+      Logger.log("    L nombre     : " + String(fila[11] || "(vacio)  <- si esta vacio, el panel usa la columna B"));
+    });
+  }
+  if (!encontradas) {
+    Logger.log("  NINGUNA. Si es una casilla, no esta cargada en el Indice: por eso las llegadas");
+    Logger.log("  de ese remitente se muestran con el mail crudo en vez del nombre del cliente.");
+  }
+  Logger.log("");
+
+  // 2. Como resuelve, si es una casilla.
+  if (busca.indexOf("@") !== -1) {
+    const quien = llegadasResolverCliente(busca, llegadasMapaClientes());
+    Logger.log("--- Como resuelve esa casilla ---");
+    Logger.log("  Cliente: " + (quien.cliente || "(NO RESUELVE)"));
+    Logger.log("  POD    : " + (quien.pod || "-"));
+    Logger.log("");
+  }
+
+  // 3. Lo registrado hoy y los asuntos reales en Gmail.
+  const hoyISO = Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, "yyyy-MM-dd");
+  const delDia = llegadasLeer(hoyISO).filter(function (l) {
+    if (l.fecha !== hoyISO) return false;
+    return l.remitente.indexOf(busca) !== -1 || l.cliente.toLowerCase().indexOf(busca) !== -1;
+  });
+  Logger.log("--- Registrado hoy (" + hoyISO + "): " + delDia.length + " ---");
+  Logger.log("    Ojo: la columna 'reporte' es el asunto del PROCESSOR, no el del correo.");
+  delDia.forEach(function (l) {
+    Logger.log("  " + l.hora + "  " + l.cliente + "  |  " + l.reporte + "  <- " + l.remitente);
+  });
+  Logger.log("");
+
+  Logger.log("--- Asuntos REALES en Gmail de hoy ---");
+  try {
+    const consulta = (busca.indexOf("@") !== -1 ? "from:" + busca : '"' + busca + '"') +
+      " after:" + Utilities.formatDate(new Date(), HORARIO_OPERATIVO_TZ, "yyyy/MM/dd");
+    const hilos = GmailApp.search(consulta, 0, 60);
+    Logger.log("  Consulta: " + consulta + "  -> " + hilos.length + " hilo(s)");
+    const vistos = {};
+    GmailApp.getMessagesForThreads(hilos).forEach(function (mensajes) {
+      mensajes.forEach(function (m) {
+        const asunto = String(m.getSubject() || "");
+        if (vistos[asunto]) return;
+        vistos[asunto] = true;
+        Logger.log("    " + Utilities.formatDate(m.getDate(), HORARIO_OPERATIVO_TZ, "HH:mm") +
+          "  adjuntos=" + m.getAttachments().length + "  " + asunto);
+      });
+    });
+    if (!hilos.length) {
+      Logger.log("    Nada. O no llego, o la casilla es otra.");
+    }
+  } catch (e) {
+    Logger.log("  No se pudo consultar Gmail: " + e.message);
+  }
+}
