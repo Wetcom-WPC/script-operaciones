@@ -562,3 +562,47 @@ function webapp_marcarPatronAtendido(datos) {
   patronesMarcarAtendido(d.tipo, d.remitente, d.reporte, d.cliente, d.evidenciaHasta, d.nota, usuario);
   return { ok: true, atendidos: patronesAtendidosLeer() };
 }
+
+// =================================================================
+// CRUCE ENTRE LO ESPERADO Y LO QUE LLEGO
+// =================================================================
+
+/**
+ * Si el asunto de un correo corresponde al reporte esperado de la pestana "Reportes Faltantes".
+ *
+ * POR QUE NO ALCANZA coincideNombreReporte() SOLO
+ * Esa funcion nacio para comparar el esperado contra un NOMBRE DE ARCHIVO en Drive, y ahi el
+ * archivo siempre trae el nombre completo o mas. Por eso exige que TODAS las palabras del
+ * esperado aparezcan en el real.
+ *
+ * Contra un ASUNTO DE MAIL la relacion se da vuelta: el esperado es el que trae palabras de
+ * mas. El Indice escribe "Veeam - VMs protegidas" o "VMs protegidas por Veeam" y el correo
+ * dice apenas "VMs protegidas". Medido el 29/10/2026, eso solo explicaba la mitad de los 63
+ * correos que no cruzaban con ningun esperado — y cada uno de esos habria sido un rojo falso
+ * en el panel.
+ *
+ * La solucion es mirar en las DOS direcciones: alcanza con que uno de los dos nombres este
+ * contenido en el otro. Se sigue apoyando en coincideNombreReporte() para no reimplementar la
+ * normalizacion ni la proteccion de DRP (AGENTS.md seccion 5).
+ *
+ * QUE SE PIERDE
+ * Un esperado muy corto puede quedar contenido en un asunto que no le corresponde. Es el
+ * precio de no tener un identificador comun entre las dos listas; el dia que exista, esto se
+ * reemplaza por una comparacion exacta.
+ *
+ * @param {string} asunto Como vino el correo.
+ * @param {string} esperado Identificador de la pestana "Reportes Faltantes".
+ * @returns {boolean}
+ */
+function llegadasMismoReporte(asunto, esperado) {
+  if (!asunto || !esperado) return false;
+
+  // La guarda de DRP se aplica en las dos direcciones. Un reporte DRP y su equivalente comun
+  // tienen nombres casi iguales ("DRP - Alertas de vSphere San Juan" contra "Alertas de
+  // vSphere"), asi que sin esto se cruzarian entre si y cada uno taparia la falta del otro.
+  const asuntoDrp = normalizarTextoReporte(asunto).indexOf("drp") !== -1;
+  const esperadoDrp = normalizarTextoReporte(esperado).indexOf("drp") !== -1;
+  if (asuntoDrp !== esperadoDrp) return false;
+
+  return coincideNombreReporte(asunto, esperado) || coincideNombreReporte(esperado, asunto);
+}

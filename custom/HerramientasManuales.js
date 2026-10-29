@@ -2627,12 +2627,21 @@ function pendientesEsperadosDelDia(fecha) {
 }
 
 /**
- * Cuanto encajan la lista de esperados y el registro de llegadas, para una fecha.
+ * Cuanto encajan la lista de esperados y el registro de llegadas, para una fecha, y POR QUE
+ * no encajan los que no encajan.
  *
- * Corrrelo con el dia de hoy ya avanzado (despues de las 9) o con un dia habil cualquiera.
- * Lo que importa de la salida no es el numero de pendientes: es la seccion de "llegadas que
- * no matchearon ningun esperado". Si esa lista es larga, los nombres de los dos lados no
- * hablan el mismo idioma y hay que resolver eso antes de pintar nada de rojo.
+ * Lo que importa de la salida no es el numero de pendientes: es que cada esperado sin llegada
+ * quede explicado. Un pendiente sin causa identificada seria un rojo falso en el panel, y un
+ * rojo falso por dia por cliente hace que nadie mire mas el tablero.
+ *
+ * Las causas que distingue:
+ *   SIN PROCESSOR  el asunto no esta en obtenerAsuntosConProcessor(), asi que el registro de
+ *                  llegadas nunca lo buscó en Gmail. Puede haber llegado igual.
+ *   CLIENTE        ese cliente no tiene NINGUNA llegada registrada ese dia: el problema puede
+ *                  ser el nombre del cliente, no el del reporte.
+ *   NO LLEGO       el cliente mando otras cosas ese dia pero esta no: candidato real a rojo.
+ *
+ * No escribe nada y no manda nada a Slack.
  *
  * @param {string} [fechaISO] yyyy-MM-dd. Si no se pasa, hoy.
  */
@@ -2651,47 +2660,76 @@ function manual_diagnosticarPendientesDeLlegada(fechaISO) {
   const llegadas = llegadasLeer(iso).filter(function (l) { return l.fecha === iso; });
   Logger.log("Esperados para esta fecha: " + esperados.length);
   Logger.log("Llegadas registradas esa fecha: " + llegadas.length);
+
+  // Los asuntos que el registro de llegadas sabe buscar. Un esperado que no este aca nunca va
+  // a figurar como llegado aunque el correo haya entrado: llegadasRegistrar() consulta Gmail
+  // solo por estos asuntos.
+  let asuntosConocidos = [];
+  try {
+    asuntosConocidos = obtenerAsuntosConProcessor();
+  } catch (e) {
+    Logger.log("No se pudo leer la lista de asuntos con processor: " + e.message);
+  }
+  Logger.log("Asuntos que el registro sabe buscar: " + asuntosConocidos.length);
   Logger.log("");
 
-  // Cruce. Un esperado matchea si hay alguna llegada del MISMO cliente cuyo asunto encaje con
-  // el identificador esperado, con el mismo comparador tolerante que usa la auditoria contra
-  // los nombres de archivo en Drive (coincideNombreReporte).
   const llegadasUsadas = {};
   const pendientes = [];
   esperados.forEach(function (e) {
-    const match = llegadas.filter(function (l, i) {
-      if (!_pendientesMismoCliente(l.cliente, e.cliente)) return false;
-      if (!coincideNombreReporte(l.reporte, e.reporte)) return false;
+    let encontro = false;
+    llegadas.forEach(function (l, i) {
+      if (!_pendientesMismoCliente(l.cliente, e.cliente)) return;
+      if (!llegadasMismoReporte(l.reporte, e.reporte)) return;
       llegadasUsadas[i] = true;
-      return true;
+      encontro = true;
     });
-    if (!match.length) pendientes.push(e);
+    if (!encontro) pendientes.push(e);
   });
 
-  Logger.log("--- Esperados SIN llegada (serian los rojos): " + pendientes.length + " ---");
+  // Clientes que mandaron algo ese dia: sirve para separar "no llego ESTE reporte" de "de
+  // este cliente no llego nada / no le conocemos el nombre".
+  const clientesConLlegadas = {};
+  llegadas.forEach(function (l) { clientesConLlegadas[l.cliente] = true; });
+
+  const porCausa = { "SIN PROCESSOR": [], "CLIENTE": [], "NO LLEGO": [] };
   pendientes.forEach(function (p) {
-    Logger.log("  " + p.cliente + "  |  " + p.reporte + "  (" + p.frecuencia + ")");
+    const tieneProcessor = asuntosConocidos.some(function (a) {
+      return llegadasMismoReporte(a, p.reporte);
+    });
+    const clienteActivo = Object.keys(clientesConLlegadas).some(function (c) {
+      return _pendientesMismoCliente(c, p.cliente);
+    });
+    if (!tieneProcessor) porCausa["SIN PROCESSOR"].push(p);
+    else if (!clienteActivo) porCausa["CLIENTE"].push(p);
+    else porCausa["NO LLEGO"].push(p);
+  });
+
+  Logger.log("--- Esperados SIN llegada: " + pendientes.length + " ---");
+  ["SIN PROCESSOR", "CLIENTE", "NO LLEGO"].forEach(function (causa) {
+    const lista = porCausa[causa];
+    Logger.log("");
+    Logger.log("  [" + causa + "] " + lista.length);
+    lista.forEach(function (p) {
+      Logger.log("     " + p.cliente + "  |  " + p.reporte + "  (" + p.frecuencia + ")");
+    });
   });
   Logger.log("");
 
   const huerfanas = llegadas.filter(function (l, i) { return !llegadasUsadas[i]; });
   Logger.log("--- Llegadas que NO matchearon ningun esperado: " + huerfanas.length + " ---");
-  Logger.log("    (si esta lista es larga, los nombres de los dos lados no coinciden");
-  Logger.log("     y los pendientes de arriba son falsos positivos)");
+  Logger.log("    (la pestana de esperados no es un catalogo completo: hay reportes que");
+  Logger.log("     llegan todos los dias y no figuran ahi. Esos caen aca y no son un error)");
   huerfanas.forEach(function (l) {
     Logger.log("  " + l.cliente + "  |  " + l.reporte + "  <- " + l.remitente);
   });
   Logger.log("");
 
-  // Los nombres de cliente de cada lado, para ver si el problema es ahi y no en el reporte.
   const cliEsperados = {};
   esperados.forEach(function (e) { cliEsperados[e.cliente] = true; });
-  const cliLlegadas = {};
-  llegadas.forEach(function (l) { cliLlegadas[l.cliente] = true; });
   const soloEsperados = Object.keys(cliEsperados).filter(function (c) {
-    return !Object.keys(cliLlegadas).some(function (o) { return _pendientesMismoCliente(o, c); });
+    return !Object.keys(clientesConLlegadas).some(function (o) { return _pendientesMismoCliente(o, c); });
   });
-  const soloLlegadas = Object.keys(cliLlegadas).filter(function (c) {
+  const soloLlegadas = Object.keys(clientesConLlegadas).filter(function (c) {
     return !Object.keys(cliEsperados).some(function (o) { return _pendientesMismoCliente(c, o); });
   });
   Logger.log("--- Nombres de cliente que existen de un solo lado ---");
@@ -2704,7 +2742,7 @@ function manual_diagnosticarPendientesDeLlegada(fechaISO) {
  *
  * Los dos lados lo escriben distinto: el Indice usa el nombre corto de la columna L y la
  * pestana de esperados lo escribe a mano. Se comparan normalizados, y alcanza con que uno
- * contenga al otro ("Banco Macro" vs "Macro").
+ * contenga al otro ("Operaciones Petersen Corp" vs "Petersen").
  */
 function _pendientesMismoCliente(a, b) {
   const x = normalizarTextoReporte(String(a || ""));
