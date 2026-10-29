@@ -2955,6 +2955,7 @@ function webapp_obtenerLlegadasReportes(dias, forzar) {
   Object.keys(completo).forEach(function (k) { mio[k] = completo[k]; });
   mio.llegadas  = webapp_filtrarPorPod(completo.llegadas || [],  permiso, function (l) { return l.pod; });
   mio.faltantes = webapp_filtrarPorPod(completo.faltantes || [], permiso, function (f) { return f.pod; });
+  mio.estados   = webapp_filtrarPorPod(completo.estados || [],   permiso, function (e) { return e.pod; });
   return mio;
 }
 
@@ -2983,6 +2984,11 @@ function _webappLlegadasReportes(dias, forzar) {
     aviso: null,
     llegadas: [],
     faltantes: [],
+    // En que estado esta HOY cada reporte esperado. Es siempre el dia de hoy y no el rango que
+    // el usuario tenga elegido: la pregunta que contesta es "que me falta AHORA", y un rango de
+    // 30 dias la volveria otra cosa.
+    estados: [],
+    estadosFecha: null,
     atendidos: { historial: [], ultima: {} }
   };
 
@@ -3026,6 +3032,21 @@ function _webappLlegadasReportes(dias, forzar) {
   }
   if (resultado.llegadas.length) {
     resultado.registroDesde = resultado.llegadas.map(function (l) { return l.fecha; }).sort()[0];
+  }
+
+  // El estado de hoy: lo esperado cruzado contra lo que llego.
+  try {
+    const ahora = new Date();
+    resultado.estadosFecha = Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd');
+    const minutosAhora = Number(Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'H')) * 60 +
+      Number(Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'm'));
+    resultado.estados = llegadasEstadoDelDia(resultado.estadosFecha, resultado.llegadas, minutosAhora);
+  } catch (e) {
+    // Que falle el cruce no puede dejar sin datos a la pantalla entera: el historial de
+    // llegadas se sigue mostrando igual y el aviso dice por que falta el estado (seccion 7).
+    Logger.log('[WebApp] No se pudo calcular el estado de hoy: ' + e.message);
+    resultado.aviso = (resultado.aviso ? resultado.aviso + ' | ' : '') +
+      'No se pudo calcular que reportes faltan hoy: ' + e.message;
   }
 
   // Los que NO llegaron salen de la auditoría diaria, que es la única que sabe qué se esperaba.

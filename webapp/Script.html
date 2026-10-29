@@ -3479,6 +3479,104 @@
     });
   }
 
+  /**
+   * Lo que se espera hoy y todavía no llegó, agrupado por cliente.
+   *
+   * Cuatro estados y no dos, porque dicen cosas distintas: a las 7 de la mañana que un reporte
+   * no esté todavía es lo normal, no un problema, y un reporte semanal un martes directamente
+   * no corresponde. Meterlos todos en "no llegó" convertiría la pantalla en un mar de rojo que
+   * nadie miraría a la semana.
+   *
+   * Respeta los filtros de cliente y de POD de la barra de arriba, pero NO el de fechas: esto
+   * es siempre hoy. El rango de fechas manda sobre el historial de abajo.
+   */
+  function pintarEstadoHoy() {
+    var bloque = document.getElementById('estadoHoyBloque');
+    if (!bloque) return;
+    var estados = (llegadasGlobal && llegadasGlobal.estados) || [];
+    if (!estados.length) { bloque.hidden = true; return; }
+
+    var f = leerFiltrosLlegadas();
+    var visibles = estados.filter(function(e) {
+      if (f.cliente && !mismoClienteLlegadas(e.cliente, f.cliente)) return false;
+      if (f.pod && e.pod !== f.pod) return false;
+      if (f.reporte && e.reporte !== f.reporte) return false;
+      return true;
+    });
+
+    var cuenta = { llego: 0, pendiente: 0, 'no-llego': 0, 'no-se-espera': 0 };
+    visibles.forEach(function(e) { if (cuenta[e.estado] !== undefined) cuenta[e.estado]++; });
+
+    var faltan = visibles.filter(function(e) {
+      return e.estado === 'no-llego' || e.estado === 'pendiente';
+    });
+
+    bloque.hidden = false;
+    bloque.classList.toggle('hay-rojo', cuenta['no-llego'] > 0);
+
+    document.getElementById('estadoHoyResumen').innerHTML =
+      '<span class="est-badge llego">' + cuenta.llego + ' llegaron</span> ' +
+      '<span class="est-badge pendiente">' + cuenta.pendiente + ' pendientes</span> ' +
+      '<span class="est-badge no-llego">' + cuenta['no-llego'] + ' no llegaron</span> ' +
+      '<span class="est-badge no-se-espera">' + cuenta['no-se-espera'] + ' hoy no se esperan</span>';
+
+    document.getElementById('estadoHoyAyuda').textContent = cuenta['no-llego'] > 0
+      ? 'En rojo, lo que ya pasó el horario límite y sigue sin aparecer.'
+      : (cuenta.pendiente > 0
+          ? 'Todavía no es la hora límite: lo amarillo puede llegar en cualquier momento.'
+          : 'Llegó todo lo que se esperaba para hoy.');
+
+    var lista = document.getElementById('estadoHoyLista');
+    if (!faltan.length) { lista.innerHTML = ''; return; }
+
+    // Agrupado por cliente: el que mira el panel atiende clientes, no reportes sueltos. Diez
+    // reportes de un cliente caído son un problema; uno de diez clientes son diez problemas.
+    var porCliente = {};
+    faltan.forEach(function(e) {
+      if (!porCliente[e.cliente]) porCliente[e.cliente] = [];
+      porCliente[e.cliente].push(e);
+    });
+
+    // Primero los que tienen algo en rojo, y dentro de esos los que más tienen.
+    var nombres = Object.keys(porCliente).sort(function(a, b) {
+      var ra = porCliente[a].filter(function(e) { return e.estado === 'no-llego'; }).length;
+      var rb = porCliente[b].filter(function(e) { return e.estado === 'no-llego'; }).length;
+      if (ra !== rb) return rb - ra;
+      return a.localeCompare(b);
+    });
+
+    lista.innerHTML = nombres.map(function(nombre) {
+      var items = porCliente[nombre].slice().sort(function(a, b) {
+        if (a.estado !== b.estado) return a.estado === 'no-llego' ? -1 : 1;
+        return a.reporte.localeCompare(b.reporte);
+      });
+      var rojos = items.filter(function(e) { return e.estado === 'no-llego'; }).length;
+      return '<div class="est-cliente">' +
+        '<strong>' + escLlegadas(nombre) + '</strong> ' +
+        (items[0].pod ? '<span class="ayuda">· ' + escLlegadas(items[0].pod) + '</span> ' : '') +
+        (rojos ? '<span class="est-badge no-llego">' + rojos + ' sin llegar</span>' : '') +
+        '<ul>' + items.map(function(e) {
+          return '<li><span class="est-badge ' + e.estado + '">' +
+            (e.estado === 'no-llego' ? 'No llegó' : 'Pendiente') + '</span> ' + escLlegadas(e.reporte) + '</li>';
+        }).join('') + '</ul></div>';
+    }).join('');
+  }
+
+  /** Escapa texto que va a innerHTML. Los nombres salen de una planilla que edita gente. */
+  function escLlegadas(t) {
+    return String(t === null || t === undefined ? '' : t).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  /** Igual que del lado del servidor: los dos lados escriben el nombre del cliente distinto. */
+  function mismoClienteLlegadas(a, b) {
+    var x = String(a || '').toLowerCase();
+    var y = String(b || '').toLowerCase();
+    if (!x || !y) return false;
+    return x === y || x.indexOf(y) !== -1 || y.indexOf(x) !== -1;
+  }
+
   /** Una fila por casilla remitente + reporte: es la unidad en la que algo se rompe. */
   function agruparLlegadas(llegadas) {
     var porClave = {};
@@ -4009,6 +4107,7 @@
     var f = leerFiltrosLlegadas();
     var llegadas = filtrarLlegadas(f);
     var grupos = agruparLlegadas(llegadas);
+    pintarEstadoHoy();
     var faltantes = filtrarFaltantes(f);
 
     var total = llegadas.length;

@@ -303,7 +303,7 @@
         </header>
 
         <div class="tabs-container" role="tablist" aria-label="Subpestañas de llegada de reportes" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
-          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-llegadas="datos">Datos</button>
+          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-llegadas="datos">Llegó al mail</button>
           <button class="tab-btn" role="tab" aria-selected="false" data-tab-llegadas="patrones">Patrones</button>
         </div>
 
@@ -350,6 +350,18 @@
 
         <!-- ---------- Sub-pestaña: Datos ---------- -->
         <div id="panelLlegadasDatos">
+          <!-- Lo que falta AHORA. Va arriba de todo porque es la pregunta que el panel no
+               contestaba: hasta hoy solo mostraba lo que llegó, y lo que no llega no deja
+               ninguna fila. Es siempre el día de hoy, sin importar el rango elegido. -->
+          <div class="est-bloque" id="estadoHoyBloque" hidden>
+            <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
+              <h3 style="margin: 0; font-size: 16px;">Estado de hoy</h3>
+              <span class="ayuda" id="estadoHoyResumen"></span>
+            </div>
+            <p class="ayuda" id="estadoHoyAyuda" style="margin: 6px 0 0 0;"></p>
+            <div id="estadoHoyLista"></div>
+          </div>
+
           <div class="scorecard-grid" style="margin-bottom: 20px;">
             <div class="scorecard-card">
               <span class="scorecard-label">Reportes recibidos</span>

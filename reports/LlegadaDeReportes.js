@@ -646,6 +646,162 @@ function _llegadasAsuntosDelDia(fechaISO, asuntos) {
 }
 
 // =================================================================
+// QUE SE ESPERABA Y EN QUE ESTADO ESTA
+// =================================================================
+//
+// Hasta aca el modulo solo sabia de lo que LLEGO. Un reporte que no llega no deja ninguna
+// fila, asi que para poder mostrarlo hay que cruzar contra una lista de lo esperado.
+//
+// Esa lista es la pestana "Reportes Faltantes" del Indice, la MISMA que usa la auditoria
+// diaria, y la decision de "le toca hoy" la toma debeLlegarHoy() de ReportesFaltantes.js: la
+// misma funcion, no una copia. Dos implementaciones de la frecuencia es el patron que ya
+// rompio cosas dos veces en este proyecto (AGENTS.md seccion 5).
+
+const LLEGADAS_TAB_ESPERADOS = "Reportes Faltantes";
+
+/** Los estados posibles de un reporte en un dia. El panel les pone color a estos nombres. */
+const LLEGADAS_ESTADO = {
+  LLEGO: "llego",
+  PENDIENTE: "pendiente",
+  NO_LLEGO: "no-llego",
+  NO_SE_ESPERA: "no-se-espera"
+};
+
+/**
+ * Todos los reportes esperados, con una marca de si les toca llegar en esa fecha.
+ *
+ * Devuelve TODOS y no solo los del dia a proposito: los que hoy no corresponden son los que el
+ * panel muestra en gris. Sin ellos, un reporte semanal desapareceria de la pantalla los otros
+ * cuatro dias y no habria forma de distinguir "hoy no toca" de "no esta configurado".
+ *
+ * Lee del Indice REAL (WEBAPP_INDICE_SPREADSHEET_ID) y no de MASTER_INDEX_SHEET_ID: en
+ * Playground esa property apunta al Indice de testing, que tiene 3 clientes, y el dashboard
+ * vive en Playground pero mira produccion.
+ *
+ * @param {Date} fecha
+ * @returns {Array<{cliente:string, reporte:string, frecuencia:string, pod:string, hoy:boolean}>}
+ */
+function llegadasEsperados(fecha) {
+  const ss = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
+  const hoja = ss.getSheetByName(LLEGADAS_TAB_ESPERADOS);
+  if (!hoja) {
+    throw new Error('No existe la pestana "' + LLEGADAS_TAB_ESPERADOS + '" en el Indice. ' +
+      'Sin esa lista no hay forma de saber que se esperaba.');
+  }
+  if (hoja.getLastRow() < 2) return [];
+
+  const dia = new Date(fecha.getTime());
+  dia.setHours(0, 0, 0, 0);
+  const laborable = !esDiaNoLaborable(dia);
+
+  const out = [];
+  // A Cliente | B Identificador Reporte | C ID Carpeta Raiz | D Frecuencia | E Fecha Origen | F POD
+  hoja.getRange(2, 1, hoja.getLastRow() - 1, 6).getValues().forEach(function (fila) {
+    const cliente = String(fila[0] || "").trim();
+    const reporte = String(fila[1] || "").trim();
+    const frecuencia = fila[3];
+    if (!cliente || !reporte || !frecuencia) return;
+
+    let hoy = false;
+    try {
+      // Un sabado, un domingo o un feriado no se espera NADA, por mas que la frecuencia diga
+      // "Diario": ningun cliente los manda. Es la misma condicion que frena la auditoria.
+      hoy = laborable && debeLlegarHoy(frecuencia, fila[4] ? new Date(fila[4]) : null, dia);
+    } catch (e) {
+      Logger.log("[Llegadas] Frecuencia de " + cliente + " / " + reporte + ": " + e.message);
+    }
+
+    out.push({
+      cliente: cliente,
+      reporte: reporte,
+      frecuencia: String(frecuencia).trim(),
+      pod: _webappNormalizarPod(fila[5]),
+      hoy: hoy
+    });
+  });
+  return out;
+}
+
+/**
+ * En que estado esta cada reporte esperado, para una fecha.
+ *
+ * Los cuatro estados dicen cosas distintas y por eso no se colapsan en "llego / no llego":
+ *
+ *   LLEGO         hay un correo que le corresponde.
+ *   PENDIENTE     le toca hoy, todavia no esta, pero aun no vencio el horario limite. No hay
+ *                 nada roto: es lo normal a las 7 de la manana.
+ *   NO_LLEGO      le toca hoy, paso el horario limite y sigue sin estar.
+ *   NO_SE_ESPERA  hoy no le toca (semanal, mensual, trimestral, o es fin de semana).
+ *
+ * El cruce usa el ASUNTO REAL del correo, no el nombre del processor: es lo unico que
+ * distingue "DRP - Affinity Rules Santa Cruz" de las otras tres variantes y del parque comun.
+ * Las filas registradas antes de que existiera esa columna caen al nombre del processor, asi
+ * que para esas los DRP de un mismo cliente se van a ver todos iguales hasta que se corra
+ * llegadasCompletarAsuntos().
+ *
+ * @param {string} fechaISO yyyy-MM-dd
+ * @param {Array} llegadas Lo que devuelve llegadasLeer(), ya filtrado o no.
+ * @param {number} [minutosAhora] Minutos desde medianoche para decidir pendiente vs no llego.
+ *   Para un dia pasado se pasa un valor alto: lo que falto ese dia ya no esta "pendiente".
+ * @returns {Array<{cliente,pod,reporte,frecuencia,estado,hora,minutos,tarde,asunto}>}
+ */
+function llegadasEstadoDelDia(fechaISO, llegadas, minutosAhora) {
+  const dia = new Date(fechaISO + "T12:00:00");
+  const esperados = llegadasEsperados(dia);
+  const delDia = (llegadas || []).filter(function (l) { return l.fecha === fechaISO; });
+  const corte = typeof minutosAhora === "number" ? minutosAhora : 24 * 60;
+
+  return esperados.map(function (e) {
+    if (!e.hoy) {
+      return {
+        cliente: e.cliente, pod: e.pod, reporte: e.reporte, frecuencia: e.frecuencia,
+        estado: LLEGADAS_ESTADO.NO_SE_ESPERA, hora: "", minutos: null, tarde: false, asunto: ""
+      };
+    }
+
+    // Se queda con la PRIMERA llegada del dia: si un reporte llego dos veces, lo que importa
+    // es a que hora estuvo disponible, no la ultima copia.
+    let match = null;
+    delDia.forEach(function (l) {
+      if (!_llegadasMismoCliente(l.cliente, e.cliente)) return;
+      if (!llegadasMismoReporte(l.asunto || l.reporte, e.reporte)) return;
+      if (!match || l.minutos < match.minutos) match = l;
+    });
+
+    if (match) {
+      return {
+        cliente: e.cliente, pod: e.pod || match.pod, reporte: e.reporte, frecuencia: e.frecuencia,
+        estado: LLEGADAS_ESTADO.LLEGO, hora: match.hora, minutos: match.minutos,
+        tarde: !!match.tarde, asunto: match.asunto || match.reporte
+      };
+    }
+
+    return {
+      cliente: e.cliente, pod: e.pod, reporte: e.reporte, frecuencia: e.frecuencia,
+      estado: corte > LLEGADAS_HORA_LIMITE_MIN ? LLEGADAS_ESTADO.NO_LLEGO : LLEGADAS_ESTADO.PENDIENTE,
+      hora: "", minutos: null, tarde: false, asunto: ""
+    };
+  });
+}
+
+/**
+ * Si dos nombres de cliente son el mismo cliente.
+ *
+ * Los dos lados lo escriben distinto: el registro de llegadas usa el nombre corto de la
+ * columna L del Indice ("Petersen") y la pestana de esperados lo escribe a mano ("Operaciones
+ * Petersen Corp"). Se comparan normalizados y alcanza con que uno contenga al otro.
+ *
+ * Se apoya en normalizarTextoReporte() en vez de normalizar de nuevo: es la misma idea de
+ * "comparar sin que molesten tildes ni puntuacion" que ya vive en ReportesFaltantes.js.
+ */
+function _llegadasMismoCliente(a, b) {
+  const x = normalizarTextoReporte(String(a || ""));
+  const y = normalizarTextoReporte(String(b || ""));
+  if (!x || !y) return false;
+  return x === y || x.indexOf(y) !== -1 || y.indexOf(x) !== -1;
+}
+
+// =================================================================
 // PATRONES ATENDIDOS
 // =================================================================
 //

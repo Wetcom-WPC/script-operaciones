@@ -2578,54 +2578,6 @@ function manual_estadoDelVigilante() {
 // Esto no arregla nada: mide cuanto encajan las dos listas ANTES de construir la pantalla
 // encima. No escribe en ningun lado y no manda nada a Slack.
 
-/** Igual que la auditoria: la pestana con los reportes esperados de cada cliente. */
-const PENDIENTES_TAB_ESPERADOS = "Reportes Faltantes";
-
-/**
- * Los reportes que se esperan para una fecha.
- *
- * Lee del Indice REAL (WEBAPP_INDICE_SPREADSHEET_ID), no de MASTER_INDEX_SHEET_ID: en
- * Playground esa property apunta al Indice de testing, que tiene 3 clientes. El dashboard
- * vive en Playground pero mira produccion, asi que tiene que leer de donde mira el resto
- * del panel.
- *
- * La decision de "le toca hoy" la toma debeLlegarHoy() de ReportesFaltantes.js — la misma
- * funcion, no una copia. Dos implementaciones de la frecuencia es exactamente el patron que
- * ya rompio cosas dos veces en este proyecto (AGENTS.md seccion 5).
- *
- * @param {Date} fecha
- * @returns {Array<{cliente:string, reporte:string, frecuencia:string}>}
- */
-function pendientesEsperadosDelDia(fecha) {
-  const ss = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
-  const hoja = ss.getSheetByName(PENDIENTES_TAB_ESPERADOS);
-  if (!hoja) {
-    throw new Error('No existe la pestana "' + PENDIENTES_TAB_ESPERADOS + '" en el Indice ' +
-      WEBAPP_INDICE_SPREADSHEET_ID + '. Sin esa lista no hay forma de saber que se esperaba.');
-  }
-  if (hoja.getLastRow() < 2) return [];
-
-  const dia = new Date(fecha.getTime());
-  dia.setHours(0, 0, 0, 0);
-
-  const esperados = [];
-  hoja.getRange(2, 1, hoja.getLastRow() - 1, 5).getValues().forEach(function (fila) {
-    const cliente = String(fila[0] || "").trim();
-    const reporte = String(fila[1] || "").trim();
-    const frecuencia = fila[3];
-    if (!cliente || !reporte || !frecuencia) return;
-    const origen = fila[4] ? new Date(fila[4]) : null;
-    try {
-      if (debeLlegarHoy(frecuencia, origen, dia)) {
-        esperados.push({ cliente: cliente, reporte: reporte, frecuencia: String(frecuencia).trim() });
-      }
-    } catch (e) {
-      Logger.log("[Pendientes] Fila de " + cliente + " / " + reporte + ": " + e.message);
-    }
-  });
-  return esperados;
-}
-
 /**
  * Cuanto encajan la lista de esperados y el registro de llegadas, para una fecha, y POR QUE
  * no encajan los que no encajan.
@@ -2656,7 +2608,7 @@ function manual_diagnosticarPendientesDeLlegada(fechaISO) {
   Logger.log("Dia no laborable: " + (esDiaNoLaborable(hoy) ? "SI (no se espera nada)" : "no"));
   Logger.log("");
 
-  const esperados = pendientesEsperadosDelDia(hoy);
+  const esperados = llegadasEsperados(hoy).filter(function (e) { return e.hoy; });
   const llegadas = llegadasLeer(iso).filter(function (l) { return l.fecha === iso; });
   Logger.log("Esperados para esta fecha: " + esperados.length);
   Logger.log("Llegadas registradas esa fecha: " + llegadas.length);
@@ -2678,7 +2630,7 @@ function manual_diagnosticarPendientesDeLlegada(fechaISO) {
   esperados.forEach(function (e) {
     let encontro = false;
     llegadas.forEach(function (l, i) {
-      if (!_pendientesMismoCliente(l.cliente, e.cliente)) return;
+      if (!_llegadasMismoCliente(l.cliente, e.cliente)) return;
       if (!llegadasMismoReporte(l.asunto, e.reporte)) return;
       llegadasUsadas[i] = true;
       encontro = true;
@@ -2702,7 +2654,7 @@ function manual_diagnosticarPendientesDeLlegada(fechaISO) {
       return coincideNombreReporte(p.reporte, a);
     });
     const clienteActivo = Object.keys(clientesConLlegadas).some(function (c) {
-      return _pendientesMismoCliente(c, p.cliente);
+      return _llegadasMismoCliente(c, p.cliente);
     });
     if (!tieneProcessor) porCausa["SIN PROCESSOR"].push(p);
     else if (!clienteActivo) porCausa["CLIENTE"].push(p);
@@ -2732,29 +2684,16 @@ function manual_diagnosticarPendientesDeLlegada(fechaISO) {
   const cliEsperados = {};
   esperados.forEach(function (e) { cliEsperados[e.cliente] = true; });
   const soloEsperados = Object.keys(cliEsperados).filter(function (c) {
-    return !Object.keys(clientesConLlegadas).some(function (o) { return _pendientesMismoCliente(o, c); });
+    return !Object.keys(clientesConLlegadas).some(function (o) { return _llegadasMismoCliente(o, c); });
   });
   const soloLlegadas = Object.keys(clientesConLlegadas).filter(function (c) {
-    return !Object.keys(cliEsperados).some(function (o) { return _pendientesMismoCliente(c, o); });
+    return !Object.keys(cliEsperados).some(function (o) { return _llegadasMismoCliente(c, o); });
   });
   Logger.log("--- Nombres de cliente que existen de un solo lado ---");
   Logger.log("  Solo en esperados (" + soloEsperados.length + "): " + (soloEsperados.sort().join(", ") || "-"));
   Logger.log("  Solo en llegadas  (" + soloLlegadas.length + "): " + (soloLlegadas.sort().join(", ") || "-"));
 }
 
-/**
- * Si dos nombres de cliente son el mismo cliente.
- *
- * Los dos lados lo escriben distinto: el Indice usa el nombre corto de la columna L y la
- * pestana de esperados lo escribe a mano. Se comparan normalizados, y alcanza con que uno
- * contenga al otro ("Operaciones Petersen Corp" vs "Petersen").
- */
-function _pendientesMismoCliente(a, b) {
-  const x = normalizarTextoReporte(String(a || ""));
-  const y = normalizarTextoReporte(String(b || ""));
-  if (!x || !y) return false;
-  return x === y || x.indexOf(y) !== -1 || y.indexOf(x) !== -1;
-}
 
 /**
  * Por que un cliente o una casilla no aparece donde deberia.
