@@ -21,7 +21,19 @@
  */
 
 const LLEGADAS_TAB = "Llegada de Reportes";
-const LLEGADAS_COLS = ["Fecha", "Hora", "Minutos", "Origen", "Remitente", "Cliente", "Reporte", "Tarde", "ID mensaje"];
+// "Asunto real" es el ULTIMO a proposito: agregar al final deja intactas las filas ya
+// escritas y las posiciones que lee el resto del codigo.
+//
+// POR QUE HIZO FALTA
+// "Reporte" no guarda el asunto del correo sino el del PROCESSOR que lo matcheo. El 29/10/2026
+// Petersen mando cinco correos distintos —"DRP - Affinity Rules Santa Cruz", "... BERSA",
+// "... San Juan", "... Santa Fe" y el "Affinity Rules" del parque comun— y los cinco quedaron
+// registrados como "Affinity Rules". No habia forma de saber cual de los cinco falto.
+//
+// "Reporte" se mantiene igual y sigue siendo lo que AGRUPA en el panel: si se mostrara el
+// asunto real, cada estado ("(SUCCESS)", "(ERROR)") abriria su propia fila y la tabla se
+// llenaria de lineas de una sola llegada.
+const LLEGADAS_COLS = ["Fecha", "Hora", "Minutos", "Origen", "Remitente", "Cliente", "Reporte", "Tarde", "ID mensaje", "Asunto real"];
 
 // El acuerdo con el equipo: todos los reportes tienen que llegar automáticamente antes de esta
 // hora. Más tarde significa que alguien lo ejecutó a mano, o que el script del cliente se atrasó.
@@ -274,8 +286,38 @@ function _llegadasTab(crearSiFalta) {
     tab.getRange(1, 1, 1, LLEGADAS_COLS.length).setValues([LLEGADAS_COLS])
       .setFontWeight("bold").setBackground("#1A5276").setFontColor("#FFFFFF");
     tab.setFrozenRows(1);
+    return tab;
+  }
+
+  // La pestana se creo antes de que existiera "Asunto real". Se le completa el encabezado que
+  // falta en vez de pedir que alguien se acuerde de agregarlo a mano: si el encabezado no
+  // estuviera, la columna quedaria sin nombre y nadie sabria que es al abrir la planilla.
+  // Las filas viejas se quedan sin ese dato, que es correcto: no lo tuvimos cuando se
+  // escribieron, y llegadasLeer() cae al nombre del processor para esas.
+  if (tab && crearSiFalta && tab.getLastColumn() < LLEGADAS_COLS.length) {
+    // Primero que la columna EXISTA. Una hoja nueva trae 26 de sobra, pero una recortada a
+    // mano puede tener justo las que se usaban.
+    if (tab.getMaxColumns() < LLEGADAS_COLS.length) {
+      tab.insertColumnsAfter(tab.getMaxColumns(), LLEGADAS_COLS.length - tab.getMaxColumns());
+    }
+    const desde = tab.getLastColumn() + 1;
+    const faltan = LLEGADAS_COLS.slice(desde - 1);
+    tab.getRange(1, desde, 1, faltan.length).setValues([faltan])
+      .setFontWeight("bold").setBackground("#1A5276").setFontColor("#FFFFFF");
+    Logger.log("[Llegadas] Se agrego(aron) " + faltan.length + " columna(s) nueva(s) a la pestana: " + faltan.join(", "));
   }
   return tab;
+}
+
+/**
+ * Cuantas columnas se pueden leer sin que la planilla tire excepcion.
+ *
+ * Pedir un rango mas ancho del que la hoja tiene fisicamente no devuelve celdas vacias: falla.
+ * Como llegadasLeer() corre en cada carga del panel, una columna de menos dejaria la pantalla
+ * entera sin datos. Se lee lo que hay y los campos que falten quedan en blanco.
+ */
+function _llegadasAnchoLegible(tab) {
+  return Math.min(LLEGADAS_COLS.length, tab.getMaxColumns());
 }
 
 /** La fecha más nueva ya registrada, en formato yyyy-MM-dd, o null si la pestaña está vacía. */
@@ -328,7 +370,7 @@ function llegadasRegistrar(dias, segundosMax) {
   // medida que la pestaña crece.
   const yaRegistrados = {};
   if (tab.getLastRow() > 1) {
-    const datos = tab.getRange(2, 1, tab.getLastRow() - 1, LLEGADAS_COLS.length).getValues();
+    const datos = tab.getRange(2, 1, tab.getLastRow() - 1, _llegadasAnchoLegible(tab)).getValues();
     datos.forEach(function (r) {
       const f = r[0] instanceof Date ? Utilities.formatDate(r[0], HORARIO_OPERATIVO_TZ, "yyyy-MM-dd") : String(r[0] || "");
       if (f >= desdeISO && r[8]) yaRegistrados[String(r[8])] = true;
@@ -384,7 +426,8 @@ function llegadasRegistrar(dias, segundosMax) {
           llegadasResolverCliente(remitente, clientes).cliente,
           reporte,
           minutos > LLEGADAS_HORA_LIMITE_MIN ? "Sí" : "No",
-          id
+          id,
+          asuntoMsg
         ]);
       });
     });
@@ -421,7 +464,7 @@ function llegadasRegistrar(dias, segundosMax) {
 function llegadasLeer(desdeISO) {
   const tab = _llegadasTab(false);
   if (!tab || tab.getLastRow() < 2) return [];
-  const datos = tab.getRange(2, 1, tab.getLastRow() - 1, LLEGADAS_COLS.length).getValues();
+  const datos = tab.getRange(2, 1, tab.getLastRow() - 1, _llegadasAnchoLegible(tab)).getValues();
   // El cliente y el POD se resuelven acá y no se toman de la columna guardada: así, si el
   // Índice cambia (o si se arregla un mapeo que estaba mal), las filas viejas se muestran
   // bien sin tener que reprocesar nada.
@@ -446,6 +489,10 @@ function llegadasLeer(desdeISO) {
       cliente: quien.cliente || String(r[5] || "") || remitente,
       pod: quien.pod || "",
       reporte: String(r[6] || ""),
+      // El asunto tal como vino. Es lo unico que distingue "DRP - Affinity Rules Santa Cruz"
+      // de las otras tres variantes y del parque comun. Las filas anteriores a esta columna
+      // caen al nombre del processor, que es lo mismo que se usaba antes.
+      asunto: String(r[9] || "") || String(r[6] || ""),
       tarde: String(r[7] || "") === "Sí",
       // 0 = domingo. Se calcula acá y no en el navegador para que no dependa de la zona
       // horaria de la máquina de quien mire el dashboard.

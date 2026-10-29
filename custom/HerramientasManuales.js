@@ -2679,7 +2679,7 @@ function manual_diagnosticarPendientesDeLlegada(fechaISO) {
     let encontro = false;
     llegadas.forEach(function (l, i) {
       if (!_pendientesMismoCliente(l.cliente, e.cliente)) return;
-      if (!llegadasMismoReporte(l.reporte, e.reporte)) return;
+      if (!llegadasMismoReporte(l.asunto, e.reporte)) return;
       llegadasUsadas[i] = true;
       encontro = true;
     });
@@ -2693,8 +2693,13 @@ function manual_diagnosticarPendientesDeLlegada(fechaISO) {
 
   const porCausa = { "SIN PROCESSOR": [], "CLIENTE": [], "NO LLEGO": [] };
   pendientes.forEach(function (p) {
+    // Se compara contra el asunto del processor a secas, SIN la guarda de DRP: lo que se
+// pregunta aca es si el registro sabe buscar esa familia de correos en Gmail, y el processor
+// de "Affinity Rules" es el que trae tambien los "DRP - Affinity Rules <sitio>". Usar
+// llegadasMismoReporte() daba falso para los ocho DRP de Petersen y los clasificaba como si
+// no tuvieran processor, cuando en realidad llegan y se procesan.
     const tieneProcessor = asuntosConocidos.some(function (a) {
-      return llegadasMismoReporte(a, p.reporte);
+      return coincideNombreReporte(p.reporte, a);
     });
     const clienteActivo = Object.keys(clientesConLlegadas).some(function (c) {
       return _pendientesMismoCliente(c, p.cliente);
@@ -2818,9 +2823,13 @@ function manual_diagnosticarRemitente(texto) {
     return l.remitente.indexOf(busca) !== -1 || l.cliente.toLowerCase().indexOf(busca) !== -1;
   });
   Logger.log("--- Registrado hoy (" + hoyISO + "): " + delDia.length + " ---");
-  Logger.log("    Ojo: la columna 'reporte' es el asunto del PROCESSOR, no el del correo.");
+  Logger.log("    'reporte' agrupa (asunto del processor) y 'asunto' es el correo tal cual vino.");
+  Logger.log("    Si los dos dicen lo mismo en una fila DRP, esa fila es anterior a la columna");
+  Logger.log("    'Asunto real' y hay que esperar a que se registre de nuevo.");
   delDia.forEach(function (l) {
-    Logger.log("  " + l.hora + "  " + l.cliente + "  |  " + l.reporte + "  <- " + l.remitente);
+    Logger.log("  " + l.hora + "  " + l.cliente + "  |  " + l.reporte +
+      (l.asunto && l.asunto !== l.reporte ? "   [asunto: " + l.asunto + "]" : "") +
+      "  <- " + l.remitente);
   });
   Logger.log("");
 
