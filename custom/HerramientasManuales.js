@@ -2847,3 +2847,20 @@ function manual_diagnosticarRemitente(texto) {
     Logger.log("  No se pudo consultar Gmail: " + e.message);
   }
 }
+
+/**
+ * Atajo para correr el diagnostico desde el desplegable "Ejecutar" del editor.
+ *
+ * POR QUE EXISTE
+ * El desplegable del editor solo corre funciones SIN parametros. Al querer pasarle un valor
+ * es facil terminar editando la FIRMA de la funcion en vez de la llamada —
+ * `function manual_diagnosticarRemitente('veeam@falabella.com.ar')`, que ni siquiera es
+ * JavaScript valido y deja al proyecto ENTERO sin compilar (AGENTS.md seccion 4).
+ *
+ * Aca se cambia una sola linea, que es una llamada comun y corriente: si queda mal escrita,
+ * falla esta funcion y nada mas.
+ */
+function manual_diagnosticarRemitenteEditarAca() {
+  // ↓↓↓ CAMBIAR SOLO ESTE TEXTO Y APRETAR EJECUTAR ↓↓↓
+  manual_diagnosticarRemitente('veeamOne@transener.com.ar');
+}
