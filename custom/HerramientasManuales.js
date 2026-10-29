@@ -2873,3 +2873,23 @@ function manual_diagnosticarRemitenteEditarAca() {
   // ↓↓↓ CAMBIAR SOLO ESTE TEXTO Y APRETAR EJECUTAR ↓↓↓
   manual_diagnosticarRemitente('veeamOne@transener.com.ar');
 }
+
+/**
+ * Completa la columna "Asunto real" en las filas viejas del registro de llegadas.
+ *
+ * Se puede correr las veces que haga falta: cada corrida sigue por donde quedo, del dia mas
+ * nuevo al mas viejo, y salta lo que ya esta completo. Si el log dice "pendiente(s)", volve a
+ * ejecutarla.
+ *
+ * Mientras tanto no se rompe nada: las filas sin asunto siguen funcionando como antes, usando
+ * el nombre del processor. Lo unico que no se puede hasta completarlas es distinguir las
+ * variantes de un mismo reporte (los "DRP - <reporte> <sitio>" entre si y del parque comun).
+ */
+function manual_completarAsuntosDeLlegadas() {
+  const r = llegadasCompletarAsuntos();
+  Logger.log("");
+  Logger.log(r.diasPendientes > 0
+    ? ">>> Quedan " + r.diasPendientes + " dia(s). Volve a ejecutar esta misma funcion."
+    : ">>> Listo: no quedan filas sin asunto.");
+  return r;
+}

@@ -35,6 +35,12 @@ const LLEGADAS_TAB = "Llegada de Reportes";
 // llenaria de lineas de una sola llegada.
 const LLEGADAS_COLS = ["Fecha", "Hora", "Minutos", "Origen", "Remitente", "Cliente", "Reporte", "Tarde", "ID mensaje", "Asunto real"];
 
+// Lo que queda en "Asunto real" cuando el correo ya no existe en Gmail (se borro, o se movio a
+// una cuenta que no vemos). Es una marca, no un asunto: llegadasLeer() la trata como si la celda
+// estuviera vacia y cae al nombre del processor. Existe para que el relleno no vuelva a buscar
+// eternamente los mismos correos que no va a encontrar.
+const LLEGADAS_ASUNTO_NO_RECUPERABLE = "(no recuperable)";
+
 // El acuerdo con el equipo: todos los reportes tienen que llegar automáticamente antes de esta
 // hora. Más tarde significa que alguien lo ejecutó a mano, o que el script del cliente se atrasó.
 const LLEGADAS_HORA_LIMITE_MIN = 8 * 60 + 30;   // 08:30
@@ -490,9 +496,10 @@ function llegadasLeer(desdeISO) {
       pod: quien.pod || "",
       reporte: String(r[6] || ""),
       // El asunto tal como vino. Es lo unico que distingue "DRP - Affinity Rules Santa Cruz"
-      // de las otras tres variantes y del parque comun. Las filas anteriores a esta columna
-      // caen al nombre del processor, que es lo mismo que se usaba antes.
-      asunto: String(r[9] || "") || String(r[6] || ""),
+      // de las otras tres variantes y del parque comun. Las filas sin asunto —las anteriores a
+      // esta columna, y las que el relleno no pudo recuperar— caen al nombre del processor, que
+      // es lo mismo que se usaba antes.
+      asunto: _llegadasAsuntoUtil(r[9]) || String(r[6] || ""),
       tarde: String(r[7] || "") === "Sí",
       // 0 = domingo. Se calcula acá y no en el navegador para que no dependa de la zona
       // horaria de la máquina de quien mire el dashboard.
@@ -500,6 +507,142 @@ function llegadasLeer(desdeISO) {
     });
   });
   return out;
+}
+
+/** El asunto guardado, o cadena vacia si no hay uno de verdad. */
+function _llegadasAsuntoUtil(valor) {
+  const a = String(valor || "").trim();
+  return a === LLEGADAS_ASUNTO_NO_RECUPERABLE ? "" : a;
+}
+
+/**
+ * Completa "Asunto real" en las filas registradas antes de que esa columna existiera.
+ *
+ * POR QUE EL DATO NO SE PERDIO
+ * Cada fila guarda el ID del mensaje de Gmail, asi que el asunto es recuperable. Lo que no se
+ * puede es pedirlo de a uno: son miles de filas y GmailApp.getMessageById() es una llamada por
+ * fila. Se rehace la MISMA busqueda que hace el registro —unas pocas consultas por dia— y de ahi
+ * sale un mapa id -> asunto para todas las filas de ese dia juntas.
+ *
+ * POR QUE DIA POR DIA Y DEL MAS NUEVO AL MAS VIEJO
+ * Gmail trunca las busquedas grandes sin avisar, asi que un rango largo perderia resultados en
+ * silencio. Y el panel muestra por defecto los ultimos dias: empezando por los recientes, la
+ * primera corrida ya deja utilizable lo que la gente mira.
+ *
+ * ES REANUDABLE Y NO DUPLICA NADA
+ * Salta los dias que ya estan completos, asi que se puede correr las veces que haga falta. Lo que
+ * no aparece en Gmail queda marcado como no recuperable para no volver a buscarlo.
+ *
+ * @param {number} [segundosMax] Presupuesto de tiempo. Corta y avisa en vez de morir por timeout.
+ * @returns {{completadas:number, noRecuperables:number, diasHechos:number, diasPendientes:number, cortado:boolean}}
+ */
+function llegadasCompletarAsuntos(segundosMax) {
+  const comenzoEn = Date.now();
+  const presupuesto = segundosMax || 300;
+  const salida = { completadas: 0, noRecuperables: 0, diasHechos: 0, diasPendientes: 0, cortado: false };
+
+  const tab = _llegadasTab(true);
+  if (!tab || tab.getLastRow() < 2) return salida;
+  if (tab.getMaxColumns() < LLEGADAS_COLS.length) return salida;
+
+  const filas = tab.getRange(2, 1, tab.getLastRow() - 1, LLEGADAS_COLS.length).getValues();
+
+  const porFecha = {};
+  const columnaAsunto = filas.map(function (r) { return String(r[9] || ""); });
+  filas.forEach(function (r, i) {
+    if (String(r[9] || "").trim()) return;
+    const fecha = r[0] instanceof Date
+      ? Utilities.formatDate(r[0], HORARIO_OPERATIVO_TZ, "yyyy-MM-dd")
+      : String(r[0] || "");
+    if (!fecha || !r[8]) return;
+    if (!porFecha[fecha]) porFecha[fecha] = [];
+    porFecha[fecha].push(i);
+  });
+
+  const fechas = Object.keys(porFecha).sort().reverse();
+  salida.diasPendientes = fechas.length;
+  if (!fechas.length) {
+    Logger.log("[Llegadas] No hay filas sin asunto: el relleno ya esta completo.");
+    return salida;
+  }
+  Logger.log("[Llegadas] Dias con filas sin asunto: " + fechas.length);
+
+  const asuntos = obtenerAsuntosConProcessor();
+  let huboCambios = false;
+
+  for (let f = 0; f < fechas.length; f++) {
+    if ((Date.now() - comenzoEn) / 1000 > presupuesto) {
+      salida.cortado = true;
+      Logger.log("[Llegadas] Corte por tiempo: quedan " + (fechas.length - f) + " dia(s). Volve a correrla.");
+      break;
+    }
+    const fecha = fechas[f];
+    const mapa = _llegadasAsuntosDelDia(fecha, asuntos);
+
+    porFecha[fecha].forEach(function (i) {
+      const id = String(filas[i][8]);
+      if (mapa[id]) {
+        columnaAsunto[i] = mapa[id];
+        salida.completadas++;
+      } else {
+        columnaAsunto[i] = LLEGADAS_ASUNTO_NO_RECUPERABLE;
+        salida.noRecuperables++;
+      }
+    });
+    huboCambios = true;
+    salida.diasHechos++;
+    salida.diasPendientes--;
+  }
+
+  if (huboCambios) {
+    const candado = LockService.getScriptLock();
+    try {
+      candado.waitLock(30000);
+      // Una sola escritura para toda la columna: hacerlo fila por fila tardaria mas que la
+      // propia busqueda en Gmail.
+      tab.getRange(2, 10, columnaAsunto.length, 1)
+        .setValues(columnaAsunto.map(function (v) { return [v]; }));
+    } catch (e) {
+      Logger.log("[Llegadas] No se pudo guardar el relleno de asuntos: " + e.message);
+      return salida;
+    } finally {
+      try { candado.releaseLock(); } catch (e) {}
+    }
+  }
+
+  Logger.log("[Llegadas] Relleno: " + salida.completadas + " completada(s), " +
+    salida.noRecuperables + " sin correo en Gmail, " + salida.diasHechos + " dia(s) hechos, " +
+    salida.diasPendientes + " pendiente(s).");
+  return salida;
+}
+
+/**
+ * Mapa id de mensaje -> asunto, para un dia.
+ *
+ * Usa la misma consulta que el registro (los asuntos con processor, agrupados con OR y acotados
+ * a ese dia) en vez de pedir mensaje por mensaje: son unas pocas llamadas en lugar de una por
+ * fila.
+ */
+function _llegadasAsuntosDelDia(fechaISO, asuntos) {
+  const mapa = {};
+  const dia = new Date(fechaISO + "T12:00:00");
+  const desde = Utilities.formatDate(dia, HORARIO_OPERATIVO_TZ, "yyyy/MM/dd");
+  const hasta = Utilities.formatDate(new Date(dia.getTime() + 86400000), HORARIO_OPERATIVO_TZ, "yyyy/MM/dd");
+
+  for (let i = 0; i < asuntos.length; i += LLEGADAS_ASUNTOS_POR_CONSULTA) {
+    const grupo = asuntos.slice(i, i + LLEGADAS_ASUNTOS_POR_CONSULTA);
+    const consulta = "(" + grupo.map(function (a) { return "subject:\"" + a + "\""; }).join(" OR ") +
+      ") has:attachment after:" + desde + " before:" + hasta;
+    try {
+      GmailApp.getMessagesForThreads(GmailApp.search(consulta, 0, LLEGADAS_HILOS_POR_CONSULTA))
+        .forEach(function (mensajes) {
+          mensajes.forEach(function (m) { mapa[m.getId()] = String(m.getSubject() || ""); });
+        });
+    } catch (e) {
+      Logger.log("[Llegadas] Fallo la consulta del " + fechaISO + ": " + e.message);
+    }
+  }
+  return mapa;
 }
 
 // =================================================================
