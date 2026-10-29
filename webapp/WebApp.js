@@ -1317,84 +1317,6 @@ function webapp_obtenerEstadoRVTools(forzar) {
   return mio;
 }
 
-/**
- * En que estado esta cada reporte esperado del lado de DRIVE, para una fecha.
- *
- * POR QUE ES UNA PANTALLA APARTE Y NO UNA COLUMNA MAS
- * "Llego al mail" mide que el correo del cliente entro. Esto mide que el reporte se PROCESO y
- * quedo archivado. Son dos cosas distintas y pueden no coincidir: cuando el mail esta verde y
- * esto rojo, el cliente cumplio y lo que fallo es nuestro. Mezclarlas en un solo numero
- * esconderia justamente esa diferencia, que es la que dice a quien hay que ir a golpearle la
- * puerta.
- *
- * La fuente es la pestana "Estado Final" de los logs, que es donde cada operacion deja su
- * resultado. Se lee esa hoja directo y no _webappLeerLogs(): esa funcion lee CINCO hojas
- * enteras y se queda con las 50 filas mas nuevas, y aca hacen falta todas las de un dia.
- *
- * @param {string} fechaISO yyyy-MM-dd
- * @param {number} [minutosAhora] Para decidir pendiente vs no procesado.
- * @returns {Array<{cliente,pod,reporte,frecuencia,estado,resultado,hora,detalle}>}
- */
-function _webappEstadosDrive(fechaISO, minutosAhora) {
-  const dia = new Date(fechaISO + 'T12:00:00');
-  const esperados = llegadasEsperados(dia);
-  const corte = typeof minutosAhora === 'number' ? minutosAhora : 24 * 60;
-
-  // Lo procesado ese dia.
-  const corridas = [];
-  const ss = SpreadsheetApp.openById(WEBAPP_LOGS_PROD_ID);
-  const hoja = ss.getSheetByName('Estado Final');
-  if (hoja && hoja.getLastRow() > 1) {
-    const ancho = Math.min(12, hoja.getLastColumn());
-    hoja.getRange(2, 1, hoja.getLastRow() - 1, ancho).getValues().forEach(function (r) {
-      const crudo = r[11] || r[0];
-      const d = crudo instanceof Date ? crudo : new Date(crudo);
-      if (isNaN(d.getTime())) return;
-      if (Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'yyyy-MM-dd') !== fechaISO) return;
-      corridas.push({
-        operacion: String(r[1] || ''),
-        cliente: String(r[3] || ''),
-        pod: _webappNormalizarPod(r[4]),
-        resultado: String(r[6] || '').toUpperCase(),
-        detalle: String(r[10] || ''),
-        hora: Utilities.formatDate(d, HORARIO_OPERATIVO_TZ, 'HH:mm')
-      });
-    });
-  }
-
-  return esperados.map(function (e) {
-    const base = { cliente: e.cliente, pod: e.pod, reporte: e.reporte, frecuencia: e.frecuencia };
-    if (!e.hoy) {
-      return Object.assign(base, {
-        estado: LLEGADAS_ESTADO.NO_SE_ESPERA, resultado: '', hora: '', detalle: ''
-      });
-    }
-
-    let match = null;
-    corridas.forEach(function (c) {
-      if (!_llegadasMismoCliente(c.cliente, e.cliente)) return;
-      if (!llegadasMismoReporte(c.operacion, e.reporte)) return;
-      // Gana el PEOR resultado del dia: si una corrida fallo y un reintento salio bien, lo que
-      // interesa es que hubo que reintentar. Y si no, la primera.
-      if (!match || (c.resultado === 'ERROR' && match.resultado !== 'ERROR')) match = c;
-    });
-
-    if (match) {
-      return Object.assign(base, {
-        // Un ERROR se pinta rojo igual que algo que no se proceso: en los dos casos el reporte
-        // no quedo bien y alguien tiene que mirarlo.
-        estado: match.resultado === 'ERROR' ? LLEGADAS_ESTADO.NO_LLEGO : LLEGADAS_ESTADO.LLEGO,
-        resultado: match.resultado, hora: match.hora, detalle: match.detalle
-      });
-    }
-
-    return Object.assign(base, {
-      estado: corte > LLEGADAS_HORA_LIMITE_MIN ? LLEGADAS_ESTADO.NO_LLEGO : LLEGADAS_ESTADO.PENDIENTE,
-      resultado: '', hora: '', detalle: ''
-    });
-  });
-}
-
 /** Núcleo sin control de acceso ni recorte por POD. No llamarlo desde el navegador. */
 function _webappEstadoRVToolsCompleto(forzar) {
   // El sufijo de versión se SUBE cada vez que cambia la forma de lo que se guarda acá. Si no,
@@ -3034,7 +2956,6 @@ function webapp_obtenerLlegadasReportes(dias, forzar) {
   mio.llegadas  = webapp_filtrarPorPod(completo.llegadas || [],  permiso, function (l) { return l.pod; });
   mio.faltantes = webapp_filtrarPorPod(completo.faltantes || [], permiso, function (f) { return f.pod; });
   mio.estados   = webapp_filtrarPorPod(completo.estados || [],   permiso, function (e) { return e.pod; });
-  mio.drive     = webapp_filtrarPorPod(completo.drive || [],     permiso, function (e) { return e.pod; });
   return mio;
 }
 
@@ -3067,9 +2988,6 @@ function _webappLlegadasReportes(dias, forzar) {
     // el usuario tenga elegido: la pregunta que contesta es "que me falta AHORA", y un rango de
     // 30 dias la volveria otra cosa.
     estados: [],
-    // Lo mismo pero del lado de Drive: que se proceso y quedo archivado, que no es lo mismo
-    // que haber recibido el correo.
-    drive: [],
     estadosFecha: null,
     atendidos: { historial: [], ultima: {} }
   };
@@ -3123,7 +3041,6 @@ function _webappLlegadasReportes(dias, forzar) {
     const minutosAhora = Number(Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'H')) * 60 +
       Number(Utilities.formatDate(ahora, HORARIO_OPERATIVO_TZ, 'm'));
     resultado.estados = llegadasEstadoDelDia(resultado.estadosFecha, resultado.llegadas, minutosAhora);
-    resultado.drive = _webappEstadosDrive(resultado.estadosFecha, minutosAhora);
   } catch (e) {
     // Que falle el cruce no puede dejar sin datos a la pantalla entera: el historial de
     // llegadas se sigue mostrando igual y el aviso dice por que falta el estado (seccion 7).

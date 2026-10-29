@@ -303,8 +303,8 @@
         </header>
 
         <div class="tabs-container" role="tablist" aria-label="Subpestañas de llegada de reportes" style="margin-top: 16px; border-bottom: 1px solid #d1d5db; display: flex; gap: 16px; margin-bottom: 16px;">
-          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-llegadas="datos">Llegó al mail</button>
-          <button class="tab-btn" role="tab" aria-selected="false" data-tab-llegadas="drive">Subido a Drive</button>
+          <button class="tab-btn active" role="tab" aria-selected="true" data-tab-llegadas="estado">Estado de hoy</button>
+          <button class="tab-btn" role="tab" aria-selected="false" data-tab-llegadas="datos">Horarios</button>
           <button class="tab-btn" role="tab" aria-selected="false" data-tab-llegadas="patrones">Patrones</button>
         </div>
 
@@ -350,10 +350,19 @@
         <p id="llegadasDesde" class="ayuda" style="margin: 0 0 12px 0;"></p>
 
         <!-- ---------- Sub-pestaña: Datos ---------- -->
-        <div id="panelLlegadasDatos">
-          <!-- Lo que falta AHORA. Va arriba de todo porque es la pregunta que el panel no
-               contestaba: hasta hoy solo mostraba lo que llegó, y lo que no llega no deja
-               ninguna fila. Es siempre el día de hoy, sin importar el rango elegido. -->
+        <!-- ---------- Sub-pestaña: Estado de hoy ---------- -->
+        <!-- La pregunta que el panel no contestaba: hasta ahora sólo mostraba lo que llegó, y
+             lo que no llega no deja ninguna fila. La fuente es Drive, porque es la única que no
+             miente: un reporte subido a mano está bien y existe, y el nombre del archivo trae
+             la identidad completa. El correo queda como causa y hora. -->
+        <div id="panelLlegadasEstado">
+          <p class="ayuda" style="margin: 0 0 16px 0;">
+            Qué reportes de hoy están y cuáles faltan. Se mira si el archivo quedó
+            <strong>archivado en Drive</strong>, así que un reporte subido a mano cuenta como
+            presente. Cuando falta, el correo dice de quién es el problema:
+            <strong>no llegó</strong> es del cliente, <strong>llegó y no se procesó</strong>
+            es nuestro.
+          </p>
           <div class="est-bloque" id="estadoHoyBloque" hidden>
             <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
               <h3 style="margin: 0; font-size: 16px;">Estado de hoy</h3>
@@ -362,7 +371,10 @@
             <p class="ayuda" id="estadoHoyAyuda" style="margin: 6px 0 0 0;"></p>
             <div id="estadoHoyLista"></div>
           </div>
+        </div>
 
+        <!-- ---------- Sub-pestaña: Horarios ---------- -->
+        <div id="panelLlegadasDatos" style="display: none;">
           <div class="scorecard-grid" style="margin-bottom: 20px;">
             <div class="scorecard-card">
               <span class="scorecard-label">Reportes recibidos</span>
@@ -413,26 +425,6 @@
           <p id="llegadasVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">
             Todavía no hay llegadas registradas para estos filtros. El registro arranca la primera vez
             que se aprieta Actualizar y se va acumulando día a día.
-          </p>
-        </div>
-
-        <!-- ---------- Sub-pestaña: Subido a Drive ---------- -->
-        <div id="panelLlegadasDrive" style="display: none;">
-          <p class="ayuda" style="margin: 0 0 16px 0;">
-            Lo mismo que la pestaña anterior pero del otro lado: acá no se mira si el correo
-            <strong>llegó</strong>, sino si el reporte se <strong>procesó y quedó archivado</strong>.
-            Cuando el mail está en verde y esto en rojo, el cliente cumplió y lo que falló es
-            nuestro. Es siempre el día de hoy.
-          </p>
-          <div class="est-bloque" id="driveBloque" hidden>
-            <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;">
-              <h3 style="margin: 0; font-size: 16px;">Procesado hoy</h3>
-              <span class="ayuda" id="driveResumen"></span>
-            </div>
-            <div id="driveLista"></div>
-          </div>
-          <p id="driveVacio" class="vacio ayuda" style="display: none; text-align: center; margin-top: 16px;">
-            Todavía no hay nada procesado hoy.
           </p>
         </div>
 

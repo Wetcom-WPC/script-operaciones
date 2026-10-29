@@ -3398,7 +3398,7 @@
 
   var llegadasGlobal = null;
   var licenciasGlobal = null;
-  var llegadasTabActiva = 'datos';
+  var llegadasTabActiva = 'estado';
 
   var COLORES_ORIGEN = { 'vRO': '#2E86C1', 'vROps': '#7D3C98', 'Veeam ONE': '#1E8449', 'Otro': '#8A9891' };
   var NOMBRE_DIA = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -3494,11 +3494,6 @@
     var bloque = document.getElementById('estadoHoyBloque');
     if (!bloque) return;
 
-    // Solo con el período en 'Hoy'. Este bloque siempre habla del día de hoy, y dejarlo
-    // visible con un rango de 7 días hace leer sus números como si fueran de ese rango.
-    var periodo = document.getElementById('filtroDiasLlegadas');
-    if (periodo && periodo.value !== 'hoy') { bloque.hidden = true; return; }
-
     var estados = (llegadasGlobal && llegadasGlobal.estados) || [];
     if (!estados.length) { bloque.hidden = true; return; }
 
@@ -3526,11 +3521,13 @@
       '<span class="est-badge no-llego">' + cuenta['no-llego'] + ' no llegaron</span> ' +
       '<span class="est-badge no-se-espera">' + cuenta['no-se-espera'] + ' hoy no se esperan</span>';
 
-    document.getElementById('estadoHoyAyuda').textContent = cuenta['no-llego'] > 0
-      ? 'En rojo, lo que ya pasó el horario límite y sigue sin aparecer.'
+    var aMano = visibles.filter(function(e) { return e.causa === 'subido a mano'; }).length;
+    document.getElementById('estadoHoyAyuda').textContent = (cuenta['no-llego'] > 0
+      ? 'En rojo, lo que ya pasó el horario límite y sigue sin estar en Drive.'
       : (cuenta.pendiente > 0
           ? 'Todavía no es la hora límite: lo amarillo puede llegar en cualquier momento.'
-          : 'Llegó todo lo que se esperaba para hoy.');
+          : 'Está todo lo que se esperaba para hoy.')) +
+      (aMano ? '  ' + aMano + ' se subieron a mano.' : '');
 
     var lista = document.getElementById('estadoHoyLista');
     if (!faltan.length) { lista.innerHTML = ''; return; }
@@ -3562,8 +3559,16 @@
         (items[0].pod ? '<span class="ayuda">· ' + escLlegadas(items[0].pod) + '</span> ' : '') +
         (rojos ? '<span class="est-badge no-llego">' + rojos + ' sin llegar</span>' : '') +
         '<ul>' + items.map(function(e) {
-          return '<li><span class="est-badge ' + e.estado + '">' +
-            (e.estado === 'no-llego' ? 'No llegó' : 'Pendiente') + '</span> ' + escLlegadas(e.reporte) + '</li>';
+          // Tres rojos distintos, porque se arreglan por caminos distintos: reclamarle al
+          // cliente, revisar por qué no se procesó, o mirar el acceso a Drive.
+          var etiqueta;
+          if (e.estado === 'pendiente') etiqueta = 'Pendiente';
+          else if (e.causa === 'procesar') etiqueta = 'Llegó ' + e.hora + ', no se procesó';
+          else etiqueta = 'No llegó';
+          return '<li><span class="est-badge ' + e.estado + '">' + etiqueta + '</span> ' +
+            escLlegadas(e.reporte) +
+            (e.verificado === false ? ' <span class="ayuda">· sin verificar en Drive</span>' : '') +
+            '</li>';
         }).join('') + '</ul></div>';
     }).join('');
   }
@@ -3573,85 +3578,6 @@
     return String(t === null || t === undefined ? '' : t).replace(/[&<>"]/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
     });
-  }
-
-  /**
-   * El estado del lado de Drive, agrupado por cliente.
-   *
-   * Comparte el formato con pintarEstadoHoy() a propósito: es la misma pregunta mirada desde
-   * el otro lado, y si se vieran distinto costaría compararlas, que es justamente para lo que
-   * sirve tenerlas separadas.
-   */
-  function pintarDrive() {
-    var bloque = document.getElementById('driveBloque');
-    var vacio = document.getElementById('driveVacio');
-    if (!bloque) return;
-    var filas = (llegadasGlobal && llegadasGlobal.drive) || [];
-    if (!filas.length) {
-      bloque.hidden = true;
-      if (vacio) vacio.style.display = '';
-      return;
-    }
-    if (vacio) vacio.style.display = 'none';
-
-    var f = leerFiltrosLlegadas();
-    var visibles = filas.filter(function(e) {
-      if (f.cliente && !mismoClienteLlegadas(e.cliente, f.cliente)) return false;
-      if (f.pod && e.pod !== f.pod) return false;
-      if (f.reporte && e.reporte !== f.reporte) return false;
-      return true;
-    });
-
-    var cuenta = { llego: 0, pendiente: 0, 'no-llego': 0, 'no-se-espera': 0 };
-    visibles.forEach(function(e) { if (cuenta[e.estado] !== undefined) cuenta[e.estado]++; });
-    var problemas = visibles.filter(function(e) {
-      return e.estado === 'no-llego' || e.estado === 'pendiente';
-    });
-
-    bloque.hidden = false;
-    bloque.classList.toggle('hay-rojo', cuenta['no-llego'] > 0);
-    document.getElementById('driveResumen').innerHTML =
-      '<span class="est-badge llego">' + cuenta.llego + ' procesados</span> ' +
-      '<span class="est-badge pendiente">' + cuenta.pendiente + ' pendientes</span> ' +
-      '<span class="est-badge no-llego">' + cuenta['no-llego'] + ' con problema</span> ' +
-      '<span class="est-badge no-se-espera">' + cuenta['no-se-espera'] + ' hoy no se esperan</span>';
-
-    var lista = document.getElementById('driveLista');
-    if (!problemas.length) { lista.innerHTML = ''; return; }
-
-    var porCliente = {};
-    problemas.forEach(function(e) {
-      if (!porCliente[e.cliente]) porCliente[e.cliente] = [];
-      porCliente[e.cliente].push(e);
-    });
-    var nombres = Object.keys(porCliente).sort(function(a, b) {
-      var ra = porCliente[a].filter(function(e) { return e.estado === 'no-llego'; }).length;
-      var rb = porCliente[b].filter(function(e) { return e.estado === 'no-llego'; }).length;
-      if (ra !== rb) return rb - ra;
-      return a.localeCompare(b);
-    });
-
-    lista.innerHTML = nombres.map(function(nombre) {
-      var items = porCliente[nombre].slice().sort(function(a, b) {
-        if (a.estado !== b.estado) return a.estado === 'no-llego' ? -1 : 1;
-        return a.reporte.localeCompare(b.reporte);
-      });
-      var rojos = items.filter(function(e) { return e.estado === 'no-llego'; }).length;
-      return '<div class="est-cliente">' +
-        '<strong>' + escLlegadas(nombre) + '</strong> ' +
-        (items[0].pod ? '<span class="ayuda">· ' + escLlegadas(items[0].pod) + '</span> ' : '') +
-        (rojos ? '<span class="est-badge no-llego">' + rojos + ' con problema</span>' : '') +
-        '<ul>' + items.map(function(e) {
-          // Se distingue el que fallo del que ni siquiera corrio: son dos problemas distintos
-          // y se arreglan por caminos distintos.
-          var etiqueta = e.estado === 'pendiente' ? 'Pendiente'
-            : (e.resultado === 'ERROR' ? 'Error al procesar' : 'No se procesó');
-          return '<li><span class="est-badge ' + e.estado + '">' + etiqueta + '</span> ' +
-            escLlegadas(e.reporte) +
-            (e.detalle ? ' <span class="ayuda">· ' + escLlegadas(e.detalle) + '</span>' : '') +
-            '</li>';
-        }).join('') + '</ul></div>';
-    }).join('');
   }
 
   /** Igual que del lado del servidor: los dos lados escriben el nombre del cliente distinto. */
@@ -4193,7 +4119,6 @@
     var llegadas = filtrarLlegadas(f);
     var grupos = agruparLlegadas(llegadas);
     pintarEstadoHoy();
-    pintarDrive();
     var faltantes = filtrarFaltantes(f);
 
     var total = llegadas.length;
@@ -4584,11 +4509,11 @@
           x.classList.toggle('active', x === b);
           x.setAttribute('aria-selected', x === b ? 'true' : 'false');
         });
+        var estado = document.getElementById('panelLlegadasEstado');
         var datos = document.getElementById('panelLlegadasDatos');
-        var drive = document.getElementById('panelLlegadasDrive');
         var patr = document.getElementById('panelLlegadasPatrones');
+        if (estado) estado.style.display = llegadasTabActiva === 'estado' ? '' : 'none';
         if (datos) datos.style.display = llegadasTabActiva === 'datos' ? '' : 'none';
-        if (drive) drive.style.display = llegadasTabActiva === 'drive' ? '' : 'none';
         if (patr) patr.style.display = llegadasTabActiva === 'patrones' ? '' : 'none';
         // El gráfico se dibuja mal si el div estaba oculto: se redibuja al volver.
         if (llegadasTabActiva === 'datos') pintarLlegadas();

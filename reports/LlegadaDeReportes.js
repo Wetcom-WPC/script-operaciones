@@ -679,7 +679,7 @@ const LLEGADAS_ESTADO = {
  * vive en Playground pero mira produccion.
  *
  * @param {Date} fecha
- * @returns {Array<{cliente:string, reporte:string, frecuencia:string, pod:string, hoy:boolean}>}
+ * @returns {Array<{cliente:string, reporte:string, frecuencia:string, carpeta:string, pod:string, hoy:boolean}>}
  */
 function llegadasEsperados(fecha) {
   const ss = SpreadsheetApp.openById(WEBAPP_INDICE_SPREADSHEET_ID);
@@ -715,6 +715,9 @@ function llegadasEsperados(fecha) {
       cliente: cliente,
       reporte: reporte,
       frecuencia: String(frecuencia).trim(),
+      // La carpeta raiz de Drive del cliente: es lo que permite preguntarle a Drive si el
+      // archivo esta, que es la fuente de verdad de si el reporte existe o no.
+      carpeta: String(fila[2] || "").trim(),
       pod: _webappNormalizarPod(fila[5]),
       hoy: hoy
     });
@@ -725,63 +728,107 @@ function llegadasEsperados(fecha) {
 /**
  * En que estado esta cada reporte esperado, para una fecha.
  *
- * Los cuatro estados dicen cosas distintas y por eso no se colapsan en "llego / no llego":
+ * LA FUENTE ES DRIVE, NO EL LOG NI EL MAIL
+ * La pregunta que contesta el panel es "esta el reporte?", y eso se responde mirando si el
+ * archivo quedo archivado. Es la unica fuente que no miente en los tres casos que importan:
  *
- *   LLEGO         hay un correo que le corresponde.
- *   PENDIENTE     le toca hoy, todavia no esta, pero aun no vencio el horario limite. No hay
- *                 nada roto: es lo normal a las 7 de la manana.
- *   NO_LLEGO      le toca hoy, paso el horario limite y sigue sin estar.
- *   NO_SE_ESPERA  hoy no le toca (semanal, mensual, trimestral, o es fin de semana).
+ *   - Un reporte subido A MANO esta bien y existe. El registro del mail no lo ve, asi que
+ *     mirando solo el mail saldria en rojo un reporte que esta. Le pasa a GIRE todos los dias.
+ *   - El nombre del archivo trae la identidad COMPLETA ("DRP - Affinity Rules Santa Fe"),
+ *     mientras que el log de Estado Final guarda el nombre generico de la operacion y las
+ *     cinco variantes de Petersen quedan indistinguibles.
+ *   - Si el archivo esta, paso por donde haya pasado: no hace falta saber por que camino.
  *
- * El cruce usa el ASUNTO REAL del correo, no el nombre del processor: es lo unico que
- * distingue "DRP - Affinity Rules Santa Cruz" de las otras tres variantes y del parque comun.
- * Las filas registradas antes de que existiera esa columna caen al nombre del processor, asi
- * que para esas los DRP de un mismo cliente se van a ver todos iguales hasta que se corra
- * llegadasCompletarAsuntos().
+ * EL MAIL NO SE TIRA: PASA A SER LA CAUSA
+ * Cuando el archivo NO esta, lo que dice el registro de llegadas es de quien es el problema:
+ *
+ *     sin archivo + sin correo    -> el cliente no mando nada
+ *     sin archivo + correo 07:02  -> llego y NOSOTROS no lo procesamos
+ *
+ * Ese renglon es el de mas valor de todo el modulo y se perderia mirando una sola fuente.
+ *
+ * Se reusa verificarEnDrive() de ReportesFaltantes.js en vez de escribir otra busqueda: ya
+ * resuelve la carpeta del dia, los alias de nombre de cliente (Dorinka/Walmart,
+ * Falabella/Sodimac) y cachea el listado por cliente y por dia (AGENTS.md seccion 5).
  *
  * @param {string} fechaISO yyyy-MM-dd
- * @param {Array} llegadas Lo que devuelve llegadasLeer(), ya filtrado o no.
- * @param {number} [minutosAhora] Minutos desde medianoche para decidir pendiente vs no llego.
- *   Para un dia pasado se pasa un valor alto: lo que falto ese dia ya no esta "pendiente".
- * @returns {Array<{cliente,pod,reporte,frecuencia,estado,hora,minutos,tarde,asunto}>}
+ * @param {Array} llegadas Lo que devuelve llegadasLeer().
+ * @param {number} [minutosAhora] Minutos desde medianoche, para decidir pendiente vs no esta.
+ * @returns {Array<{cliente,pod,reporte,frecuencia,estado,causa,hora,verificado}>}
  */
 function llegadasEstadoDelDia(fechaISO, llegadas, minutosAhora) {
   const dia = new Date(fechaISO + "T12:00:00");
   const esperados = llegadasEsperados(dia);
   const delDia = (llegadas || []).filter(function (l) { return l.fecha === fechaISO; });
   const corte = typeof minutosAhora === "number" ? minutosAhora : 24 * 60;
+  let fallosDrive = 0;
 
-  return esperados.map(function (e) {
+  const salida = esperados.map(function (e) {
+    const base = {
+      cliente: e.cliente, pod: e.pod, reporte: e.reporte, frecuencia: e.frecuencia,
+      causa: "", hora: "", verificado: true
+    };
+
+    // Lo que hoy no toca no se consulta en Drive: son 170 consultas que no cambian nada.
     if (!e.hoy) {
-      return {
-        cliente: e.cliente, pod: e.pod, reporte: e.reporte, frecuencia: e.frecuencia,
-        estado: LLEGADAS_ESTADO.NO_SE_ESPERA, hora: "", minutos: null, tarde: false, asunto: ""
-      };
+      base.estado = LLEGADAS_ESTADO.NO_SE_ESPERA;
+      return base;
     }
 
-    // Se queda con la PRIMERA llegada del dia: si un reporte llego dos veces, lo que importa
-    // es a que hora estuvo disponible, no la ultima copia.
-    let match = null;
+    // El correo correspondiente, si lo hubo. Se usa tanto para la hora del verde como para la
+    // causa del rojo. Gana el mas temprano: importa cuando estuvo disponible, no la ultima copia.
+    let correo = null;
     delDia.forEach(function (l) {
       if (!_llegadasMismoCliente(l.cliente, e.cliente)) return;
       if (!llegadasMismoReporte(l.asunto || l.reporte, e.reporte)) return;
-      if (!match || l.minutos < match.minutos) match = l;
+      if (!correo || l.minutos < correo.minutos) correo = l;
     });
+    if (correo) base.hora = correo.hora;
 
-    if (match) {
-      return {
-        cliente: e.cliente, pod: e.pod || match.pod, reporte: e.reporte, frecuencia: e.frecuencia,
-        estado: LLEGADAS_ESTADO.LLEGO, hora: match.hora, minutos: match.minutos,
-        tarde: !!match.tarde, asunto: match.asunto || match.reporte
-      };
+    let enDrive = false;
+    if (e.carpeta) {
+      try {
+        enDrive = verificarEnDrive(e.carpeta, e.reporte, dia, e.cliente);
+      } catch (err) {
+        // Que falle una consulta a Drive no puede pintar de rojo un reporte que capaz esta.
+        // La fila queda marcada como no verificada y cae a lo que diga el correo.
+        base.verificado = false;
+        fallosDrive++;
+      }
+    } else {
+      base.verificado = false;
     }
 
-    return {
-      cliente: e.cliente, pod: e.pod, reporte: e.reporte, frecuencia: e.frecuencia,
-      estado: corte > LLEGADAS_HORA_LIMITE_MIN ? LLEGADAS_ESTADO.NO_LLEGO : LLEGADAS_ESTADO.PENDIENTE,
-      hora: "", minutos: null, tarde: false, asunto: ""
-    };
+    if (enDrive) {
+      base.estado = LLEGADAS_ESTADO.LLEGO;
+      // Un archivo sin correo es un reporte subido a mano. No es un problema, pero conviene
+      // que se vea: significa que alguien tuvo que hacerlo.
+      if (!correo) base.causa = "subido a mano";
+      return base;
+    }
+
+    if (!base.verificado) {
+      base.estado = correo ? LLEGADAS_ESTADO.LLEGO : LLEGADAS_ESTADO.PENDIENTE;
+      base.causa = "no se pudo verificar en Drive";
+      return base;
+    }
+
+    if (corte <= LLEGADAS_HORA_LIMITE_MIN) {
+      base.estado = LLEGADAS_ESTADO.PENDIENTE;
+      base.causa = correo ? "el correo llego, falta procesarlo" : "";
+      return base;
+    }
+
+    base.estado = LLEGADAS_ESTADO.NO_LLEGO;
+    base.causa = correo ? "procesar" : "cliente";
+    return base;
   });
+
+  if (fallosDrive) {
+    Logger.log("[Llegadas] " + fallosDrive + " consulta(s) a Drive fallaron: esas filas se " +
+      "muestran segun el correo y quedan marcadas como no verificadas.");
+  }
+  return salida;
 }
 
 /**
