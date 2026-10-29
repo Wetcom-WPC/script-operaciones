@@ -151,12 +151,19 @@ class PoliticasVSANProcessor extends MailProcessor {
 
       let isAlert = false;
 
-      // Alertar exclusivamente sobre VMs con Compliance fuera de estado Compliant
+      // 1. Compliance fuera de estado Compliant
       if (cLower === "out of date") {
         detectedReasons.add("Política de Storage desactualizada (Out of Date)");
         isAlert = true;
       } else if (cLower.includes("non-compliant") || cLower.includes("non compliant")) {
         detectedReasons.add("Política de Storage en incumplimiento (Non-Compliant)");
+        isAlert = true;
+      }
+
+      // 2. Cluster no asignado en vCenter
+      const clusterVal = (idxCluster !== -1 ? (row[idxCluster] || "") : "").toString().trim();
+      if (clusterVal === "" || clusterVal === "-") {
+        detectedReasons.add("VM sin Cluster asignado en vCenter");
         isAlert = true;
       }
 
