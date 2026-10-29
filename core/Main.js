@@ -41,6 +41,7 @@ function obtenerRegistroDeProcesadores() {
     { tarea: 'processVMsOperativasEmails',        crear: () => new VMsOperativasProcessor() },
     { tarea: 'processSnapshotsEmails',            crear: () => new VMsConSnapshotsProcessor() },
     { tarea: 'processProxiesSnapshotsEmails',     crear: () => new ProxiesConSnapshotsProcessor() },
+    { tarea: 'processPoliticasVSANEmails',        crear: () => new PoliticasVSANProcessor() },
     { tarea: 'processApagadasVMsEmails',          crear: () => new VMsApagadasProcessor() },
     { tarea: 'processOrphanedVMsEmails',          crear: () => new OrphanedVMsProcessor() },
     { tarea: 'processDuplicateJobEmails',         crear: () => new VMsEnMasDeUnJobProcessor() },

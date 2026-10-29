@@ -46,7 +46,7 @@ function esClientePetersenSnapshots(email) {
 /**
  * Summary del ticket de alerta, respetando el lado AVS del reporte.
  *
- * Delega en nombreTareaSegunAVS() a propósito: el prefijo "AVS - " ya es el que usan las
+ * Delega en nombreTareaSegunOrigen() a propósito: el prefijo "AVS - " ya es el que usan las
  * Tareas Programadas y tiene que vivir en un solo lugar (AGENTS.md §5), no repetido acá.
  *
  * Antes el summary se buscaba y se creaba SIEMPRE sin prefijo, así que el reporte AVS y el
@@ -62,7 +62,7 @@ function esClientePetersenSnapshots(email) {
  * @returns {string}
  */
 function summarySnapshotsSegunAVS(base, clientConfig) {
-  return nombreTareaSegunAVS(base, clientConfig);
+  return nombreTareaSegunOrigen(base, clientConfig);
 }
 
 class VMsConSnapshotsProcessor extends MailProcessor {
@@ -596,7 +596,7 @@ class VMsConSnapshotsProcessor extends MailProcessor {
     }
 
     if (globalStatus === 'SUCCESS' && this.scheduledTaskName) {
-       buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig_Ignored), clientConfig_Ignored, false);
+       buscarYCerrarTareaProgramada(nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig_Ignored), clientConfig_Ignored, false);
     }
     return { status: globalStatus };
   }

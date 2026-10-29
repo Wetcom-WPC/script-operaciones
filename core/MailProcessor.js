@@ -523,9 +523,9 @@ class MailProcessor {
     // que cada mañana cerraba la TP "VMs con snapshots" del parque común en vez de la suya.
     //
     // Va acá y no en cada processor porque es el camino compartido por todos (AGENTS.md §5).
-    // Para los processors que no marcan `isAVS`, nombreTareaSegunAVS devuelve el nombre tal
+    // Para los processors que no marcan `isAVS`, nombreTareaSegunOrigen devuelve el nombre tal
     // cual, así que no cambia nada para ellos.
-    const nombreTarea = nombreTareaSegunAVS(this.scheduledTaskName, clientConfig);
+    const nombreTarea = nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig);
 
     const resultado = buscarYCerrarTareaProgramada(nombreTarea, clientConfig, false);
     const estado = resultado && resultado.status ? resultado.status : 'SIN_RESPUESTA';

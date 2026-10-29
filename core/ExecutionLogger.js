@@ -61,6 +61,8 @@ const TECNOLOGIA_POR_OPERACION = {
   "Discos montados en proxy":                         "vRO",
   // vrops/
   "Alertas de vROps":                                 "vROps",
+  "Políticas de vSAN":                                "vROps",
+  "Auditoria de VM Storage Policies":                 "vROps",
   "Cluster DRS":                                      "vROps",
   "Storage DRS":                                      "vROps",
   "Capacidad de particiones":                         "vROps",

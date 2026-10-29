@@ -44,7 +44,7 @@ class AffinityRulesProcessor extends MailProcessor {
           summaryReport.clientesProcesados.push(clientConfig.clientName);
         }
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).`, cliente: clientConfig.clientName });
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       if (typeof clientConfig !== 'undefined' && clientConfig) {
         let nombreArchivo = this.operationName + " - OK.txt";
@@ -84,7 +84,12 @@ class AffinityRulesProcessor extends MailProcessor {
       config = getClientConfig(sender, this.operationName);
       this.isDRP = false;
     }
-    if (config) config.isAVS = esAVS;
+    // El lado DRP viaja en clientConfig igual que el AVS: es lo que mira
+    // nombreTareaSegunOrigen() para cerrar "DRP - Affinity Rules" y no la del vCenter común.
+    if (config) {
+      config.isAVS = esAVS;
+      config.isDRP = this.isDRP;
+    }
     return config;
   }
 
@@ -167,7 +172,7 @@ class AffinityRulesProcessor extends MailProcessor {
       }
       
       if (attachmentStatus.status === 'SUCCESS') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: attachmentStatus.status };
 
@@ -202,7 +207,7 @@ class AffinityRulesProcessor extends MailProcessor {
       }
       
       if (creationResult.status !== 'FAILURE' && creationResult.status !== 'HTTP_500') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: creationResult.status };
     }

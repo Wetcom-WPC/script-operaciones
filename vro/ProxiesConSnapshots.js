@@ -18,7 +18,7 @@ const PROXIES_JIRA_TICKET_SUMMARY_ATTACHMENT = "Se detectaron Proxies con Snapsh
  * Summary del ticket de alerta, respetando el lado AVS del reporte si aplica.
  */
 function summaryProxiesSegunAVS(base, clientConfig) {
-  return typeof nombreTareaSegunAVS === 'function' ? nombreTareaSegunAVS(base, clientConfig) : base;
+  return typeof nombreTareaSegunOrigen === 'function' ? nombreTareaSegunOrigen(base, clientConfig) : base;
 }
 
 class ProxiesConSnapshotsProcessor extends MailProcessor {
