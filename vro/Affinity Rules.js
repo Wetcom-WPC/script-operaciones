@@ -84,7 +84,12 @@ class AffinityRulesProcessor extends MailProcessor {
       config = getClientConfig(sender, this.operationName);
       this.isDRP = false;
     }
-    if (config) config.isAVS = esAVS;
+    // El lado DRP viaja en clientConfig igual que el AVS: es lo que mira
+    // nombreTareaSegunOrigen() para cerrar "DRP - Affinity Rules" y no la del vCenter común.
+    if (config) {
+      config.isAVS = esAVS;
+      config.isDRP = this.isDRP;
+    }
     return config;
   }
 

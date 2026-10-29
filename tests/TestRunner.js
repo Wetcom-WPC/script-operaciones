@@ -703,6 +703,53 @@ function runAllTests() {
       "esReporteAVS: detecta por nombre de adjunto");
   } catch(e) { Logger.log("Error en Test frontera AVS: " + e.message); }
 
+  // --- TESTS: frontera DRP ---
+  // Regresión del 29/10/2026. El DRP de Petersen manda un reporte por banco ("DRP - Affinity
+  // Rules Santa Cruz"), el script resolvía bien el banco... y después cerraba la Tarea
+  // Programada "Affinity Rules" del vCenter PRINCIPAL de ese banco, que no había reportado nada.
+  // En la MISMA ejecución el archivo se archivaba en Drive como "DRP - Affinity Rules Santa Cruz
+  // - OK.txt": la parte de Drive sabía que era DRP y la del cierre no. Afectaba a los cuatro
+  // bancos del POD 1 (Santa Fe, Entre Ríos, Santa Cruz y San Juan) en las dos operaciones que
+  // llegan por DRP: Affinity Rules y Alertas de vSphere.
+  Logger.log("--- Test: frontera DRP ---");
+  try {
+    const COMUN = { key: "OPSBERSA-37051", fields: { summary: "Affinity Rules" } };
+    const DRP   = { key: "OPSBERSA-37099", fields: { summary: "DRP - Affinity Rules" } };
+
+    assertTrue(esSummaryDRP("DRP - Affinity Rules"), "esSummaryDRP: reconoce el lado DRP");
+    assertFalse(esSummaryDRP("Affinity Rules"), "esSummaryDRP: no marca DRP lo que no lo es");
+
+    assertEqual(nombreTareaSegunOrigen("Affinity Rules", { isDRP: true }), "DRP - Affinity Rules",
+      "nombreTareaSegunOrigen: un reporte DRP cierra la tarea DRP");
+    assertEqual(nombreTareaSegunOrigen("Affinity Rules", { isDRP: false }), "Affinity Rules",
+      "nombreTareaSegunOrigen: sin prefijo cuando no es DRP");
+    assertEqual(nombreTareaSegunOrigen("Alertas de vSphere", { isDRP: true }), "DRP - Alertas de vSphere",
+      "nombreTareaSegunOrigen: vale igual para Alertas de vSphere");
+
+    // AVS y DRP son entornos distintos: en Jira no existe "AVS - DRP - ...". Gana DRP.
+    assertEqual(nombreTareaSegunOrigen("Affinity Rules", { isDRP: true, isAVS: true }), "DRP - Affinity Rules",
+      "nombreTareaSegunOrigen: marcado como los dos a la vez, gana DRP");
+
+    assertEqual(elegirTicketDelMismoOrigen([DRP, COMUN], "DRP - Affinity Rules"), "OPSBERSA-37099",
+      "frontera DRP: un reporte DRP elige la tarea DRP");
+    assertEqual(elegirTicketDelMismoOrigen([DRP, COMUN], "Affinity Rules"), "OPSBERSA-37051",
+      "frontera DRP: un reporte común elige la del vCenter común aunque la DRP venga primera");
+
+    // El bug dado vuelta, que aparecería si sólo se arreglara el nombre de la tarea: la búsqueda
+    // por ~ devuelve las dos, y si la del común ya está cerrada no hay que caer sobre la de DRP.
+    assertEqual(elegirTicketDelMismoOrigen([DRP], "Affinity Rules"), null,
+      "frontera DRP: un reporte común NO cierra la tarea DRP cuando la suya no está abierta");
+    assertEqual(elegirTicketDelMismoOrigen([COMUN], "DRP - Affinity Rules"), null,
+      "frontera DRP: un reporte DRP NO cierra la del vCenter común cuando la suya no está abierta");
+
+    // Los tres orígenes conviviendo en el mismo proyecto.
+    const AVS_AR = { key: "OBM-1", fields: { summary: "AVS - Affinity Rules" } };
+    assertEqual(elegirTicketDelMismoOrigen([AVS_AR, DRP, COMUN], "Affinity Rules"), "OPSBERSA-37051",
+      "frontera DRP: con AVS, DRP y común abiertos, el reporte común elige el suyo");
+    assertEqual(elegirTicketDelMismoOrigen([AVS_AR, DRP, COMUN], "DRP - Affinity Rules"), "OPSBERSA-37099",
+      "frontera DRP: con los tres abiertos, el reporte DRP elige el suyo");
+  } catch(e) { Logger.log("Error en Test frontera DRP: " + e.message); }
+
   // --- TESTS: ticket de snapshots separado por lado AVS ---
   // Regresión del 15/09/2026 (Macro, OBM-18791): el cliente manda DOS reportes de "VMs con
   // snapshots" con 30 min de diferencia — el del parque común y el de AVS — y hasta ese día
