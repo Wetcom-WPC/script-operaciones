@@ -470,7 +470,7 @@ function runAllTests() {
 
   // --- TESTS: la Tarea Programada a cerrar respeta el lado AVS ---
   // Regresión del 15/09/2026 (Macro). Los processors que sobrescriben handleAlerts ya usaban
-  // nombreTareaSegunAVS, pero el camino compartido —el de un reporte que llega LIMPIO, vía
+  // nombreTareaSegunOrigen, pero el camino compartido —el de un reporte que llega LIMPIO, vía
   // handleNoAlerts— cerraba siempre la TP del parque común aunque el reporte fuera AVS.
   // El reporte AVS de Macro llega limpio todas las mañanas (sus filas son todas snapshots de
   // templates, que se ignoran por regla de negocio), así que cada día cerraba la TP del parque
@@ -673,27 +673,27 @@ function runAllTests() {
     assertTrue(esSummaryAVS("AVS - VMs con snapshots"), "esSummaryAVS: reconoce el lado AVS");
     assertFalse(esSummaryAVS("VMs con snapshots"), "esSummaryAVS: no marca AVS lo que no lo es");
 
-    assertEqual(elegirTicketDelMismoLadoAVS([AVS, NO_AVS], "VMs con snapshots"), "OBM-18502",
+    assertEqual(elegirTicketDelMismoOrigen([AVS, NO_AVS], "VMs con snapshots"), "OBM-18502",
       "frontera AVS: un reporte no-AVS elige la tarea no-AVS aunque la AVS venga primera");
-    assertEqual(elegirTicketDelMismoLadoAVS([AVS, NO_AVS], "AVS - VMs con snapshots"), "OBM-18503",
+    assertEqual(elegirTicketDelMismoOrigen([AVS, NO_AVS], "AVS - VMs con snapshots"), "OBM-18503",
       "frontera AVS: un reporte AVS elige la tarea AVS");
 
     // El caso que rompía: si la del lado buscado no está abierta, NO hay que devolver la otra.
-    assertEqual(elegirTicketDelMismoLadoAVS([NO_AVS], "AVS - VMs con snapshots"), null,
+    assertEqual(elegirTicketDelMismoOrigen([NO_AVS], "AVS - VMs con snapshots"), null,
       "frontera AVS: un reporte AVS NO cierra la tarea no-AVS cuando la suya no está abierta");
-    assertEqual(elegirTicketDelMismoLadoAVS([AVS], "VMs con snapshots"), null,
+    assertEqual(elegirTicketDelMismoOrigen([AVS], "VMs con snapshots"), null,
       "frontera AVS: un reporte no-AVS NO cierra la tarea AVS cuando la suya no está abierta");
 
-    assertEqual(elegirTicketDelMismoLadoAVS([], "VMs con snapshots"), null,
+    assertEqual(elegirTicketDelMismoOrigen([], "VMs con snapshots"), null,
       "frontera AVS: sin resultados devuelve null");
 
     // El nombre de la tarea a cerrar sale del lado del reporte, no del texto suelto.
-    assertEqual(nombreTareaSegunAVS("VMs con snapshots", { isAVS: true }), "AVS - VMs con snapshots",
-      "nombreTareaSegunAVS: antepone el prefijo cuando el reporte es AVS");
-    assertEqual(nombreTareaSegunAVS("VMs con snapshots", { isAVS: false }), "VMs con snapshots",
-      "nombreTareaSegunAVS: sin prefijo cuando no es AVS");
-    assertEqual(nombreTareaSegunAVS("VMs con snapshots", null), "VMs con snapshots",
-      "nombreTareaSegunAVS: tolera clientConfig nulo");
+    assertEqual(nombreTareaSegunOrigen("VMs con snapshots", { isAVS: true }), "AVS - VMs con snapshots",
+      "nombreTareaSegunOrigen: antepone el prefijo cuando el reporte es AVS");
+    assertEqual(nombreTareaSegunOrigen("VMs con snapshots", { isAVS: false }), "VMs con snapshots",
+      "nombreTareaSegunOrigen: sin prefijo cuando no es AVS");
+    assertEqual(nombreTareaSegunOrigen("VMs con snapshots", null), "VMs con snapshots",
+      "nombreTareaSegunOrigen: tolera clientConfig nulo");
 
     assertTrue(esReporteAVS("Reporte AVS - VMs con snapshots", null),
       "esReporteAVS: detecta por asunto");
@@ -731,16 +731,16 @@ function runAllTests() {
     // EL CASO DEL INCIDENTE: solo existe el ticket del parque común y entra el reporte AVS.
     // Tiene que devolver null para que handleNoAlerts no comente nada.
     assertEqual(
-      elegirTicketDelMismoLadoAVS([TICKET_COMUN], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
+      elegirTicketDelMismoOrigen([TICKET_COMUN], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
       null,
       "snapshots AVS: un reporte AVS limpio NO comenta sobre el ticket del parque común");
 
     assertEqual(
-      elegirTicketDelMismoLadoAVS([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
+      elegirTicketDelMismoOrigen([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
       "OBM-19000",
       "snapshots AVS: el reporte AVS actualiza su propio ticket");
     assertEqual(
-      elegirTicketDelMismoLadoAVS([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: false })),
+      elegirTicketDelMismoOrigen([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: false })),
       "OBM-18791",
       "snapshots AVS: el reporte común actualiza el suyo, no el de AVS");
 

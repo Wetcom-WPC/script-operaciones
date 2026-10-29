@@ -46,7 +46,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
       const clientConfig = this.resolveClientConfig(null, senderEmail, null, message, summaryReport);
       if (clientConfig) {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con (SUCCESS).` });
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
         if (typeof clientConfig !== 'undefined' && clientConfig) {
       const nombreArchivo = this.operationName + " - OK.txt";
@@ -125,7 +125,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
       }
       
       if (attachmentStatus.status === 'SUCCESS') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: attachmentStatus.status };
     } else {
@@ -153,7 +153,7 @@ class VMsConPreguntasProcessor extends MailProcessor {
       }
       
       if (creationResult.status !== 'FAILURE' && creationResult.status !== 'HTTP_500') {
-        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunAVS(this.scheduledTaskName, clientConfig), clientConfig, false);
+        if (this.scheduledTaskName) buscarYCerrarTareaProgramada(nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig), clientConfig, false);
       }
       return { status: creationResult.status };
     }

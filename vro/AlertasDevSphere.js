@@ -49,7 +49,7 @@ class VsphereAlertsProcessor extends MailProcessor {
       if (clientConfig) {
         summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} recibido con [SUCCESS].` });
         if (this.scheduledTaskName) {
-          const taskNameToClose = nombreTareaSegunAVS(this.scheduledTaskName, clientConfig);
+          const taskNameToClose = nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig);
           const closeResult = buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
           if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
         }
@@ -174,7 +174,7 @@ class VsphereAlertsProcessor extends MailProcessor {
   handleNoAlerts(existingTicketKey, clientConfig, summaryReport) {
     summaryReport.exitos.push({ mensaje: `Reporte de ${clientConfig.clientName} procesado. Todas las anomalías fueron exceptuadas o el archivo estaba vacío.` });
     if (this.scheduledTaskName) {
-      const taskNameToClose = nombreTareaSegunAVS(this.scheduledTaskName, clientConfig);
+      const taskNameToClose = nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig);
       const closeResult = buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
       if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
     }
@@ -270,7 +270,7 @@ class VsphereAlertsProcessor extends MailProcessor {
     }
     
     if (this.scheduledTaskName) {
-      const taskNameToClose = nombreTareaSegunAVS(this.scheduledTaskName, clientConfig);
+      const taskNameToClose = nombreTareaSegunOrigen(this.scheduledTaskName, clientConfig);
       const closeResult = buscarYCerrarTareaProgramada(taskNameToClose, clientConfig, false);
       if (closeResult && closeResult.status === 'SUCCESS') summaryReport.tareasCerradas = (summaryReport.tareasCerradas || 0) + 1;
     }

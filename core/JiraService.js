@@ -84,7 +84,7 @@ function esReporteAVS(emailSubject, attachment) {
  * @param {string} summary Lo que se buscó.
  * @returns {string|null} La clave del ticket, o null.
  */
-function elegirTicketDelMismoLadoAVS(issues, summary) {
+function elegirTicketDelMismoOrigen(issues, summary) {
   const objetivo = String(summary || '').trim().toLowerCase();
   const objetivoEsAvs = esSummaryAVS(objetivo);
 
@@ -111,7 +111,7 @@ function elegirTicketDelMismoLadoAVS(issues, summary) {
  * @param {Object} clientConfig
  * @returns {string}
  */
-function nombreTareaSegunAVS(taskNameBase, clientConfig) {
+function nombreTareaSegunOrigen(taskNameBase, clientConfig) {
   return (clientConfig && clientConfig.isAVS) ? `AVS - ${taskNameBase}` : taskNameBase;
 }
 
@@ -894,7 +894,7 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
     if (response.getResponseCode() === 200) {
       const data = JSON.parse(response.getContentText());
       if (data.issues && data.issues.length > 0) {
-        return elegirTicketDelMismoLadoAVS(data.issues, summary);
+        return elegirTicketDelMismoOrigen(data.issues, summary);
       }
     }
     return null;
@@ -912,7 +912,7 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
  * 2. Pedía maxResults 1 y devolvía ese único resultado sin mirar el summary. Como el
  *    operador ~ de JQL es difuso, buscar el ticket no-AVS podía devolver el AVS (y al
  *    revés) — el mismo problema que findExistingJiraTicket. Ahora pide varios y elige el
- *    del mismo lado con elegirTicketDelMismoLadoAVS().
+ *    del mismo lado con elegirTicketDelMismoOrigen().
  *
  * @param {string} summary
  * @param {string} projectKey
@@ -935,7 +935,7 @@ function findTargetReportTicket(summary, projectKey) {
     if (response.getResponseCode() === 200) {
       const data = JSON.parse(response.getContentText());
       if (data.issues && data.issues.length > 0) {
-        return elegirTicketDelMismoLadoAVS(data.issues, summary);
+        return elegirTicketDelMismoOrigen(data.issues, summary);
       }
     }
     return null;
