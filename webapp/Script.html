@@ -3493,6 +3493,12 @@
   function pintarEstadoHoy() {
     var bloque = document.getElementById('estadoHoyBloque');
     if (!bloque) return;
+
+    // Solo con el período en 'Hoy'. Este bloque siempre habla del día de hoy, y dejarlo
+    // visible con un rango de 7 días hace leer sus números como si fueran de ese rango.
+    var periodo = document.getElementById('filtroDiasLlegadas');
+    if (periodo && periodo.value !== 'hoy') { bloque.hidden = true; return; }
+
     var estados = (llegadasGlobal && llegadasGlobal.estados) || [];
     if (!estados.length) { bloque.hidden = true; return; }
 
