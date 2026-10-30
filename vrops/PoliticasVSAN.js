@@ -146,12 +146,18 @@ class PoliticasVSANProcessor extends MailProcessor {
         return;
       }
 
+      // Las VMs sin política ("-" o vacía) no residen en datastores vSAN y quedan fuera del alcance de esta operación.
+      const policyVal = (idxPolicy !== -1 ? (row[idxPolicy] || "") : "").toString().trim();
+      if (!policyVal || policyVal === "-") {
+        return;
+      }
+
       const complianceVal = (idxCompliance !== -1 ? (row[idxCompliance] || "") : "").toString().trim();
       const cLower = complianceVal.toLowerCase();
 
       let isAlert = false;
 
-      // 1. Compliance fuera de estado Compliant
+      // Compliance fuera de estado Compliant
       if (cLower === "out of date") {
         detectedReasons.add("Política de Storage desactualizada (Out of Date)");
         isAlert = true;
@@ -160,17 +166,9 @@ class PoliticasVSANProcessor extends MailProcessor {
         isAlert = true;
       }
 
-      // 2. Cluster no asignado en vCenter
-      const clusterVal = (idxCluster !== -1 ? (row[idxCluster] || "") : "").toString().trim();
-      if (clusterVal === "" || clusterVal === "-") {
-        detectedReasons.add("VM sin Cluster asignado en vCenter");
-        isAlert = true;
-      }
-
       if (isAlert) {
-        const polText = idxPolicy !== -1 ? row[idxPolicy] : "";
         const clusText = idxCluster !== -1 ? row[idxCluster] : "";
-        Logger.log(`[Políticas de vSAN] -> Anomalía detectada en VM: ${vmName} (Compliance: ${complianceVal}, Política: ${polText}, Cluster: ${clusText})`);
+        Logger.log(`[Políticas de vSAN] -> Anomalía detectada en VM: ${vmName} (Compliance: ${complianceVal}, Política: ${policyVal}, Cluster: ${clusText})`);
         finalAlerts.push(row);
       }
     });
