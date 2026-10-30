@@ -599,7 +599,7 @@ const TAREAS_QUE_CIERRA_LA_AUTOMATIZACION = [
 ];
 
 // Solo se cierran tareas en este estado. Una "En EjecuciÃ³n" puede ser trabajo real en curso.
-const ESTADO_TAREA_CERRABLE = "Pendiente de EjecuciÃ³n";
+const ESTADO_TAREA_CERRABLE = "Pendiente de Ejecución";
 
 /**
  * Devuelve los clientes del Ãndice Maestro con su proyecto de Jira y sus remitentes.
