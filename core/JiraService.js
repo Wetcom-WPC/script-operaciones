@@ -46,17 +46,6 @@ function esSummaryAVS(texto) {
 }
 
 /**
- * ¿Este summary es del lado DRP?
- *
- * Mismo criterio naíf que esSummaryAVS, y a propósito: las Tareas Programadas del lado DRP se
- * llaman "DRP - <tarea>". Se revisó que ningún summary de ticket del proyecto contenga "drp"
- * por otro motivo, así que no hay falsos positivos que atajar.
- */
-function esSummaryDRP(texto) {
-  return String(texto || '').toLowerCase().includes('drp');
-}
-
-/**
  * ¿El reporte que se está procesando es del entorno AVS?
  *
  * Mira el asunto del correo y, si hay, el nombre del adjunto — mismo criterio que ya usaba
@@ -91,24 +80,16 @@ function esReporteAVS(emailSubject, attachment) {
  * Si no hay ninguno del lado buscado devuelve null: es preferible no cerrar nada a cerrar el
  * ticket equivocado.
  *
- * Lo mismo vale para DRP, y por eso se filtra por los dos lados: buscar "Affinity Rules"
- * también devuelve "DRP - Affinity Rules". Si sólo se mirara el lado AVS, el día que la tarea
- * del parque común ya estuviera cerrada el reporte común caería al primer candidato y cerraría
- * la de DRP. Sería el mismo bug dado vuelta.
- *
  * @param {Array<{key: string, fields: {summary: string}}>} issues
  * @param {string} summary Lo que se buscó.
  * @returns {string|null} La clave del ticket, o null.
  */
-function elegirTicketDelMismoOrigen(issues, summary) {
+function elegirTicketDelMismoLadoAVS(issues, summary) {
   const objetivo = String(summary || '').trim().toLowerCase();
   const objetivoEsAvs = esSummaryAVS(objetivo);
-  const objetivoEsDrp = esSummaryDRP(objetivo);
 
   const candidatos = (issues || []).filter(function (issue) {
-    if (!issue || !issue.fields) return false;
-    return esSummaryAVS(issue.fields.summary) === objetivoEsAvs &&
-           esSummaryDRP(issue.fields.summary) === objetivoEsDrp;
+    return issue && issue.fields && esSummaryAVS(issue.fields.summary) === objetivoEsAvs;
   });
   if (candidatos.length === 0) return null;
 
@@ -121,39 +102,17 @@ function elegirTicketDelMismoOrigen(issues, summary) {
 }
 
 /**
- * Nombre de la Tarea Programada a cerrar, respetando el ORIGEN del reporte.
+ * Nombre de la Tarea Programada a cerrar, respetando el lado AVS del reporte.
  *
- * Un mismo cliente puede recibir el mismo reporte desde entornos distintos, y cada entorno
- * tiene su propia Tarea Programada en Jira:
- *
- *   - el parque común  -> "<nombre>"
- *   - el lado AVS      -> "AVS - <nombre>"
- *   - el entorno DRP   -> "DRP - <nombre>"
- *
- * Un processor que no marque el origen cierra siempre la del parque común. Eso ya pasó dos
- * veces: con AVS, y el 29/10/2026 con DRP, cuando los reportes del DRP de Petersen cerraban
- * la tarea del vCenter principal de cada banco del POD 1 — la del vCenter real quedaba
- * cerrada sin que su reporte hubiera llegado, y nadie se enteraba de que faltaba.
- *
- * AVS y DRP son entornos distintos y no se superponen: en Jira no existe una tarea
- * "AVS - DRP - <nombre>", y pedirla daría NOT_FOUND, que es terminal y aparta el correo. Si
- * alguna vez llega un reporte marcado como los dos, gana DRP y queda dicho en el log en vez
- * de resolverse en silencio (AGENTS.md §7).
+ * Las tareas del lado AVS se llaman "AVS - <nombre>". Un processor que no marque
+ * `clientConfig.isAVS` cierra siempre la del lado no-AVS, aunque el reporte sea AVS.
  *
  * @param {string} taskNameBase
  * @param {Object} clientConfig
  * @returns {string}
  */
-function nombreTareaSegunOrigen(taskNameBase, clientConfig) {
-  if (!clientConfig) return taskNameBase;
-
-  if (clientConfig.isDRP && clientConfig.isAVS) {
-    Logger.log(`AVISO: el reporte de "${taskNameBase}" vino marcado como AVS y DRP a la vez. Se usa el lado DRP.`);
-  }
-
-  if (clientConfig.isDRP) return `DRP - ${taskNameBase}`;
-  if (clientConfig.isAVS) return `AVS - ${taskNameBase}`;
-  return taskNameBase;
+function nombreTareaSegunAVS(taskNameBase, clientConfig) {
+  return (clientConfig && clientConfig.isAVS) ? `AVS - ${taskNameBase}` : taskNameBase;
 }
 
 /**
@@ -935,7 +894,7 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
     if (response.getResponseCode() === 200) {
       const data = JSON.parse(response.getContentText());
       if (data.issues && data.issues.length > 0) {
-        return elegirTicketDelMismoOrigen(data.issues, summary);
+        return elegirTicketDelMismoLadoAVS(data.issues, summary);
       }
     }
     return null;
@@ -953,7 +912,7 @@ function findExistingJiraTicket(summary, projectKey, issueTypeName) {
  * 2. Pedía maxResults 1 y devolvía ese único resultado sin mirar el summary. Como el
  *    operador ~ de JQL es difuso, buscar el ticket no-AVS podía devolver el AVS (y al
  *    revés) — el mismo problema que findExistingJiraTicket. Ahora pide varios y elige el
- *    del mismo lado con elegirTicketDelMismoOrigen().
+ *    del mismo lado con elegirTicketDelMismoLadoAVS().
  *
  * @param {string} summary
  * @param {string} projectKey
@@ -976,7 +935,7 @@ function findTargetReportTicket(summary, projectKey) {
     if (response.getResponseCode() === 200) {
       const data = JSON.parse(response.getContentText());
       if (data.issues && data.issues.length > 0) {
-        return elegirTicketDelMismoOrigen(data.issues, summary);
+        return elegirTicketDelMismoLadoAVS(data.issues, summary);
       }
     }
     return null;

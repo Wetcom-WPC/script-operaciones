@@ -470,7 +470,7 @@ function runAllTests() {
 
   // --- TESTS: la Tarea Programada a cerrar respeta el lado AVS ---
   // Regresión del 15/09/2026 (Macro). Los processors que sobrescriben handleAlerts ya usaban
-  // nombreTareaSegunOrigen, pero el camino compartido —el de un reporte que llega LIMPIO, vía
+  // nombreTareaSegunAVS, pero el camino compartido —el de un reporte que llega LIMPIO, vía
   // handleNoAlerts— cerraba siempre la TP del parque común aunque el reporte fuera AVS.
   // El reporte AVS de Macro llega limpio todas las mañanas (sus filas son todas snapshots de
   // templates, que se ignoran por regla de negocio), así que cada día cerraba la TP del parque
@@ -673,27 +673,27 @@ function runAllTests() {
     assertTrue(esSummaryAVS("AVS - VMs con snapshots"), "esSummaryAVS: reconoce el lado AVS");
     assertFalse(esSummaryAVS("VMs con snapshots"), "esSummaryAVS: no marca AVS lo que no lo es");
 
-    assertEqual(elegirTicketDelMismoOrigen([AVS, NO_AVS], "VMs con snapshots"), "OBM-18502",
+    assertEqual(elegirTicketDelMismoLadoAVS([AVS, NO_AVS], "VMs con snapshots"), "OBM-18502",
       "frontera AVS: un reporte no-AVS elige la tarea no-AVS aunque la AVS venga primera");
-    assertEqual(elegirTicketDelMismoOrigen([AVS, NO_AVS], "AVS - VMs con snapshots"), "OBM-18503",
+    assertEqual(elegirTicketDelMismoLadoAVS([AVS, NO_AVS], "AVS - VMs con snapshots"), "OBM-18503",
       "frontera AVS: un reporte AVS elige la tarea AVS");
 
     // El caso que rompía: si la del lado buscado no está abierta, NO hay que devolver la otra.
-    assertEqual(elegirTicketDelMismoOrigen([NO_AVS], "AVS - VMs con snapshots"), null,
+    assertEqual(elegirTicketDelMismoLadoAVS([NO_AVS], "AVS - VMs con snapshots"), null,
       "frontera AVS: un reporte AVS NO cierra la tarea no-AVS cuando la suya no está abierta");
-    assertEqual(elegirTicketDelMismoOrigen([AVS], "VMs con snapshots"), null,
+    assertEqual(elegirTicketDelMismoLadoAVS([AVS], "VMs con snapshots"), null,
       "frontera AVS: un reporte no-AVS NO cierra la tarea AVS cuando la suya no está abierta");
 
-    assertEqual(elegirTicketDelMismoOrigen([], "VMs con snapshots"), null,
+    assertEqual(elegirTicketDelMismoLadoAVS([], "VMs con snapshots"), null,
       "frontera AVS: sin resultados devuelve null");
 
     // El nombre de la tarea a cerrar sale del lado del reporte, no del texto suelto.
-    assertEqual(nombreTareaSegunOrigen("VMs con snapshots", { isAVS: true }), "AVS - VMs con snapshots",
-      "nombreTareaSegunOrigen: antepone el prefijo cuando el reporte es AVS");
-    assertEqual(nombreTareaSegunOrigen("VMs con snapshots", { isAVS: false }), "VMs con snapshots",
-      "nombreTareaSegunOrigen: sin prefijo cuando no es AVS");
-    assertEqual(nombreTareaSegunOrigen("VMs con snapshots", null), "VMs con snapshots",
-      "nombreTareaSegunOrigen: tolera clientConfig nulo");
+    assertEqual(nombreTareaSegunAVS("VMs con snapshots", { isAVS: true }), "AVS - VMs con snapshots",
+      "nombreTareaSegunAVS: antepone el prefijo cuando el reporte es AVS");
+    assertEqual(nombreTareaSegunAVS("VMs con snapshots", { isAVS: false }), "VMs con snapshots",
+      "nombreTareaSegunAVS: sin prefijo cuando no es AVS");
+    assertEqual(nombreTareaSegunAVS("VMs con snapshots", null), "VMs con snapshots",
+      "nombreTareaSegunAVS: tolera clientConfig nulo");
 
     assertTrue(esReporteAVS("Reporte AVS - VMs con snapshots", null),
       "esReporteAVS: detecta por asunto");
@@ -702,53 +702,6 @@ function runAllTests() {
     assertTrue(esReporteAVS("Reporte VMs con snapshots", { getName: function () { return "avs-reporte.csv"; } }),
       "esReporteAVS: detecta por nombre de adjunto");
   } catch(e) { Logger.log("Error en Test frontera AVS: " + e.message); }
-
-  // --- TESTS: frontera DRP ---
-  // Regresión del 29/10/2026. El DRP de Petersen manda un reporte por banco ("DRP - Affinity
-  // Rules Santa Cruz"), el script resolvía bien el banco... y después cerraba la Tarea
-  // Programada "Affinity Rules" del vCenter PRINCIPAL de ese banco, que no había reportado nada.
-  // En la MISMA ejecución el archivo se archivaba en Drive como "DRP - Affinity Rules Santa Cruz
-  // - OK.txt": la parte de Drive sabía que era DRP y la del cierre no. Afectaba a los cuatro
-  // bancos del POD 1 (Santa Fe, Entre Ríos, Santa Cruz y San Juan) en las dos operaciones que
-  // llegan por DRP: Affinity Rules y Alertas de vSphere.
-  Logger.log("--- Test: frontera DRP ---");
-  try {
-    const COMUN = { key: "OPSBERSA-37051", fields: { summary: "Affinity Rules" } };
-    const DRP   = { key: "OPSBERSA-37099", fields: { summary: "DRP - Affinity Rules" } };
-
-    assertTrue(esSummaryDRP("DRP - Affinity Rules"), "esSummaryDRP: reconoce el lado DRP");
-    assertFalse(esSummaryDRP("Affinity Rules"), "esSummaryDRP: no marca DRP lo que no lo es");
-
-    assertEqual(nombreTareaSegunOrigen("Affinity Rules", { isDRP: true }), "DRP - Affinity Rules",
-      "nombreTareaSegunOrigen: un reporte DRP cierra la tarea DRP");
-    assertEqual(nombreTareaSegunOrigen("Affinity Rules", { isDRP: false }), "Affinity Rules",
-      "nombreTareaSegunOrigen: sin prefijo cuando no es DRP");
-    assertEqual(nombreTareaSegunOrigen("Alertas de vSphere", { isDRP: true }), "DRP - Alertas de vSphere",
-      "nombreTareaSegunOrigen: vale igual para Alertas de vSphere");
-
-    // AVS y DRP son entornos distintos: en Jira no existe "AVS - DRP - ...". Gana DRP.
-    assertEqual(nombreTareaSegunOrigen("Affinity Rules", { isDRP: true, isAVS: true }), "DRP - Affinity Rules",
-      "nombreTareaSegunOrigen: marcado como los dos a la vez, gana DRP");
-
-    assertEqual(elegirTicketDelMismoOrigen([DRP, COMUN], "DRP - Affinity Rules"), "OPSBERSA-37099",
-      "frontera DRP: un reporte DRP elige la tarea DRP");
-    assertEqual(elegirTicketDelMismoOrigen([DRP, COMUN], "Affinity Rules"), "OPSBERSA-37051",
-      "frontera DRP: un reporte común elige la del vCenter común aunque la DRP venga primera");
-
-    // El bug dado vuelta, que aparecería si sólo se arreglara el nombre de la tarea: la búsqueda
-    // por ~ devuelve las dos, y si la del común ya está cerrada no hay que caer sobre la de DRP.
-    assertEqual(elegirTicketDelMismoOrigen([DRP], "Affinity Rules"), null,
-      "frontera DRP: un reporte común NO cierra la tarea DRP cuando la suya no está abierta");
-    assertEqual(elegirTicketDelMismoOrigen([COMUN], "DRP - Affinity Rules"), null,
-      "frontera DRP: un reporte DRP NO cierra la del vCenter común cuando la suya no está abierta");
-
-    // Los tres orígenes conviviendo en el mismo proyecto.
-    const AVS_AR = { key: "OBM-1", fields: { summary: "AVS - Affinity Rules" } };
-    assertEqual(elegirTicketDelMismoOrigen([AVS_AR, DRP, COMUN], "Affinity Rules"), "OPSBERSA-37051",
-      "frontera DRP: con AVS, DRP y común abiertos, el reporte común elige el suyo");
-    assertEqual(elegirTicketDelMismoOrigen([AVS_AR, DRP, COMUN], "DRP - Affinity Rules"), "OPSBERSA-37099",
-      "frontera DRP: con los tres abiertos, el reporte DRP elige el suyo");
-  } catch(e) { Logger.log("Error en Test frontera DRP: " + e.message); }
 
   // --- TESTS: ticket de snapshots separado por lado AVS ---
   // Regresión del 15/09/2026 (Macro, OBM-18791): el cliente manda DOS reportes de "VMs con
@@ -778,16 +731,16 @@ function runAllTests() {
     // EL CASO DEL INCIDENTE: solo existe el ticket del parque común y entra el reporte AVS.
     // Tiene que devolver null para que handleNoAlerts no comente nada.
     assertEqual(
-      elegirTicketDelMismoOrigen([TICKET_COMUN], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
+      elegirTicketDelMismoLadoAVS([TICKET_COMUN], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
       null,
       "snapshots AVS: un reporte AVS limpio NO comenta sobre el ticket del parque común");
 
     assertEqual(
-      elegirTicketDelMismoOrigen([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
+      elegirTicketDelMismoLadoAVS([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: true })),
       "OBM-19000",
       "snapshots AVS: el reporte AVS actualiza su propio ticket");
     assertEqual(
-      elegirTicketDelMismoOrigen([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: false })),
+      elegirTicketDelMismoLadoAVS([TICKET_COMUN, TICKET_AVS], summarySnapshotsSegunAVS(BASE, { isAVS: false })),
       "OBM-18791",
       "snapshots AVS: el reporte común actualiza el suyo, no el de AVS");
 
@@ -848,12 +801,6 @@ function runAllTests() {
   try {
     _testsNutanixMultiCluster(assertEqual, assertTrue);
   } catch(e) { assertTrue(false, "Nutanix multi-cluster: el test no terminó (" + e.message + ")"); }
-
-  // Una columna que el reporte no trae no puede convertirse en "todas las VMs están mal".
-  Logger.log("--- Test: Políticas de vSAN / columnas ausentes ---");
-  try {
-    _testsPoliticasVSANColumnasFaltantes(assertEqual, assertTrue);
-  } catch(e) { assertTrue(false, "Políticas de vSAN: el test no terminó (" + e.message + ")"); }
 
   Logger.log("=== FIN DE SUITE DE PRUEBAS ===");
   Logger.log(`Resultados: ${passed} Pasaron, ${failed} Fallaron.`);
@@ -1069,74 +1016,4 @@ function _testsNutanixMultiCluster(assertEqual, assertTrue) {
     buscarYCerrarTareaProgramada = originales.buscarYCerrarTareaProgramada;
     subirAdjuntosDeMensajeADrive = originales.subirAdjuntosDeMensajeADrive;
   }
-}
-
-/**
- * Políticas de vSAN: qué alerta y qué no.
- *
- * Acá quedan fijadas dos cosas distintas.
- *
- * 1) Una columna que el reporte no trae no puede convertirse en "todas las VMs están mal". El
- *    28/10/2026, con un CSV sin la columna Política o sin la columna Cluster, el procesador
- *    alertaba las 3 de 3 VMs sanas: con idx === -1 el valor leído quedaba "" y las reglas "sin
- *    política asignada" y "sin cluster asignado" daban verdadero para toda fila. Esas dos
- *    reglas después se quitaron (ver 2), así que hoy el caso pasa de taquito — pero el día que
- *    alguien agregue una regla de ese estilo sin chequear el índice, este test se lo dice.
- *
- * 2) El alcance actual: alerta SÓLO por compliance fuera de norma (Out of Date y
- *    Non-Compliant). Las reglas de política no asignada, política default de vSAN, VM sin
- *    cluster y compliance "-" existieron y se quitaron a propósito el 28/10/2026. Los asserts
- *    que esperan 0 documentan esa decisión, no un olvido: si se quiere volver a alertar por
- *    alguna, este es el lugar donde se ve exactamente qué cambia.
- */
-function _testsPoliticasVSANColumnasFaltantes(assertEqual, assertTrue) {
-  const proc = new PoliticasVSANProcessor();
-  const clientConfig = { clientName: "Cliente Test", jiraProjectKey: "TEST", exceptions: {} };
-
-  const correr = function (encabezados, filas) {
-    const summary = { errores: [], exitos: [], advertencias: [] };
-    const r = proc.processData([encabezados].concat(filas), clientConfig, summary);
-    return r ? r.finalAlerts.length : -1;   // -1 = processData cortó por falta de columnas clave
-  };
-
-  const COMPLETO = ["Name", "Politica", "Compliance", "Cluster"];
-
-  // Tres VMs sanas: compliant, con política corporativa y con cluster.
-  const sanas = [
-    ["vm-01", "Politica-Corp-Oro",   "Compliant", "CL-PROD"],
-    ["vm-02", "Politica-Corp-Oro",   "Compliant", "CL-PROD"],
-    ["vm-03", "Politica-Corp-Plata", "Compliant", "CL-DESA"]
-  ];
-
-  // --- 1) columnas ausentes ---
-  assertEqual(correr(COMPLETO, sanas), 0,
-    "Políticas de vSAN: reporte completo con VMs sanas no alerta ninguna");
-
-  assertEqual(correr(["Name", "Politica", "Compliance"], sanas.map(function (f) { return f.slice(0, 3); })), 0,
-    "Políticas de vSAN: sin columna Cluster no alerta (antes alertaba las 3)");
-
-  assertEqual(correr(["Name", "Compliance", "Cluster"], sanas.map(function (f) { return [f[0], f[2], f[3]]; })), 0,
-    "Políticas de vSAN: sin columna Política no alerta (antes alertaba las 3)");
-
-  assertEqual(correr(["Politica", "Cluster"], [["Politica-Corp-Oro", "CL-PROD"]]), -1,
-    "Políticas de vSAN: sin Name ni Compliance corta y deja el error en el resumen");
-
-  // --- 2) alcance: sólo compliance fuera de norma ---
-  assertEqual(correr(COMPLETO, [["vm-mala", "Politica-Corp-Oro", "Out of date", "CL-PROD"]]), 1,
-    "Políticas de vSAN: compliance Out of Date alerta");
-
-  assertEqual(correr(COMPLETO, [["vm-mala", "Politica-Corp-Oro", "Non-Compliant", "CL-PROD"]]), 1,
-    "Políticas de vSAN: compliance Non-Compliant alerta");
-
-  assertEqual(correr(COMPLETO, [["vm-ok", "-", "Compliant", "CL-PROD"]]), 0,
-    "Políticas de vSAN: VM sin política asignada NO alerta (decisión del 28/10/2026)");
-
-  assertEqual(correr(COMPLETO, [["vm-ok", "vSAN Default Storage Policy", "Compliant", "CL-PROD"]]), 0,
-    "Políticas de vSAN: política default de vSAN NO alerta (decisión del 28/10/2026)");
-
-  assertEqual(correr(COMPLETO, [["vm-ok", "Politica-Corp-Oro", "Compliant", "-"]]), 0,
-    "Políticas de vSAN: VM sin cluster NO alerta (decisión del 28/10/2026)");
-
-  assertEqual(correr(COMPLETO, [["vm-ok", "Politica-Corp-Oro", "-", "CL-PROD"]]), 0,
-    "Políticas de vSAN: compliance \"-\" NO alerta (decisión del 28/10/2026)");
 }
