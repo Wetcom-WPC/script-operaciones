@@ -410,6 +410,56 @@ function manual_diagnosticarEncabezados() {
   return diagnosticarEncabezadosDeReporte(MANUAL_DIAGNOSTICO_OPERATION_NAME);
 }
 
+// Texto a buscar (no distingue mayúsculas, substring en CUALQUIER columna) en
+// manual_diagnosticarIndiceMaestro().
+const MANUAL_DIAGNOSTICO_INDICE_BUSQUEDA = "balanz";
+
+/**
+ * Identifica SIN AMBIGÜEDAD cuál es la hoja de cálculo que el código realmente usa como Índice
+ * Maestro (la que lee getClientConfig/MasterSheetSingleton vía la Script Property
+ * MASTER_INDEX_SHEET_ID) — distinto de cualquier otra planilla parecida que alguien pueda estar
+ * mirando a mano. Imprime su ID, nombre y URL, y busca MANUAL_DIAGNOSTICO_INDICE_BUSQUEDA como
+ * substring en TODAS las columnas de TODAS las filas (no solo la columna de remitentes), para
+ * detectar tanto "no está dado de alta" como "está, pero en otra columna o mal escrito". Solo
+ * lectura.
+ */
+function manual_diagnosticarIndiceMaestro() {
+  const idHojaCalculo = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID")
+    || (typeof MASTER_INDEX_SHEET_ID !== 'undefined' ? MASTER_INDEX_SHEET_ID : null);
+  if (!idHojaCalculo) {
+    Logger.log("🚨 La Script Property MASTER_INDEX_SHEET_ID no está configurada.");
+    return;
+  }
+  const ss = SpreadsheetApp.openById(idHojaCalculo);
+  const hoja = ss.getSheets()[0];
+  Logger.log(`=== ÍNDICE MAESTRO REAL (el que usa el código) ===`);
+  Logger.log(`ID: ${idHojaCalculo}`);
+  Logger.log(`Nombre de la planilla: "${ss.getName()}"`);
+  Logger.log(`Pestaña leída (primera por posición): "${hoja.getName()}"`);
+  Logger.log(`URL: ${ss.getUrl()}`);
+
+  const datos = hoja.getDataRange().getValues();
+  Logger.log(`Filas totales (incluido encabezado): ${datos.length}\n`);
+
+  const buscado = MANUAL_DIAGNOSTICO_INDICE_BUSQUEDA.toLowerCase();
+  let encontradas = 0;
+  datos.forEach((fila, i) => {
+    const coincide = fila.some(celda => celda != null && String(celda).toLowerCase().indexOf(buscado) !== -1);
+    if (coincide) {
+      encontradas++;
+      Logger.log(`Fila ${i + 1}: [${fila.map(c => `"${c}"`).join(", ")}]`);
+    }
+  });
+
+  if (encontradas === 0) {
+    Logger.log(`🚨 "${MANUAL_DIAGNOSTICO_INDICE_BUSQUEDA}" NO aparece en NINGUNA columna de esta planilla. No está dado de alta acá — hay que agregar la fila, no es un problema de formato.`);
+  } else {
+    Logger.log(`\n✅ "${MANUAL_DIAGNOSTICO_INDICE_BUSQUEDA}" aparece en ${encontradas} fila(s) (arriba). Si getClientConfig igual no lo encuentra, comparar el texto exacto de la columna A contra lo que extrae el código.`);
+  }
+
+  return { idHojaCalculo, nombre: ss.getName(), url: ss.getUrl(), filas: datos.length, coincidencias: encontradas };
+}
+
 // Búsqueda de Gmail (sintaxis normal de Gmail) para encontrar el/los hilo(s) a diagnosticar en
 // manual_diagnosticarHiloPendiente(). Ajustá esto al caso puntual que quieras investigar.
 const MANUAL_DIAGNOSTICO_HILO_BUSQUEDA = 'from:balanz.com subject:"Alertas de vSphere"';
