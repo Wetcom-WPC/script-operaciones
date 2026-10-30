@@ -456,7 +456,7 @@ function generateStyledReportBlob(rawData, fileName, columnsToIgnore = [], heade
  * @returns {Array<string>} Lista de llaves de soporte en mayúsculas.
  */
 function obtenerLlavesDeSoporte() {
-  const sheet = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID).getSheets()[0]; 
+  const sheet = obtenerHojaIndiceMaestro(SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID));
   const data = sheet.getRange("N2:P" + sheet.getLastRow()).getValues();
   const llavesSoporte = [];
   

@@ -215,7 +215,7 @@ function fetchAndFilterGlobalThreads(emailSubject) {
   }
 
   if (!_validSendersCache) {
-    const masterSheet = SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID).getSheets()[0];
+    const masterSheet = obtenerHojaIndiceMaestro(SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID));
     const senderData = masterSheet.getRange("A2:A").getValues();
     const senders = [];
     senderData.flat().forEach(val => {

@@ -416,12 +416,14 @@ const MANUAL_DIAGNOSTICO_INDICE_BUSQUEDA = "balanz";
 
 /**
  * Identifica SIN AMBIGÜEDAD cuál es la hoja de cálculo que el código realmente usa como Índice
- * Maestro (la que lee getClientConfig/MasterSheetSingleton vía la Script Property
- * MASTER_INDEX_SHEET_ID) — distinto de cualquier otra planilla parecida que alguien pueda estar
- * mirando a mano. Imprime su ID, nombre y URL, y busca MANUAL_DIAGNOSTICO_INDICE_BUSQUEDA como
- * substring en TODAS las columnas de TODAS las filas (no solo la columna de remitentes), para
- * detectar tanto "no está dado de alta" como "está, pero en otra columna o mal escrito". Solo
- * lectura.
+ * Maestro (la que lee getClientConfig/MasterSheetSingleton, vía obtenerHojaIndiceMaestro() ->
+ * MASTER_INDEX_SHEET_NAME) — distinto de cualquier otra planilla parecida que alguien pueda
+ * estar mirando a mano. Imprime su ID, nombre y URL, y busca MANUAL_DIAGNOSTICO_INDICE_BUSQUEDA
+ * como substring en TODAS las columnas de TODAS las filas (no solo la columna de remitentes),
+ * para detectar tanto "no está dado de alta" como "está, pero en otra columna o mal escrito".
+ * También compara la pestaña por NOMBRE contra la que esté en la posición 0: si difieren, es la
+ * misma trampa que rompió esto el 30/10/2026 (una pestaña oculta ocupando la posición 0) y hay
+ * que investigar aunque el nombre siga resolviendo bien. Solo lectura.
  */
 function manual_diagnosticarIndiceMaestro() {
   const idHojaCalculo = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID")
@@ -431,11 +433,15 @@ function manual_diagnosticarIndiceMaestro() {
     return;
   }
   const ss = SpreadsheetApp.openById(idHojaCalculo);
-  const hoja = ss.getSheets()[0];
+  const hoja = obtenerHojaIndiceMaestro(ss);
+  const hojaEnPosicion0 = ss.getSheets()[0];
   Logger.log(`=== ÍNDICE MAESTRO REAL (el que usa el código) ===`);
   Logger.log(`ID: ${idHojaCalculo}`);
   Logger.log(`Nombre de la planilla: "${ss.getName()}"`);
-  Logger.log(`Pestaña leída (primera por posición): "${hoja.getName()}"`);
+  Logger.log(`Pestaña leída (por nombre, MASTER_INDEX_SHEET_NAME): "${hoja.getName()}"`);
+  if (hojaEnPosicion0.getName() !== hoja.getName()) {
+    Logger.log(`⚠️ La pestaña en la POSICIÓN 0 es "${hojaEnPosicion0.getName()}", distinta de "${hoja.getName()}". No afecta a este código (lee por nombre), pero es la misma condición que causó el incidente del 30/10/2026 en otros lugares — si aparece algo con ".getSheets()[0]" sin revisar todavía, revisarlo.`);
+  }
   Logger.log(`URL: ${ss.getUrl()}`);
 
   const datos = hoja.getDataRange().getValues();

@@ -11,6 +11,23 @@ const DRP_CLIENT_NAME_MAP = {
 };
 
 /**
+ * Devuelve la pestaña del Índice Maestro con la tabla de clientes, por NOMBRE
+ * (MASTER_INDEX_SHEET_NAME), nunca por posición. Centraliza esto en un solo lugar para que
+ * nadie vuelva a escribir `.getSheets()[0]` contra el Índice Maestro (ver el comentario de
+ * MASTER_INDEX_SHEET_NAME en core/ConfiguracionGlobal.js — es justo el bug que rompió el
+ * cierre automático de Tareas Programadas el 30/10/2026).
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} spreadsheet
+ * @returns {GoogleAppsScript.Spreadsheet.Sheet}
+ */
+function obtenerHojaIndiceMaestro(spreadsheet) {
+  const hoja = spreadsheet.getSheetByName(MASTER_INDEX_SHEET_NAME);
+  if (!hoja) {
+    throw new Error(`FATAL: la pestaña "${MASTER_INDEX_SHEET_NAME}" no existe en el Índice Maestro (¿se renombró? actualizar MASTER_INDEX_SHEET_NAME en core/ConfiguracionGlobal.js).`);
+  }
+  return hoja;
+}
+
+/**
  * @namespace MasterSheetSingleton
  * Singleton en memoria para la apertura y lectura del Índice Maestro y Pestañas de Excepciones/Informativas.
  * Evita la apertura repetida de SpreadsheetApp.openById y las llamadas de red getValues() en cada iteración del bucle.
@@ -30,7 +47,7 @@ const MasterSheetSingleton = (function() {
       if (!_masterDataCache) {
         const idHojaCalculo = PropertiesService.getScriptProperties().getProperty("MASTER_INDEX_SHEET_ID") || (typeof MASTER_INDEX_SHEET_ID !== 'undefined' ? MASTER_INDEX_SHEET_ID : null);
         if (!idHojaCalculo) throw new Error("FATAL: Property MASTER_INDEX_SHEET_ID no configurada.");
-        const masterSheet = SpreadsheetApp.openById(idHojaCalculo).getSheets()[0];
+        const masterSheet = obtenerHojaIndiceMaestro(SpreadsheetApp.openById(idHojaCalculo));
         _masterDataCache = masterSheet.getDataRange().getValues();
         Logger.log(`[MasterSheetSingleton] Índice Maestro cargado en memoria (${_masterDataCache.length} filas).`);
       }

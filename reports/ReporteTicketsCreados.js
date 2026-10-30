@@ -13,7 +13,7 @@ function obtenerDatosDelIndice() {
   const mapaPortales = {}; 
 
   try {
-    const fullData = typeof MasterSheetSingleton !== 'undefined' ? MasterSheetSingleton.getMasterData() : SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID).getSheets()[0].getDataRange().getValues();
+    const fullData = typeof MasterSheetSingleton !== 'undefined' ? MasterSheetSingleton.getMasterData() : obtenerHojaIndiceMaestro(SpreadsheetApp.openById(MASTER_INDEX_SHEET_ID)).getDataRange().getValues();
     
     // Omitimos encabezado (índice 0)
     for (let i = 1; i < fullData.length; i++) {

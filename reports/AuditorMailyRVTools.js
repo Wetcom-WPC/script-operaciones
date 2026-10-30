@@ -103,8 +103,10 @@ function auditarMailsOperaciones() {
 
   const clientesPorPod = {};
 
-  // 1. LEEMOS LA HOJA PRINCIPAL (Primera pestaña por posición, idéntico a MasterSheetSingleton)
-  const hojaPrincipal = spreadsheet.getSheets()[0];
+  // 1. LEEMOS LA HOJA PRINCIPAL, por NOMBRE (HOJA_INDICE) — nunca por posición. Antes leía
+  // .getSheets()[0], y el 30/10/2026 una pestaña oculta ("_Operadores") que quedó en la
+  // posición 0 hizo que esto (y MasterSheetSingleton) dejaran de encontrar el Índice real.
+  const hojaPrincipal = spreadsheet.getSheetByName(HOJA_INDICE);
   if (!hojaPrincipal) {
     Logger.log(`No se encontró la hoja principal en la spreadsheet.`);
     return;
