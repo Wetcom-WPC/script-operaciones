@@ -187,15 +187,30 @@ function fetchAndFilterGlobalThreads(emailSubject) {
     // nada, hace que ese hilo quede reintentable indefinidamente pase lo que pase en el resto del
     // ciclo (confirmado con un caso real: "Alertas de vSphere" de Balanz, sin ninguna etiqueta,
     // invisible a partir del día siguiente de haber llegado).
-    const labelPendienteInmediata = getOrCreateOpsLabel(OPS_LABEL_PENDIENTE);
-    if (labelPendienteInmediata) {
-      _globalPendingThreads.forEach(thread => {
-        try {
-          thread.addLabel(labelPendienteInmediata);
-        } catch (e) {
-          Logger.log(`[MailUtils] No se pudo etiquetar [OPS-PENDIENTE] de inmediato el hilo "${thread.getFirstMessageSubject()}": ${e.message}`);
-        }
-      });
+    //
+    // Búsqueda APARTE (no sobre _globalPendingThreads completo) a propósito: la mayoría de los
+    // 300+ hilos de _globalPendingThreads son reintentos que YA tienen [OPS-PENDIENTE] de un
+    // ciclo anterior. Llamar addLabel() sobre los 300+ en CADA corrida (cada 5 min, para siempre)
+    // es cuota de Gmail tirada a la basura y fue lo que hizo que processAffinityRulesEmails pasara
+    // de 49s a 2.5min apenas se desplegó la primera versión de este fix. Acotando a los hilos
+    // genuinamente nuevos (sin ninguna de las tres etiquetas todavía) el costo vuelve a ser
+    // proporcional a los correos nuevos de este ciclo, no al backlog acumulado completo.
+    const hilosNuevosSinEtiquetar = GmailApp.search(
+      `has:attachment is:unread after:${hoyStr} -label:${OPS_LABEL_PENDIENTE} -label:${OPS_LABEL_PROCESADO} -label:${OPS_LABEL_ERROR}`,
+      0, LIMITE_HILOS_PENDIENTES
+    );
+    if (hilosNuevosSinEtiquetar.length > 0) {
+      const labelPendienteInmediata = getOrCreateOpsLabel(OPS_LABEL_PENDIENTE);
+      if (labelPendienteInmediata) {
+        Logger.log(`[MailUtils] Etiquetando [OPS-PENDIENTE] de inmediato a ${hilosNuevosSinEtiquetar.length} hilo(s) nuevo(s) sin etiqueta...`);
+        hilosNuevosSinEtiquetar.forEach(thread => {
+          try {
+            thread.addLabel(labelPendienteInmediata);
+          } catch (e) {
+            Logger.log(`[MailUtils] No se pudo etiquetar [OPS-PENDIENTE] de inmediato el hilo "${thread.getFirstMessageSubject()}": ${e.message}`);
+          }
+        });
+      }
     }
   }
 
