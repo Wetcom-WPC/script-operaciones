@@ -410,6 +410,77 @@ function manual_diagnosticarEncabezados() {
   return diagnosticarEncabezadosDeReporte(MANUAL_DIAGNOSTICO_OPERATION_NAME);
 }
 
+// Búsqueda de Gmail (sintaxis normal de Gmail) para encontrar el/los hilo(s) a diagnosticar en
+// manual_diagnosticarHiloPendiente(). Ajustá esto al caso puntual que quieras investigar.
+const MANUAL_DIAGNOSTICO_HILO_BUSQUEDA = 'from:balanz.com subject:"Alertas de vSphere"';
+
+/**
+ * Diagnóstico de un hilo puntual que quedó trabado (etiquetado [OPS-PENDIENTE] pero sin
+ * avanzar, o sin ninguna etiqueta). Es de SOLO LECTURA: no llama addLabel, markRead, Jira ni
+ * Drive — solo reporta.
+ *
+ * Para cada hilo que matchea MANUAL_DIAGNOSTICO_HILO_BUSQUEDA, chequea las mismas condiciones
+ * que el pipeline real (fetchAndFilterGlobalThreads / MailProcessor.processEmails /
+ * getClientConfig) y da un veredicto de la causa más probable, en particular la trampa de
+ * message.isUnread(): MailProcessor.processEmails() SALTA los mensajes ya leídos del hilo (para
+ * no reprocesar un hilo entero cada vez que llega un mensaje nuevo). Si alguien abre el correo en
+ * Gmail para revisarlo -lo que lo marca leído-, un hilo que ya estaba en [OPS-PENDIENTE] queda
+ * atascado ahí para siempre: ningún processor lo va a tocar de nuevo, y no hay ningún error que
+ * lo señale.
+ */
+function manual_diagnosticarHiloPendiente() {
+  const hilos = GmailApp.search(MANUAL_DIAGNOSTICO_HILO_BUSQUEDA, 0, 10);
+  Logger.log(`=== DIAGNÓSTICO DE HILO(S) — búsqueda: "${MANUAL_DIAGNOSTICO_HILO_BUSQUEDA}" ===`);
+  Logger.log(`${hilos.length} hilo(s) encontrado(s).\n`);
+
+  hilos.forEach((thread, idx) => {
+    const mensajes = thread.getMessages();
+    const ultimo = mensajes[mensajes.length - 1];
+    const asunto = ultimo.getSubject();
+    const remitente = ultimo.getFrom();
+    const etiquetas = thread.getLabels().map(l => l.getName());
+
+    Logger.log(`--- Hilo ${idx + 1}/${hilos.length} ---`);
+    Logger.log(`Asunto: "${asunto}"`);
+    Logger.log(`Remitente: "${remitente}"`);
+    Logger.log(`Etiquetas: [${etiquetas.join(", ") || "ninguna"}]`);
+    Logger.log(`Mensajes en el hilo: ${mensajes.length}`);
+    mensajes.forEach((m, i) => {
+      Logger.log(`   Mensaje ${i + 1}: ${m.isUnread() ? "NO LEÍDO" : "LEÍDO"} | de "${m.getFrom()}" | adjuntos: ${m.getAttachments().length} | asunto "${m.getSubject()}"`);
+    });
+
+    const clientConfig = getClientConfig(remitente, "Diagnostico");
+    if (clientConfig) {
+      Logger.log(`✅ Remitente matchea el Índice Maestro: cliente "${clientConfig.clientName}" (proyecto ${clientConfig.jiraProjectKey}).`);
+    } else {
+      Logger.log(`🚨 El remitente NO matchea ninguna fila del Índice Maestro (ver el log de getClientConfig justo arriba para el dominio exacto que buscó).`);
+    }
+
+    const processor = _resolverProcessorDelAsunto(asunto);
+    if (processor) {
+      Logger.log(`✅ El asunto lo reclama el processor de "${processor.operationName}" (emailSubject: "${processor.emailSubject}").`);
+    } else {
+      Logger.log(`🚨 NINGÚN processor registrado reclama este asunto. Revisar obtenerRegistroDeProcesadores() en core/Main.js.`);
+    }
+
+    const tieneAdjunto = mensajes.some(m => m.getAttachments().length > 0);
+    if (!tieneAdjunto) {
+      Logger.log(`🚨 Ningún mensaje del hilo tiene adjuntos — fetchAndFilterGlobalThreads exige has:attachment: este hilo nunca entraría a la búsqueda global aunque todo lo demás esté bien.`);
+    }
+
+    const todosLeidos = mensajes.every(m => !m.isUnread());
+    const tienePendiente = etiquetas.indexOf(OPS_LABEL_PENDIENTE) !== -1;
+    const tieneProcesado = etiquetas.indexOf(OPS_LABEL_PROCESADO) !== -1;
+    if (todosLeidos && tienePendiente && !tieneProcesado) {
+      Logger.log(`🚨 VEREDICTO PROBABLE: el hilo tiene [OPS-PENDIENTE] pero TODOS sus mensajes están LEÍDOS. MailProcessor.processEmails() salta los mensajes leídos (if (!message.isUnread()) continue;), así que aunque un processor reclame el asunto, no le va a correr processSingleMessage() a ninguno de sus mensajes: el hilo queda atascado en [OPS-PENDIENTE] para siempre, sin ningún error. Alguien abrió este correo en Gmail (para revisarlo, por ejemplo) y eso alcanza para trabarlo así.`);
+    }
+
+    Logger.log("");
+  });
+
+  return { hilosEncontrados: hilos.length };
+}
+
 // =================================================================
 // REINTENTO DE CORREOS [OPS-ERROR]
 // =================================================================
