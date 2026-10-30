@@ -177,6 +177,26 @@ function fetchAndFilterGlobalThreads(emailSubject) {
     if (_globalPendingThreads.length >= LIMITE_HILOS_PENDIENTES) {
       Logger.log(`[MailUtils] ⚠️ ADVERTENCIA: la búsqueda alcanzó el tope de ${LIMITE_HILOS_PENDIENTES} hilos. Es MUY probable que haya reportes pendientes fuera de ese corte, que este ciclo no va a procesar. Revisar la bandeja: correos no leídos con adjunto que no sean reportes ocupan lugar.`);
     }
+
+    // Etiquetar [OPS-PENDIENTE] de inmediato, apenas se detectan (no recién cuando un processor
+    // los procesa con éxito). Sin esto, un hilo nuevo (is:unread after:hoy, todavía sin etiqueta)
+    // que por lo que sea este ciclo no llega a reclamar -processor que no corrió, excepción antes
+    // de etiquetarYMarcarProcesado, lock ocupado, etc.- queda sin marca. Al día siguiente ya no
+    // matchea `after:hoy` (cambió el día) ni `label:[OPS-PENDIENTE]` (nunca se la pusieron): se
+    // pierde para siempre, sin aparecer en ningún log de error. Etiquetar acá, antes de intentar
+    // nada, hace que ese hilo quede reintentable indefinidamente pase lo que pase en el resto del
+    // ciclo (confirmado con un caso real: "Alertas de vSphere" de Balanz, sin ninguna etiqueta,
+    // invisible a partir del día siguiente de haber llegado).
+    const labelPendienteInmediata = getOrCreateOpsLabel(OPS_LABEL_PENDIENTE);
+    if (labelPendienteInmediata) {
+      _globalPendingThreads.forEach(thread => {
+        try {
+          thread.addLabel(labelPendienteInmediata);
+        } catch (e) {
+          Logger.log(`[MailUtils] No se pudo etiquetar [OPS-PENDIENTE] de inmediato el hilo "${thread.getFirstMessageSubject()}": ${e.message}`);
+        }
+      });
+    }
   }
 
   if (!_validSendersCache) {
